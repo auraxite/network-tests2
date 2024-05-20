@@ -20,6 +20,9 @@
 #define MESSAGE_END_LENGTH 300
 #define NUM_REPEATS 10
 #define MESSAGE_STEP 100
+#define NO_MASH_TYPE 0
+#define DEFAULT_SYNC_TYPE 0
+#define DEFAULT_TIMER_TYPE 0
 
 #define BENCHMARK_DIR CLUSTBENCH_BENCHMARKS_DIR "/interconnect"
 
@@ -126,6 +129,9 @@ int parse_network_test_arguments(clustbench_benchmark_parameters_t *parameters,
     len = strlen("delays-");
     strftime(default_file_name_prefix+len,512-len,"%Z-%Y-%m-%d",time_dump);
 
+    parameters->timer_type                 =  DEFAULT_TIMER_TYPE;
+    parameters->sync_type                  =  DEFAULT_SYNC_TYPE;
+    parameters->mash_type                  =  NO_MASH_TYPE;
 	parameters->num_procs                  =  0; /* Special for program break on any error */
 	parameters->benchmark_name             =  NULL;
     parameters->begin_message_length       =  MESSAGE_BEGIN_LENGTH;
@@ -138,7 +144,9 @@ int parse_network_test_arguments(clustbench_benchmark_parameters_t *parameters,
     parameters->statistics_save            =  CLUSTBENCH_MIN     | 
                                               CLUSTBENCH_DEVIATION | 
                                               CLUSTBENCH_AVERAGE | 
-                                              CLUSTBENCH_MEDIAN;
+                                              CLUSTBENCH_MEDIAN  |
+                                              CLUSTBENCH_ALL;
+    parameters->algorithm_main_info        =  NULL;
 
 #ifdef _GNU_SOURCE
 
@@ -162,14 +170,20 @@ int parse_network_test_arguments(clustbench_benchmark_parameters_t *parameters,
     int individual_options_flag = 0;
     opterr = 0;
 
+    enum AlgorithmType algo_type = kEmptyAlgo;
+    int frequency = -1;
+    int windows_amount = -1;
+    double ratio = -1;
+    double target_criterion_value = -1;
+
     for ( ; ; )
     {
         if (individual_options_flag == 1) break;
 #ifdef _GNU_SOURCE
-        arg_val = getopt_long(argc,argv,"t:f:n:b:e:s:d:lp:h:v",options,NULL);
+        arg_val = getopt_long(argc,argv,"t:f:n:b:e:s:z:i:d:lp:h:v:a:o:w:c:r:m",options,NULL);
 #else
 
-        arg_val = getopt(argc,argv,"t:f:n:b:e:s:d:lp:h:v");
+        arg_val = getopt(argc,argv,"t:f:n:b:e:s:z:i:d:lp:h:v:a:o:w:c:r:m");
 #endif
 
         if(arg_val == -1)
@@ -214,20 +228,66 @@ int parse_network_test_arguments(clustbench_benchmark_parameters_t *parameters,
                 return ERROR_FLAG;
             }
             break;
+        case 'z':
+          if (strcmp(optarg, "default") == 0)
+          {
+            parameters->sync_type = 0;
+          }
+          else if (strcmp(optarg, "custom") == 0)
+          {
+            parameters->sync_type = 1;
+          }
+          else if (strcmp(optarg, "custom_offset") == 0)
+          {
+            parameters->sync_type = 2;
+          }
+          else{
+            if(!mpi_rank)
+            {
+                fprintf(stderr, "parse_parameters: Parse parameter with name 'sync type' failed: '%s'",
+                    strerror(errno));
+            }
+            return ERROR_FLAG;
+          }            
+          break;
+        case 'i':
+            parameters->timer_type = strtoul(optarg, &tmp_str, 10);
+            if(*tmp_str!='\0')
+            {
+                if(!mpi_rank)
+                {
+                    fprintf(stderr, "parse_parameters: Parse parameter with name 'num repeats' failed: '%s'",
+                        strerror(errno));
+                }
+                return ERROR_FLAG;
+            }            
+            break;
+        case 'm':
+            parameters->mash_type = strtoul(optarg, &tmp_str, 10);
+            printf("SET MASH TYPE: %d\n", parameters->mash_type);
+            if(*tmp_str!='\0')
+            {
+                if(!mpi_rank)
+                {
+                    fprintf(stderr,"parse_parameters: Parse parameter with name 'mash' failed: '%s'",
+                        strerror(errno));
+                }
+                return ERROR_FLAG;
+            }
+            break;
         case 'n':
             parameters->num_repeats = strtoul(optarg, &tmp_str, 10);
             if(*tmp_str!='\0')
             {
                 if(!mpi_rank)
                 {
-                    fprintf(stderr,"parse_parameters: Parse parameter with name 'num repeats' failed: '%s'",
+                    fprintf(stderr, "parse_parameters: Parse parameter with name 'num repeats' failed: '%s'",
                         strerror(errno));
                 }
                 return ERROR_FLAG;
             }            
-           break;
+            break;
         case 'l':
-            printf("%s\n", "YAHOO");
             return LIST_FLAG;
             break;
         case 'p':
@@ -330,12 +390,108 @@ int parse_network_test_arguments(clustbench_benchmark_parameters_t *parameters,
                 individual_options_flag = 1;
             }
             break;
-        }        
+        case 'a':
+          printf("GOT OPTARG FOR ALGO: %s\n", optarg);
+          if (strcmp(optarg, "ScalarMinAlgo") == 0)
+          {
+            algo_type = kScalarMinAlgo;
+          }
+          else if (strcmp(optarg, "ScalarAvgAlgo") == 0)
+          {
+            algo_type = kScalarAvgAlgo;
+          }
+          else if (strcmp(optarg, "ScalarDevAlgo") == 0)
+          {
+            algo_type = kScalarDevAlgo;
+          }
+          else if (strcmp(optarg, "ScalarMedAlgo") == 0)
+          {
+            algo_type = kScalarMedAlgo;
+          }
+          else if (strcmp(optarg, "SpectrumFFTAlgo") == 0)
+          {
+            algo_type = kSpectrumFFTAlgo;
+          }
+          else if (strcmp(optarg, "ModifiedSpectrumFFTAlgo") == 0)
+          {
+            algo_type = kModifiedSpectrumFFTAlgo;
+          }
+          else
+          {
+            if(!mpi_rank)
+            {
+                fprintf(stderr, "parse_parameters: Parse parameter with name 'algo type' failed: wrong algo type");
+            }
+            return ERROR_FLAG;
+          }
+          break;
+        case 'o':
+          printf("GOT OPTARG FOR FREQUENCY: %s\n", optarg);
+          frequency = atoi(optarg);
+          if (frequency == 0)
+          {
+            if(!mpi_rank)
+            {
+              fprintf(stderr, "parse_parameters: Parse parameter with name 'frequency' failed: '%s'",
+              strerror(errno));
+            }
+            return ERROR_FLAG;
+          }         
+          break;
+        case 'w':
+          printf("GOT OPTARG FOR WINDOWS_AMOUNT: %s\n", optarg);
+          windows_amount = atoi(optarg);
+          if (windows_amount == 0)
+          {
+            if(!mpi_rank)
+            {
+              fprintf(stderr, "parse_parameters: Parse parameter with name 'windows_amount' failed: '%s'",
+              strerror(errno));
+            }
+            return ERROR_FLAG;
+          }        
+          break;
+        case 'r':
+          printf("GOT OPTARG FOR RATIO: %s\n", optarg);
+          ratio = strtod(optarg, &tmp_str);
+          if ((ratio == 0) && (errno == ERANGE))
+          {
+            if(!mpi_rank)
+            {
+              fprintf(stderr, "parse_parameters: Parse parameter with name 'ratio' failed: '%s'",
+              strerror(errno));
+            }
+            return ERROR_FLAG;
+          }            
+          break;
+        case 'c':
+          printf("GOT OPTARG FOR TARGET_CRITERION_VALUE: %s\n", optarg);
+          target_criterion_value = strtod(optarg, &tmp_str);
+          if ((target_criterion_value == 0) && (errno == ERANGE))
+          {
+            if(!mpi_rank)
+            {
+              fprintf(stderr, "parse_parameters: Parse parameter with name 'target_criterion_value' failed: '%s'",
+              strerror(errno));
+            }
+            return ERROR_FLAG;
+          }            
+          break;
+        }
     } /* end for */
-    printf("%d\n", return_flag);
-    if (return_flag == LIST_FLAG){
-        //printf("%s\n", "YAHOO1");
+    if (algo_type != kEmptyAlgo && ((frequency == -1) || (windows_amount == -1) || (ratio == -1) || (target_criterion_value == -1))) {
+      if(!mpi_rank)
+      {
+        fprintf(stderr, "parse_parameters: to use algorithm for automative delay measurements amount determination -o, -w, -r and -c options shold be set");
+      }
+      return ERROR_FLAG;
     }
+    else {
+        printf("ALGO_PARAMETERS: %d, %d, %f, %f\n", frequency, windows_amount, ratio, target_criterion_value);
+        parameters->algorithm_main_info = (struct AlgorithmMainInfo *)malloc(sizeof(struct AlgorithmMainInfo));
+        parameters->algorithm_main_info = get_algorithm_main_info(algo_type, frequency, windows_amount, ratio, target_criterion_value);
+    }
+    //printf("%d\n", return_flag);
     if(return_flag == HELP_FLAG)
     {
         if(mpi_rank == 0 && print_network_test_help_message(parameters))

@@ -119,17 +119,17 @@ def make_netcdf(cdf, cur_3d, cur_size):
     print(new_netcdf['data'][:])
     
 
-file_path = ("/home/volch/3_kurs/asvk_sc/results/" + sys.argv[1])
+file_path = (sys.argv[1])
 cdf = nc.Dataset(file_path)
 
 print(type(cdf))
 print('\n\n')
-print(_("Begin length:"), cdf['begin_mes_length'][:])
-print(_("Step:"), cdf['step_length'][:])
-print(_("End length:"), cdf['end_mes_length'][:])
+print(("Begin length:"), cdf['begin_mes_length'][:])
+print(("Step:"), cdf['step_length'][:])
+print(("End length:"), cdf['end_mes_length'][:])
 
 
-mes_length = int(input(_("Введите длину сообщения, для которой надо создать трехмерный файл: ")))
+mes_length = int(input(("Введите длину сообщения, для которой надо создать трехмерный файл: ")))
 attr_length = mes_length
 mes_length //= cdf['step_length'][:]
 
@@ -141,8 +141,8 @@ except:
     print(_("your length is not valid"))
 else:
     cur_spektrum = spektrum(cur_3d,1,2,20,120)
-    spektrum_ncdf(cur_3d, int(input(_("Введите длину окна для подсчета дискретного спектра: "))), mes_length)
-    flag = input(_("Do you want to make a new netcdf cut fuli with info about latencies for given lewngth? (y/n)"))
+    spektrum_ncdf(cur_3d, int(input(("Введите длину окна для подсчета дискретного спектра: "))), mes_length)
+    flag = input(("Do you want to make a new netcdf cut fuli with info about latencies for given lewngth? (y/n)"))
     if flag not in ("n", "no"):
         real_3d = [[[0 for j_1 in range(len(cur_3d[0]))] for j_2 in range(len(cur_3d))] for j_3 in range(len(cur_3d[0][0]))]
         for i_1 in range(len(cur_3d)):

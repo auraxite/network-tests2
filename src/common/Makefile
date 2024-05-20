@@ -27,7 +27,8 @@ FILES_COMMON =\
 	clustbench_easy_matrices.o\
 	clustbench_malloc.o\
 	clustbench_plugin_operations.o\
-	clustbench_time.o
+	clustbench_time.o\
+	delay_measurements_amount_auto.o
 	
 all: $(FILES_COMMON)
 

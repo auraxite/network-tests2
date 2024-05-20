@@ -21,6 +21,8 @@
 #ifndef __MY_TIME_H_
 #define __MY_TIME_H_
 
+#include <time.h>
+
 typedef double px_my_time_type;
 
 #ifdef __cplusplus

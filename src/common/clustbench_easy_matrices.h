@@ -35,7 +35,7 @@ typedef struct
 	double *body;
 	uint32_t sizex;
 	uint32_t sizey;
-    uint32_t sizez;
+  uint32_t sizez;
 } Clustbench_easy_matrix_3d;
 
 

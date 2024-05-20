@@ -10,7 +10,8 @@ static const char* file_data_types[NUM_NETWORK_TEST_DATATYPES+1]=
     "median",
     "deviation",
     "min",
-    "all"
+    "all",
+    "measurements_amount"
 };
 
 

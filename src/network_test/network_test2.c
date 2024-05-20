@@ -413,6 +413,8 @@ int main(int argc,char **argv)
 
         MPI_Barrier(MPI_COMM_WORLD);
 
+        
+
         if(comm_rank==0)
         {
             for(j=0; j<comm_size; j++)

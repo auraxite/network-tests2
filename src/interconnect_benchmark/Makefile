@@ -39,7 +39,7 @@ make_common:
 	$(MAKE) -C ../common
 
 interconnect_benchmark: $(FILES_IB) make_common
-	$(MPI_CCLINKER) $(MPI_CCLINKER_FLAGS) $(MPI_LIB_PATH) $(NETCDF_INCLUDE) $(LIB_PATH) -L ../core -L ../common -o $(EXECS) $(FILES_IB) ../common/clustbench_plugin_operations.o ../common/benchmarks_common.o ../common/clustbench_data_write_operations.o ../common/clustbench_easy_matrices.o ../core/string_id_converters.o -lm -ldl -fpic $(MPI_LIBS)
+	$(MPI_CCLINKER) $(MPI_CCLINKER_FLAGS) $(MPI_LIB_PATH) $(NETCDF_INCLUDE) $(LIB_PATH) -L ../core -L ../common -o $(EXECS) $(FILES_IB) ../common/clustbench_plugin_operations.o ../common/benchmarks_common.o ../common/delay_measurements_amount_auto.o ../common/clustbench_data_write_operations.o ../common/clustbench_easy_matrices.o ../core/string_id_converters.o -lm -ldl -fpic $(MPI_LIBS)
 
 del_n:
 	rm -f ./*.nc

@@ -327,8 +327,11 @@ def make_params(algo, cur_1d):
 
 
 # launch
-file_path = ("/home/volch/3_kurs/asvk_sc/results/" + sys.argv[1])
+file_path = (sys.argv[1])
 cdf = nc.Dataset(file_path)
+
+print("KEYS", cdf)
+input()
 
 print(_("Begin length:"), cdf['begin_mes_length'][:])
 print(_("Step:"), cdf['step_length'][:])

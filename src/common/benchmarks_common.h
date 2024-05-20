@@ -22,6 +22,7 @@ typedef struct
     clustbench_time_t median;
     clustbench_time_t deviation;
     clustbench_time_t min;
+    int amount_of_measurements;
 } clustbench_time_result_t;
 
 #ifdef __cplusplus

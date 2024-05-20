@@ -45,6 +45,7 @@ typedef struct tag_test_time_result_type
 	px_my_time_type median;
 	px_my_time_type deviation;
 	px_my_time_type min;
+	int measurements_amount;
 } Test_time_result_type;
 
 #ifdef __cplusplus
@@ -91,6 +92,10 @@ extern "C"
  * (size-1,size-1) size*size-1
  * */
 #define get_recv_processor(squere_coord,size) (squere_coord)%(size)
+
+/*for changing order of circles - now dest will be external loop in benchmarks*/
+#define reverse_get_send_processor(squere_coord,size) (squere_coord)%(size)
+#define reverse_get_recv_processor(squere_coord,size) (squere_coord)/(size)
 
 
 

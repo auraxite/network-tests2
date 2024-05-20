@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "types.h"
 #include "clustbench_data_write_operations.h"
@@ -36,7 +37,7 @@ int create_netcdf_header
     
     int status;
 
-	file_name=(char *)malloc(strlen(test_parameters->file_name_prefix)+strlen("_deviation.nc")+1);
+	file_name=(char *)malloc(strlen(test_parameters->file_name_prefix)+strlen("_measurements_amount.nc")+1);
 	if(file_name==NULL)
 	{
 		return MEM_ERROR;
@@ -140,7 +141,7 @@ int create_netcdf_header
 		return NETCDF_ERROR;
         }*/
 
-	if(nc_def_var(netcdf_file_id,"num_repeats",NC_INT,0,0,&num_repeats_var_id)!=NC_NOERR)
+	if(nc_def_var(netcdf_file_id,"num_repeates",NC_INT,0,0,&num_repeats_var_id)!=NC_NOERR)
 	{
 		return NETCDF_ERROR;
     }
@@ -255,6 +256,7 @@ int create_netcdf_header_3d
     
     int status;
 
+        printf("koplkoplkoplkopl\n");
 	file_name=(char *)malloc(strlen(test_parameters->file_name_prefix)+strlen("_deviation.nc")+1);
 	if(file_name==NULL)
 	{
@@ -364,7 +366,7 @@ int create_netcdf_header_3d
 		return NETCDF_ERROR;
         }*/
 
-	if(nc_def_var(netcdf_file_id,"num_repeats",NC_INT,0,0,&num_repeats_var_id)!=NC_NOERR)
+	if(nc_def_var(netcdf_file_id,"num_repeates",NC_INT,0,0,&num_repeats_var_id)!=NC_NOERR)
 	{
 		return NETCDF_ERROR;
         }
@@ -430,6 +432,20 @@ int create_netcdf_header_3d
         return NETCDF_ERROR;
     }
 
+	/*if(nc_put_var_int(netcdf_file_id,noise_mesage_length_var_id,&test_parameters->noise_message_length)!=NC_NOERR)
+	{
+		return NETCDF_ERROR;
+	}
+
+	if(nc_put_var_int(netcdf_file_id,num_noise_messages_var_id,&test_parameters->num_noise_messages)!=NC_NOERR)
+	{
+		return NETCDF_ERROR;
+	}
+
+	if(nc_put_var_int(netcdf_file_id,num_noise_procs_var_id,&test_parameters->num_noise_procs)!=NC_NOERR)
+	{
+		return NETCDF_ERROR;
+	}*/
 	nc_sync(netcdf_file_id);
 	
 	*file_id=netcdf_file_id;
@@ -469,6 +485,14 @@ int netcdf_write_3d_matrix
 	const double *data
 )
 {
+	//for (int aaa = 0; aaa < size_x; aaa++) {
+	//	for (int bbb = 0; bbb < size_y; bbb++) {
+	//		for (int ccc = 0; ccc < size_z; ccc++) {
+	//			printf("BIG MATR ELEM: %d %d %d %f\n", aaa,bbb,ccc,data[aaa*size_z*size_y + bbb*size_z + ccc]);
+	//		}
+	//	}
+	//}
+	printf("WRITING 3D MATRIX WITH NUMBER %d\n", matrix_number_in_file);
 	size_t start[4]={matrix_number_in_file,0,0,0};
 	size_t count[4]={1,size_x,size_y,size_z};
 	if(nc_put_vara_double(netcdf_file_id,netcdf_var_id,start,count,data)!=NC_NOERR)
