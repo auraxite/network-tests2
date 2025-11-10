@@ -1,2 +1,8 @@
 {
+    "files.associations": {
+        "*.ac": "m4",
+        "*.in": "m4",
+        "*.m4": "m4"
+    },
+    "latex-workshop.latex.autoClean.run": "onBuilt"
 }

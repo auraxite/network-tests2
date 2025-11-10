@@ -40,10 +40,15 @@ AX_ARG_ENABLE([clustering], [" clustering "], [""], [
 	Enable clustering (disabled by default)
 ])
 
+#Explicitly enables build for gpu_tests component.
+AX_ARG_ENABLE([gpu_tests], [" gpu_tests "], [" gpu_tests_benchmark "], [
+	Enable testing (enabled by default)
+])
+
 # Enables build for all components of the project.
 AC_ARG_ENABLE([all], [AS_HELP_STRING([--enable-all], [Enable all modules])], [
 	AS_CASE(["${enableval}"],
-		[yes], [AC_SUBST([GOALS], ["interconnect_benchmark network_viewer_qt_v2 clustering"])],
+		[yes], [AC_SUBST([GOALS], ["interconnect_benchmark network_viewer_qt_v2 clustering gpu_tests"])],
 		[no],  [],
 		[AC_MSG_ERROR([Bad value ${enableval} for --enable-all])]
 	)
