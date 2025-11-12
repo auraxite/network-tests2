@@ -17,6 +17,23 @@
  * Test types
  */
 
+<<<<<<< HEAD
+=======
+#define NUM_TEST_TYPES 11
+
+#define UNKNOWN_TEST_TYPE 0
+#define ONE_TO_ONE_TEST_TYPE 1
+#define ALL_TO_ALL_TEST_TYPE 2
+#define ASYNC_ONE_TO_ONE_TEST_TYPE 3
+#define SEND_RECV_AND_RECV_SEND_TEST_TYPE 4
+#define NOISE_TEST_TYPE 5
+#define NOISE_BLOCKING_TEST_TYPE 6
+#define BCAST_TEST_TYPE 7
+#define PUT_ONE_TO_ONE_TEST_TYPE 8
+#define GET_ONE_TO_ONE_TEST_TYPE 9
+#define ONE_TO_ONE_CUDA_TEST_TYPE 10
+#define ALL_TO_ALL_CUDA_TEST_TYPE 11
+>>>>>>> origin/cudatests
 
 //это для того чтобы при компиляции на плюсах 
 //стандарт вызова был под си?
