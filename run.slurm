@@ -12,7 +12,7 @@ set -euo pipefail
 
 # Universal SLURM entrypoint for this project.
 # Choose mode with APP_MODE:
-#   APP_MODE=gpu_topology
+#   APP_MODE=gpu_info
 #   APP_MODE=network_test
 #   APP_MODE=interconnect_benchmark
 #   APP_MODE=clustering
@@ -20,12 +20,12 @@ set -euo pipefail
 #
 # Optional vars:
 #   PROJECT_ROOT=/path/to/network-tests2
-#   NET_MAP=/path/to/inter-node-map.in  (required for gpu_topology mode)
+#   NET_MAP=/path/to/inter-node-map.in  (required for gpu_info mode)
 #   APP_ARGS="..."                      (extra args for selected mode)
 #   RUN_CMD="binary --flag value"       (required for custom mode)
 
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
-APP_MODE="${APP_MODE:-gpu_topology}"
+APP_MODE="${APP_MODE:-gpu_info}"
 APP_ARGS="${APP_ARGS:-}"
 NET_MAP="${NET_MAP:-}"
 RUN_CMD="${RUN_CMD:-}"
@@ -54,7 +54,7 @@ resolve_binary() {
   return 1
 }
 
-run_gpu_topology() {
+run_gpu_info() {
   local gpu_dir="${PROJECT_ROOT}/src/gpu_tests"
   local input_dir="${gpu_dir}/input"
   local nnodes="${SLURM_JOB_NUM_NODES:-1}"
@@ -62,8 +62,8 @@ run_gpu_topology() {
   local -a node_args
 
   if [[ -z "${NET_MAP}" ]]; then
-    echo "ERROR: NET_MAP is required for APP_MODE=gpu_topology"
-    echo "Example: sbatch --export=ALL,APP_MODE=gpu_topology,NET_MAP=src/gpu_tests/input/1_8.in run_project.slurm"
+    echo "ERROR: NET_MAP is required for APP_MODE=gpu_info"
+    echo "Example: sbatch --export=ALL,APP_MODE=gpu_info,NET_MAP=src/gpu_tests/input/1_8.in run_project.slurm"
     exit 2
   fi
 
@@ -79,7 +79,7 @@ run_gpu_topology() {
     node_args+=("node${i}:${input_dir}/live_node${i}.in")
   done
 
-  python3 "${gpu_dir}/gpu_topology.py" --net-map "${NET_MAP}" "${node_args[@]}"
+  python3 "${gpu_dir}/gpu_info.py" --net-map "${NET_MAP}" "${node_args[@]}"
 }
 
 run_network_test() {
@@ -124,7 +124,7 @@ run_custom() {
 }
 
 case "${APP_MODE}" in
-  gpu_topology) run_gpu_topology ;;
+  gpu_info) run_gpu_info ;;
   network_test) run_network_test ;;
   interconnect_benchmark) run_interconnect_benchmark ;;
   clustering) run_clustering ;;
