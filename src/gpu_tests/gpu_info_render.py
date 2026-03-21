@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 from pathlib import Path
 
@@ -15,9 +14,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
 
+from gpu_info_collect import parse_topology_device_matrices, strip_ansi_escapes
+
 PALETTE_ORDER = [
     "X",
     "NV4",
+    "NV12",
     "NV3",
     "NV2",
     "NV1",
@@ -39,6 +41,7 @@ PALETTE_ORDER = [
 PALETTE_COLORS = [
     "#eaf6ff",
     "#9ad8ff",
+    "#87ceff",
     "#76c5ff",
     "#53b2ff",
     "#2f9fff",
@@ -124,80 +127,172 @@ def draw_single_matrix(ax, labels: list[str], m: np.ndarray, title: str, **kw) -
                 )
 
 
-def render_intra_from_snapshot_v1(snap: dict, out_path: Path) -> None:
-    intra = snap.get("intra") or {}
-    if "error" in intra:
-        raise RuntimeError(f"Snapshot intra parse error: {intra['error']}")
-    labels = intra.get("gpu_labels")
-    matrix = intra.get("matrix")
-    if not labels or not matrix:
-        raise RuntimeError("Snapshot has no intra.gpu_labels / intra.matrix")
+def draw_rect_matrix(
+    ax,
+    row_labels: list[str],
+    col_labels: list[str],
+    m: np.ndarray,
+    title: str,
+    **kw,
+) -> None:
+    tick_font = kw.get("tick_font", 6)
+    text_font = kw.get("text_font", 4)
+    annotate = kw.get("annotate", True)
+    idx, _ = colorize_matrix(m)
+    cmap = ListedColormap(PALETTE_COLORS)
+    ax.imshow(idx, cmap=cmap, interpolation="nearest", aspect="auto")
+    ax.set_xticks(range(len(col_labels)))
+    ax.set_yticks(range(len(row_labels)))
+    ax.set_xticklabels(col_labels, fontsize=tick_font, rotation=90)
+    ax.set_yticklabels(row_labels, fontsize=tick_font)
+    ax.set_title(title, fontsize=10)
+    if annotate:
+        for i in range(len(row_labels)):
+            for j in range(len(col_labels)):
+                ax.text(
+                    j,
+                    i,
+                    str(m[i, j]),
+                    ha="center",
+                    va="center",
+                    fontsize=text_font,
+                    color="black",
+                )
 
-    m = np.array(matrix, dtype=object)
+
+def _intra_matrix_gpu_gpu(intra: dict) -> object:
+    """GPU×GPU block; older snapshots used key ``matrix``."""
+    if "matrix_gpu_gpu" in intra:
+        return intra.get("matrix_gpu_gpu")
+    return intra.get("matrix")
+
+
+def _resolve_intra_from_snap_v1(snap: dict) -> dict:
+    raw_topo = (snap.get("nvidia_smi_topo_m_raw") or "").strip()
+    if raw_topo:
+        try:
+            return parse_topology_device_matrices(strip_ansi_escapes(raw_topo).splitlines())
+        except RuntimeError:
+            pass
+    intra = snap.get("intra") or {}
+    if intra.get("error"):
+        raise RuntimeError(f"Snapshot intra parse error: {intra['error']}")
+    if intra.get("gpu_labels") and _intra_matrix_gpu_gpu(intra):
+        return intra
+    raise RuntimeError("Snapshot has no parseable intra topology")
+
+
+def _resolve_intra_from_node_entry(ent: dict) -> dict:
+    raw = (ent.get("nvidia_smi_topo_m_raw") or "").strip()
+    if raw:
+        try:
+            return parse_topology_device_matrices(strip_ansi_escapes(raw).splitlines())
+        except RuntimeError:
+            pass
+    intra = ent.get("intra") or {}
+    if intra.get("error"):
+        raise RuntimeError(f"Intra parse error: {intra['error']}")
+    if intra.get("gpu_labels") and _intra_matrix_gpu_gpu(intra):
+        return intra
+    raise RuntimeError("Node entry has no parseable intra topology")
+
+
+def _node_id_from_name(name: str) -> int:
+    m = re.fullmatch(r"node(\d+)", name.strip())
+    return int(m.group(1)) if m else 0
+
+
+def render_node_topo_matrices(
+    intra: dict,
+    out_dir: Path,
+    file_prefix: str,
+    subtitle: str,
+) -> list[Path]:
+    """Write GPU×GPU, GPU×NIC, NIC×NIC PNGs with prefix node{n}_matrix_*.png."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    gpus = intra.get("gpu_labels") or []
+    nics = intra.get("nic_labels") or []
+    gg = _intra_matrix_gpu_gpu(intra)
+    if not gpus or not gg:
+        raise RuntimeError("intra missing gpu_labels / matrix_gpu_gpu")
+
+    mgg = np.array(gg, dtype=object)
     fig, ax = plt.subplots(figsize=(6.5, 5.5))
-    hn = snap.get("hostname", "")
     draw_single_matrix(
         ax,
-        labels,
-        m,
-        f"Intra-node (GPU×GPU) — {hn}",
+        [str(x) for x in gpus],
+        mgg,
+        f"GPU×GPU — {subtitle}",
         tick_font=8,
         text_font=6,
     )
     plt.tight_layout()
-    fig.savefig(out_path, dpi=180)
+    p = out_dir / f"{file_prefix}_matrix_gpu_gpu.png"
+    fig.savefig(p, dpi=180)
     plt.close(fig)
+    written.append(p)
 
+    gpn = intra.get("matrix_gpu_nic") or []
+    if nics and gpn:
+        mgn = np.array(gpn, dtype=object)
+        w = max(9.0, 0.55 * len(nics) + 4.0)
+        fig, ax = plt.subplots(figsize=(w, 6.0))
+        draw_rect_matrix(
+            ax,
+            [str(x) for x in gpus],
+            [str(x) for x in nics],
+            mgn,
+            f"GPU×NIC — {subtitle}",
+            tick_font=7,
+            text_font=5,
+        )
+        plt.tight_layout()
+        p = out_dir / f"{file_prefix}_matrix_gpu_nic.png"
+        fig.savefig(p, dpi=180)
+        plt.close(fig)
+        written.append(p)
 
-def render_intra_multi_from_snapshot_v2(snap: dict, out_path: Path) -> None:
-    nodes = snap.get("nodes") or []
-    parsed: list[tuple[str, list[str], np.ndarray]] = []
-    for ent in nodes:
-        name = ent.get("name", "?")
-        intra = ent.get("intra") or {}
-        if "error" in intra:
-            raise RuntimeError(f"Intra parse error for {name}: {intra['error']}")
-        labels = intra.get("gpu_labels")
-        matrix = intra.get("matrix")
-        if not labels or not matrix:
-            raise RuntimeError(f"Node {name}: missing intra.gpu_labels / intra.matrix")
-        m = np.array(matrix, dtype=object)
-        parsed.append((name, labels, m))
-
-    n = len(parsed)
-    cols = min(3, n)
-    rows = int(math.ceil(n / cols))
-    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4.8 * rows))
-    if rows == 1 and cols == 1:
-        axes = np.array([[axes]])
-    elif rows == 1:
-        axes = np.array([axes])
-    elif cols == 1:
-        axes = np.array([[a] for a in axes])
-
-    for i, (node_name, gpus, m) in enumerate(parsed):
-        r = i // cols
-        c = i % cols
-        ax = axes[r, c]
+    ncn = intra.get("matrix_nic_nic") or []
+    if nics and ncn:
+        mnn = np.array(ncn, dtype=object)
+        fig, ax = plt.subplots(figsize=(6.5, 5.5))
         draw_single_matrix(
             ax,
-            gpus,
-            m,
-            f"{node_name} intra-node (GPUxGPU)",
-            annotate=True,
+            [str(x) for x in nics],
+            mnn,
+            f"NIC×NIC — {subtitle}",
             tick_font=8,
             text_font=6,
         )
+        plt.tight_layout()
+        p = out_dir / f"{file_prefix}_matrix_nic_nic.png"
+        fig.savefig(p, dpi=180)
+        plt.close(fig)
+        written.append(p)
 
-    for i in range(n, rows * cols):
-        r = i // cols
-        c = i % cols
-        axes[r, c].axis("off")
+    return written
 
-    fig.suptitle("Intra-node connectivity matrices", fontsize=14)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    fig.savefig(out_path, dpi=180)
-    plt.close(fig)
+
+def render_intra_from_snapshot_v1(snap: dict, out_dir: Path) -> list[Path]:
+    intra = _resolve_intra_from_snap_v1(snap)
+    node_id = int(snap.get("node_id", 0))
+    pfx = f"node{node_id}"
+    hn = snap.get("hostname", "")
+    return render_node_topo_matrices(intra, out_dir, pfx, hn)
+
+
+def render_intra_multi_from_snapshot_v2(snap: dict, out_dir: Path) -> list[Path]:
+    nodes = snap.get("nodes") or []
+    host = snap.get("hostname", "")
+    all_written: list[Path] = []
+    for ent in nodes:
+        name = ent.get("name", "node0")
+        intra = _resolve_intra_from_node_entry(ent)
+        pfx = f"node{_node_id_from_name(name)}"
+        sub = f"{name} @ {host}" if host else name
+        all_written.extend(render_node_topo_matrices(intra, out_dir, pfx, sub))
+    return all_written
 
 
 def render_inter_from_raw(raw: str, out_path: Path) -> None:
@@ -239,8 +334,8 @@ def render_global_matrix_from_snapshot_v2(snap: dict, out_path: Path) -> None:
         if "error" in intra:
             raise RuntimeError(f"Intra parse error for {name}: {intra['error']}")
         gpus = intra.get("gpu_labels")
-        matrix = intra.get("matrix")
-        if not gpus or not matrix:
+        matrix = _intra_matrix_gpu_gpu(intra)
+        if not gpus or matrix is None:
             raise RuntimeError(f"Node {name}: missing intra data")
         m = np.array(matrix, dtype=object)
         per_node.append((name, gpus, m))
@@ -352,26 +447,25 @@ def render_bundle(snap: dict, out_dir: Path) -> None:
     ver = snap.get("format_version")
 
     if ver == 1:
-        intra_png = out_dir / "gpu_intra_node_matrices.png"
-        render_intra_from_snapshot_v1(snap, intra_png)
-        print(f"Wrote {intra_png}")
+        for p in render_intra_from_snapshot_v1(snap, out_dir):
+            print(f"Wrote {p}")
         inter = snap.get("inter_node")
         if inter and inter.get("raw"):
-            inter_png = out_dir / "gpu_inter_node_matrix.png"
+            nid = int(snap.get("node_id", 0))
+            inter_png = out_dir / f"node{nid}_inter_node_matrix.png"
             render_inter_from_raw(inter["raw"], inter_png)
             print(f"Wrote {inter_png}")
         return
 
     if ver == 2:
-        intra_png = out_dir / "gpu_intra_node_matrices.png"
-        render_intra_multi_from_snapshot_v2(snap, intra_png)
-        print(f"Wrote {intra_png}")
+        for p in render_intra_multi_from_snapshot_v2(snap, out_dir):
+            print(f"Wrote {p}")
         inter = snap.get("inter_node")
         if inter and inter.get("raw"):
-            inter_png = out_dir / "gpu_inter_node_matrix.png"
+            inter_png = out_dir / "inter_node_matrix.png"
             render_inter_from_raw(inter["raw"], inter_png)
             print(f"Wrote {inter_png}")
-            global_png = out_dir / "gpu_global_connectivity_matrix.png"
+            global_png = out_dir / "global_connectivity_matrix.png"
             render_global_matrix_from_snapshot_v2(snap, global_png)
             print(f"Wrote {global_png}")
         return

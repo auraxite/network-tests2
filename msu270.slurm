@@ -19,7 +19,7 @@ set -euo pipefail
 #   gpu_info         — multi-node: set NET_MAP, srun collects live_node*.in per node
 #
 # Optional: PROJECT_ROOT=/path/to/network-tests2
-#           NET_MAP=src/gpu_tests/input/1_8.in   (required only for gpu_info)
+#           NET_MAP=src/gpu_tests/input/net_map.in   (required only for gpu_info)
 
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 APP_MODE="${APP_MODE:-gpu_info_intra}"
@@ -40,7 +40,7 @@ run_gpu_info() {
 
   if [[ -z "${NET_MAP}" ]]; then
     echo "ERROR: NET_MAP is required for APP_MODE=gpu_info"
-    echo "Example: sbatch --export=ALL,APP_MODE=gpu_info,NET_MAP=src/gpu_tests/input/1_8.in msu270.slurm"
+    echo "Example: sbatch --export=ALL,APP_MODE=gpu_info,NET_MAP=src/gpu_tests/input/net_map.in msu270.slurm"
     exit 2
   fi
 

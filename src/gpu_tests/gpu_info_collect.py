@@ -3,6 +3,10 @@
 Collect GPU topology and host hints (stdlib only; no matplotlib/numpy).
 Writes gpu_snapshot.json, system_info.json / system_info.txt, and nvidia_smi.txt (topo -m then -L legend; same strings are in the JSON).
 
+Snapshot intra (from nvidia-smi topo -m) includes GPU×GPU, GPU×NIC, NIC×NIC blocks:
+  intra.gpu_labels, intra.matrix_gpu_gpu, intra.nic_labels, intra.matrix_gpu_nic, intra.matrix_nic_nic
+format_version=1 also sets node_id (SLURM_NODEID or --node-id, default 0) for node{n}_* render names.
+
 Rendering is separate:
 
   python3 gpu_info_render.py output/gpu_snapshot.json --out-dir output
@@ -11,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import socket
 import subprocess
@@ -26,8 +31,16 @@ def run_cmd(cmd: list[str]) -> tuple[bool, str, str]:
         return False, "", f"command not found: {' '.join(cmd)}"
 
 
-def parse_topology_lines_plain(lines: list[str]) -> tuple[list[str], list[list[str]]]:
-    """Parse nvidia-smi topo -m; matrix as nested lists (no numpy)."""
+def strip_ansi_escapes(s: str) -> str:
+    """Remove ANSI CSI sequences (colors, underline, etc.) from captured terminal output."""
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", s)
+
+
+def parse_topology_device_matrices(lines: list[str]) -> dict[str, object]:
+    """
+    Parse nvidia-smi topo -m: full device square (GPUs then NICs in header order),
+    then slice GPU×GPU, GPU×NIC, NIC×NIC.
+    """
     header_idx = None
     for i, line in enumerate(lines):
         if re.search(r"\bGPU0\b", line):
@@ -37,28 +50,64 @@ def parse_topology_lines_plain(lines: list[str]) -> tuple[list[str], list[list[s
         raise RuntimeError("Cannot find GPU header in nvidia-smi topo output")
 
     header_tokens = lines[header_idx].split()
-    gpus = [tok for tok in header_tokens if tok.startswith("GPU")]
-    n = len(gpus)
-    m = [["UNK"] * n for _ in range(n)]
-    row = 0
+    gpus = [tok for tok in header_tokens if re.fullmatch(r"GPU\d+", tok)]
+    nics = [tok for tok in header_tokens if re.fullmatch(r"NIC\d+", tok)]
+    devices = gpus + nics
+    if not gpus:
+        raise RuntimeError("No GPU labels in topo header")
+
+    n_dev = len(devices)
+    row_map: dict[str, list[str]] = {}
     for line in lines[header_idx + 1 :]:
         if not line.strip():
             break
         if line.lstrip().startswith("Legend"):
             break
         tokens = line.split()
-        if not tokens or not tokens[0].startswith("GPU"):
+        if not tokens or tokens[0] not in devices:
             continue
-        if row >= n:
-            break
-        for col in range(n):
-            m[row][col] = tokens[col + 1]
-        row += 1
-    return gpus, m
+        name = tokens[0]
+        if name in row_map:
+            continue
+        vals = tokens[1 : 1 + n_dev]
+        while len(vals) < n_dev:
+            vals.append("UNK")
+        row_map[name] = vals[:n_dev]
+
+    missing = [d for d in devices if d not in row_map]
+    if missing:
+        raise RuntimeError(f"Missing topo rows for devices: {missing[:8]}")
+
+    mat = [row_map[d] for d in devices]
+    ng = len(gpus)
+    nn = len(nics)
+    gpu_gpu = [row[:ng] for row in mat[:ng]]
+    gpu_nic: list[list[str]] = []
+    nic_nic: list[list[str]] = []
+    if nn:
+        gpu_nic = [row[ng : ng + nn] for row in mat[:ng]]
+        nic_nic = [row[ng : ng + nn] for row in mat[ng : ng + nn]]
+
+    return {
+        "gpu_labels": gpus,
+        "nic_labels": nics,
+        "matrix_gpu_gpu": gpu_gpu,
+        "matrix_gpu_nic": gpu_nic,
+        "matrix_nic_nic": nic_nic,
+    }
+
+
+def parse_topology_lines_plain(lines: list[str]) -> tuple[list[str], list[list[str]]]:
+    """Parse nvidia-smi topo -m; GPU×GPU block only (backward compatible)."""
+    d = parse_topology_device_matrices(lines)
+    gpus = d["gpu_labels"]
+    mat = d["matrix_gpu_gpu"]
+    assert isinstance(gpus, list) and isinstance(mat, list)
+    return gpus, mat
 
 
 def parse_inter_node_plain(lines: list[str]) -> tuple[list[str], list[list[str]]]:
-    """Parse node-level matrix file (input/1_8.in style), plain lists."""
+    """Parse node-level matrix file (input/net_map.in style), plain lists."""
     header_idx = None
     for i, line in enumerate(lines):
         if "node0" in line or "node1" in line or re.search(r"\bnode\d+\b", line):
@@ -106,7 +155,8 @@ def summarize_internal_switching(
 ) -> dict[str, dict[str, int]]:
     summary: dict[str, dict[str, int]] = {}
     for node_name, topo_path in node_inputs:
-        lines = topo_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        text = strip_ansi_escapes(topo_path.read_text(encoding="utf-8", errors="replace"))
+        lines = text.splitlines()
         gpus, m = parse_topology_lines_plain(lines)
         summary[node_name] = summarize_link_counts(gpus, m)
     return summary
@@ -175,10 +225,14 @@ def collect_system_info_payload(
                     }
 
     ok, out, err = run_cmd(["nvidia-smi", "-L"])
+    if ok:
+        out = strip_ansi_escapes(out)
     data["nvidia_smi_L_raw"] = out if ok else f"ERROR: {err}"
     data["gpus"] = out.splitlines() if ok else []
 
     ok, out, err = run_cmd(["nvidia-smi", "topo", "-m"])
+    if ok:
+        out = strip_ansi_escapes(out)
     data["nvidia_smi_topo_raw"] = out if ok else f"ERROR: {err}"
 
     ok, out, err = run_cmd(["lspci"])
@@ -228,8 +282,12 @@ def collect_gpu_info_only_payload() -> dict:
         "hostname": socket.gethostname(),
     }
     ok, out, err = run_cmd(["nvidia-smi", "-L"])
+    if ok:
+        out = strip_ansi_escapes(out)
     data["nvidia_smi_L_raw"] = out if ok else f"ERROR: {err}"
     ok, out, err = run_cmd(["nvidia-smi", "topo", "-m"])
+    if ok:
+        out = strip_ansi_escapes(out)
     data["nvidia_smi_topo_m_raw"] = out if ok else f"ERROR: {err}"
     return data
 
@@ -319,21 +377,24 @@ def discover_live_topos(input_dir: Path) -> list[tuple[str, Path]]:
     return out
 
 
-def collect_snapshot_v1(inter_node_path: Path | None) -> dict:
+def collect_snapshot_v1(inter_node_path: Path | None, node_id: int = 0) -> dict:
     ts = datetime.now(timezone.utc).isoformat()
     host = socket.gethostname()
 
     ok, out_l, err_l = run_cmd(["nvidia-smi", "-L"])
+    if ok:
+        out_l = strip_ansi_escapes(out_l)
     nvidia_smi_L_raw = out_l if ok else f"ERROR: {err_l}"
 
     ok, out_topo, err_topo = run_cmd(["nvidia-smi", "topo", "-m"])
+    if ok:
+        out_topo = strip_ansi_escapes(out_topo)
     nvidia_smi_topo_m_raw = out_topo if ok else f"ERROR: {err_topo}"
 
     intra: dict | None = None
     if ok and out_topo:
         try:
-            labels, matrix = parse_topology_lines_plain(out_topo.splitlines())
-            intra = {"gpu_labels": labels, "matrix": matrix}
+            intra = parse_topology_device_matrices(out_topo.splitlines())
         except RuntimeError as e:
             intra = {"error": str(e)}
 
@@ -352,6 +413,7 @@ def collect_snapshot_v1(inter_node_path: Path | None) -> dict:
 
     snap: dict = {
         "format_version": 1,
+        "node_id": node_id,
         "timestamp_utc": ts,
         "hostname": host,
         "nvidia_smi_L_raw": nvidia_smi_L_raw,
@@ -386,11 +448,13 @@ def attach_system_to_snapshot_v1(snap: dict, inter_arg: Path | None, input_dir: 
     """Fill snap['system'] using local host commands and optional inter matrix."""
     input_dir.mkdir(parents=True, exist_ok=True)
     ok, out_topo, _ = run_cmd(["nvidia-smi", "topo", "-m"])
+    if ok and out_topo:
+        out_topo = strip_ansi_escapes(out_topo)
     if not ok or not out_topo:
         if inter_arg is not None and inter_arg.is_file():
             inter = inter_arg
         else:
-            inter = _ensure_minimal_inter_1x1(input_dir / "1_8.in")
+            inter = _ensure_minimal_inter_1x1(input_dir / "net_map.in")
         snap["system"] = collect_system_info_payload(input_dir, [], inter)
         return
 
@@ -401,7 +465,7 @@ def attach_system_to_snapshot_v1(snap: dict, inter_arg: Path | None, input_dir: 
     if inter_arg is not None and inter_arg.is_file():
         inter = inter_arg
     else:
-        inter = _ensure_minimal_inter_1x1(input_dir / "1_8.in")
+        inter = _ensure_minimal_inter_1x1(input_dir / "net_map.in")
     snap["system"] = collect_system_info_payload(input_dir, node_inputs, inter)
 
 
@@ -421,11 +485,10 @@ def collect_multi_snapshot(input_dir: Path, net_map: Path) -> dict:
 
     nodes: list[dict] = []
     for name, topo_path in node_inputs:
-        raw = topo_path.read_text(encoding="utf-8", errors="replace")
+        raw = strip_ansi_escapes(topo_path.read_text(encoding="utf-8", errors="replace"))
         intra: dict | None = None
         try:
-            labels, matrix = parse_topology_lines_plain(raw.splitlines())
-            intra = {"gpu_labels": labels, "matrix": matrix}
+            intra = parse_topology_device_matrices(raw.splitlines())
         except RuntimeError as e:
             intra = {"error": str(e)}
         nodes.append(
@@ -439,8 +502,12 @@ def collect_multi_snapshot(input_dir: Path, net_map: Path) -> dict:
     inter_raw = net_map.read_text(encoding="utf-8", errors="replace")
 
     ok, out_l, err_l = run_cmd(["nvidia-smi", "-L"])
+    if ok:
+        out_l = strip_ansi_escapes(out_l)
     nvidia_smi_L_raw = out_l if ok else f"ERROR: {err_l}"
     ok, out_topo, err_topo = run_cmd(["nvidia-smi", "topo", "-m"])
+    if ok:
+        out_topo = strip_ansi_escapes(out_topo)
     nvidia_smi_topo_m_raw = out_topo if ok else f"ERROR: {err_topo}"
 
     system = collect_system_info_payload(input_dir, node_inputs, net_map)
@@ -490,7 +557,7 @@ def main() -> None:
         "--inter-node",
         type=Path,
         default=None,
-        help="Optional inter-node matrix file (1_8.in style); embedded in JSON as raw text",
+        help="Optional inter-node matrix file (net_map.in style); embedded in JSON as raw text",
     )
     p.add_argument(
         "--input-dir",
@@ -508,6 +575,12 @@ def main() -> None:
         "--gpu-info-only",
         action="store_true",
         help="Only write nvidia_smi.txt (topo -m then -L)",
+    )
+    p.add_argument(
+        "--node-id",
+        type=int,
+        default=None,
+        help="Node index n for node{n} in outputs (default: SLURM_NODEID or 0)",
     )
     args = p.parse_args()
 
@@ -529,7 +602,11 @@ def main() -> None:
         print(f"  python3 src/gpu_tests/gpu_info_render.py {json_path} --out-dir {out_dir}")
         return
 
-    snap = collect_snapshot_v1(args.inter_node)
+    nid = args.node_id
+    if nid is None:
+        envn = os.environ.get("SLURM_NODEID", "").strip()
+        nid = int(envn) if envn.isdigit() else 0
+    snap = collect_snapshot_v1(args.inter_node, node_id=nid)
     gpu_dir = Path(__file__).resolve().parent
     input_dir = gpu_dir / "input"
     attach_system_to_snapshot_v1(snap, args.inter_node, input_dir)
