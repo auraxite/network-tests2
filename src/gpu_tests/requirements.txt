@@ -1,0 +1,5 @@
+# gpu_info_render_snapshot.py (plots from gpu_snapshot.json)
+matplotlib>=3.5
+numpy>=1.20
+
+# gpu_info_collect.py — stdlib only, no pip deps
