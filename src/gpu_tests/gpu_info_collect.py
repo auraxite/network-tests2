@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Collect GPU topology and host hints (stdlib only; no matplotlib/numpy).
-Writes gpu_snapshot.json, system_info.*, gpu_info.*, raw nvidia-smi .txt files.
+Writes gpu_snapshot.json, system_info.json / system_info.txt, and nvidia_smi.txt (topo -m then -L legend; same strings are in the JSON).
 
 Rendering is separate:
 
@@ -234,51 +234,31 @@ def collect_gpu_info_only_payload() -> dict:
     return data
 
 
-def save_gpu_info_compat(out_dir: Path, info: dict) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
+def format_nvidia_smi_sidecar_text(info: dict) -> str:
+    """Single text file: topo -m matrix first, then nvidia-smi -L as GPU list legend."""
     nvidia_smi_L_raw = info.get("nvidia_smi_L_raw", "")
     nvidia_smi_topo_raw = info.get("nvidia_smi_topo_m_raw") or info.get("nvidia_smi_topo_raw", "")
-    (out_dir / "nvidia_smi_L.txt").write_text(nvidia_smi_L_raw, encoding="utf-8")
-    (out_dir / "nvidia_smi_topo_m.txt").write_text(nvidia_smi_topo_raw, encoding="utf-8")
+    return (
+        "=== nvidia-smi topo -m ===\n"
+        f"{nvidia_smi_topo_raw.rstrip()}\n\n"
+        "=== nvidia-smi -L (GPU list, legend) ===\n"
+        f"{nvidia_smi_L_raw.rstrip()}\n"
+    )
 
-    gpu_lines = [ln for ln in nvidia_smi_L_raw.splitlines() if ln.startswith("GPU ")]
-    payload = {
-        "timestamp_utc": info.get("timestamp_utc", ""),
-        "hostname": info.get("hostname", ""),
-        "gpu_count": len(gpu_lines),
-        "nvidia_smi_L_raw": nvidia_smi_L_raw,
-        "nvidia_smi_topo_m_raw": nvidia_smi_topo_raw,
-    }
-    (out_dir / "gpu_info.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+
+def save_gpu_info_compat(out_dir: Path, info: dict) -> None:
+    """Write nvidia_smi.txt (topo -m then -L; fields also in gpu_snapshot.json)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "nvidia_smi.txt").write_text(
+        format_nvidia_smi_sidecar_text(info),
         encoding="utf-8",
     )
-
-    report_lines = [
-        f"Timestamp UTC: {payload['timestamp_utc']}",
-        f"Hostname: {payload['hostname']}",
-        "",
-        "== GPU list (nvidia-smi -L) ==",
-        f"GPU count: {payload['gpu_count']}",
-    ]
-    for gl in gpu_lines:
-        report_lines.append(f"- {gl}")
-    if not gpu_lines:
-        report_lines.append("(no GPUs detected via nvidia-smi -L)")
-    report_lines.extend(
-        [
-            "",
-            "== Notes ==",
-            "- For topology class information (NVLink/PCIe/PHB/PIX/...), see nvidia-smi topo -m output.",
-        ]
-    )
-    (out_dir / "gpu_info_report.txt").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
 
 
 def save_system_info(out_dir: Path, info: dict) -> tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "system_info.json"
-    txt_path = out_dir / "system_info_report.txt"
+    txt_path = out_dir / "system_info.txt"
     json_path.write_text(json.dumps(info, indent=2, ensure_ascii=False), encoding="utf-8")
 
     lines: list[str] = []
@@ -485,17 +465,12 @@ def write_snapshot_bundle(out_dir: Path, snap: dict) -> Path:
         encoding="utf-8",
     )
 
-    nvidia_smi_L_raw = snap.get("nvidia_smi_L_raw", "")
-    nvidia_smi_topo_m_raw = snap.get("nvidia_smi_topo_m_raw", "")
-    (out_dir / "nvidia_smi_L.txt").write_text(nvidia_smi_L_raw, encoding="utf-8")
-    (out_dir / "nvidia_smi_topo_m.txt").write_text(nvidia_smi_topo_m_raw, encoding="utf-8")
-
     sys_info = snap.get("system")
     if isinstance(sys_info, dict) and sys_info:
         save_system_info(out_dir, sys_info)
         merged = dict(sys_info)
-        merged["nvidia_smi_L_raw"] = nvidia_smi_L_raw
-        merged["nvidia_smi_topo_m_raw"] = nvidia_smi_topo_m_raw
+        merged["nvidia_smi_L_raw"] = snap.get("nvidia_smi_L_raw", "")
+        merged["nvidia_smi_topo_m_raw"] = snap.get("nvidia_smi_topo_m_raw", "")
         save_gpu_info_compat(out_dir, merged)
     else:
         save_gpu_info_compat(out_dir, snap)
@@ -532,7 +507,7 @@ def main() -> None:
     p.add_argument(
         "--gpu-info-only",
         action="store_true",
-        help="Only write gpu_info.* and nvidia_smi_*.txt (compat with former gpu_info binary)",
+        help="Only write nvidia_smi.txt (topo -m then -L)",
     )
     args = p.parse_args()
 
@@ -542,11 +517,8 @@ def main() -> None:
     if args.gpu_info_only:
         info = collect_gpu_info_only_payload()
         save_gpu_info_compat(out_dir, info)
-        print(f"Saved GPU info to: {out_dir.resolve()}")
-        print("  - gpu_info.json")
-        print("  - gpu_info_report.txt")
-        print("  - nvidia_smi_L.txt")
-        print("  - nvidia_smi_topo_m.txt")
+        print(f"Saved nvidia-smi dump to: {out_dir.resolve()}")
+        print("  - nvidia_smi.txt")
         return
 
     if args.input_dir is not None and args.net_map is not None:

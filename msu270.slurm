@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=nauchka
+#SBATCH --job-name=clustbench
 # MSU270: default GPU partition is "batch" (see: sinfo -s -o "%P %a %G")
 #SBATCH --partition=batch
 #SBATCH --nodes=1
