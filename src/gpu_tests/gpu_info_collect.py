@@ -5,7 +5,7 @@ Writes gpu_snapshot.json, system_info.json / system_info.txt, and nvidia_smi.txt
 
 Rendering is separate:
 
-  python3 gpu_info_render_snapshot.py output/gpu_snapshot.json --out-dir output
+  python3 gpu_info_render.py output/gpu_snapshot.json --out-dir output
 """
 from __future__ import annotations
 
@@ -526,7 +526,7 @@ def main() -> None:
         json_path = write_snapshot_bundle(out_dir, snap)
         print(f"Wrote {json_path} (format_version=2)")
         print("Render PNGs:")
-        print(f"  python3 src/gpu_tests/gpu_info_render_snapshot.py {json_path} --out-dir {out_dir}")
+        print(f"  python3 src/gpu_tests/gpu_info_render.py {json_path} --out-dir {out_dir}")
         return
 
     snap = collect_snapshot_v1(args.inter_node)
@@ -536,7 +536,7 @@ def main() -> None:
     json_path = write_snapshot_bundle(out_dir, snap)
     print(f"Wrote {json_path}")
     print("Render PNGs:")
-    print(f"  python3 src/gpu_tests/gpu_info_render_snapshot.py {json_path} --out-dir {out_dir}")
+    print(f"  python3 src/gpu_tests/gpu_info_render.py {json_path} --out-dir {out_dir}")
 
 
 if __name__ == "__main__":

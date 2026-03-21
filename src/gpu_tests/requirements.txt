@@ -1,4 +1,4 @@
-# gpu_info_render_snapshot.py (plots from gpu_snapshot.json)
+# gpu_info_render.py (plots from gpu_snapshot.json)
 matplotlib>=3.5
 numpy>=1.20
 

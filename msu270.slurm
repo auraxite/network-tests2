@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-# GPU topology: gpu_info_collect.py (stdlib) + gpu_info_render_snapshot.py (matplotlib).
+# GPU topology: gpu_info_collect.py (stdlib) + gpu_info_render.py (matplotlib).
 # APP_MODE:
 #   gpu_info_intra   — one node: snapshot + optional PNGs (default)
 #   gpu_info         — multi-node: set NET_MAP, srun collects live_node*.in per node
@@ -57,9 +57,9 @@ run_gpu_info() {
     --net-map "${NET_MAP}" \
     --out-dir "${out_dir}"
 
-  if ! python3 "${gpu_dir}/gpu_info_render_snapshot.py" "${out_dir}/gpu_snapshot.json" --out-dir "${out_dir}"; then
+  if ! python3 "${gpu_dir}/gpu_info_render.py" "${out_dir}/gpu_snapshot.json" --out-dir "${out_dir}"; then
     echo "Note: PNG render skipped (matplotlib/numpy missing or render error). Run locally:" >&2
-    echo "  python3 ${gpu_dir}/gpu_info_render_snapshot.py ${out_dir}/gpu_snapshot.json --out-dir ${out_dir}" >&2
+    echo "  python3 ${gpu_dir}/gpu_info_render.py ${out_dir}/gpu_snapshot.json --out-dir ${out_dir}" >&2
   fi
 }
 
@@ -72,9 +72,9 @@ run_gpu_info_intra() {
 
   python3 "${gpu_dir}/gpu_info_collect.py" --out-dir "${out_dir}"
 
-  if ! python3 "${gpu_dir}/gpu_info_render_snapshot.py" "${out_dir}/gpu_snapshot.json" --out-dir "${out_dir}"; then
+  if ! python3 "${gpu_dir}/gpu_info_render.py" "${out_dir}/gpu_snapshot.json" --out-dir "${out_dir}"; then
     echo "Note: PNG render skipped (matplotlib/numpy missing or render error). Run locally:" >&2
-    echo "  python3 ${gpu_dir}/gpu_info_render_snapshot.py ${out_dir}/gpu_snapshot.json --out-dir ${out_dir}" >&2
+    echo "  python3 ${gpu_dir}/gpu_info_render.py ${out_dir}/gpu_snapshot.json --out-dir ${out_dir}" >&2
   fi
 }
 
