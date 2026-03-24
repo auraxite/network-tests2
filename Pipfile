@@ -1,0 +1,19 @@
+# GPU snapshot render (gpu_info_render.py) — matplotlib + numpy.
+# См. src/gpu_tests/README.md
+#
+# Установка:  cd network-tests2 && pipenv install
+# Запуск:     pipenv run python src/gpu_tests/gpu_info_render.py ...
+
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[packages]
+matplotlib = ">=3.5"
+numpy = ">=1.20"
+
+[dev-packages]
+
+[requires]
+python_version = "3"
