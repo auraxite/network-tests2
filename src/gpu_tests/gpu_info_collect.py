@@ -213,20 +213,21 @@ def collect_snapshot_v1(inter_node_path: Path | None, node_id: int = 0) -> dict:
 
 
 def write_snapshot(out_dir: Path, snap: dict) -> Path:
-    """Записать только gpu_snapshot.json."""
+    """Записать снимок в node{n}_snapshot.json."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    json_path = out_dir / "gpu_snapshot.json"
+    node_id = int(snap.get("node_id", 0))
+    json_path = out_dir / f"node{node_id}_snapshot.json"
     json_path.write_text(json.dumps(snap, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return json_path
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Collect gpu_snapshot.json (single output file).")
+    p = argparse.ArgumentParser(description="Collect node{n}_snapshot.json (single output file).")
     p.add_argument(
         "--out-dir",
         type=Path,
         default=Path("output"),
-        help="Directory for gpu_snapshot.json",
+        help="Directory for node{n}_snapshot.json",
     )
     p.add_argument(
         "--inter-node",
