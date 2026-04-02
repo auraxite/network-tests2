@@ -2,8 +2,8 @@
 """
 Строит heatmap-матрицы по текстовому выводу gpu_one_to_one (stdout или --out).
 
-В логе можно задать номер узла строкой «Node: N» (или --node-id N).
-PNG: node<N>_avg.png, node<N>_median.png, …
+В логе можно задать hostname строкой «Hostname: cn2» (или --hostname cn2).
+PNG: cn2_avg.png, cn2_median.png, … (если hostname неизвестен: node<N>_...).
 """
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ PAIR_LINE_RE = re.compile(
 
 RANKS_LINE_RE = re.compile(r"^Ranks:\s*(\d+)")
 NODE_LINE_RE = re.compile(r"^Node:\s*(\d+)\s*$", re.I)
+HOSTNAME_LINE_RE = re.compile(r"^Hostname:\s*(\S+)\s*$", re.I)
 BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
 _DECIMAL_MB = 1_000_000
 WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
@@ -51,7 +52,7 @@ ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
 
 METRIC_KEYS = ("avg_us", "median_us", "min_us", "max_us", "var_us")
 
-# Суффикс файла: node0_avg.png и т.д.
+# Суффикс файла: cn2_avg.png или node0_avg.png.
 METRIC_FILE_STEM = {
 	"avg_us": "avg",
 	"median_us": "median",
@@ -95,6 +96,8 @@ def parse_gpu_one_to_one_text(
 				meta["ranks"] = int(m.group(1))
 		elif (m := NODE_LINE_RE.match(line)):
 			meta["node"] = int(m.group(1))
+		elif (m := HOSTNAME_LINE_RE.match(line)):
+			meta["hostname"] = m.group(1)
 		elif (m := BYTES_LINE_RE.match(line)):
 			meta["bytes"] = int(m.group(1))
 		elif (m := WARMUP_LINE_RE.match(line)):
@@ -138,12 +141,16 @@ def fill_matrices(
 	return mats
 
 
-def _title_block(meta: dict[str, Any], metric: str, *, node_id: int | None) -> str:
+def _title_block(
+	meta: dict[str, Any], metric: str, *, node_id: int | None, hostname: str | None
+) -> str:
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
 	parts: list[str] = []
-	if node_id is not None:
-		parts.append(f"Узел {node_id}")
+	if hostname:
+		parts.append(f"Узел {hostname}")
+	elif node_id is not None:
+		parts.append(f"Узел node{node_id}")
 	parts.extend(
 		[
 			title_line,
@@ -238,7 +245,12 @@ def main() -> int:
 		"--node-id",
 		type=int,
 		default=None,
-		help="Номер узла для заголовка и имени node<N>_....png; иначе из строки Node: в логе, иначе 0",
+		help="(legacy) Номер узла для fallback-имени node<N>_....png, если hostname не задан",
+	)
+	p.add_argument(
+		"--hostname",
+		default=None,
+		help="Hostname для заголовка и имени <hostname>_....png; иначе из строки Hostname: в логе",
 	)
 	p.add_argument(
 		"--metrics",
@@ -274,9 +286,9 @@ def main() -> int:
 	mats = fill_matrices(n, pairs)
 	gmap = meta.get("global_by_rank")
 	if isinstance(gmap, dict) and len(gmap) > 0:
-		tick_labels = [f"G{int(gmap.get(i, i))}" for i in range(n)]
+		tick_labels = [f"gpu{int(gmap.get(i, i))}" for i in range(n)]
 	else:
-		tick_labels = [f"G{i}" for i in range(n)]
+		tick_labels = [f"gpu{i}" for i in range(n)]
 
 	want = {m.strip() for m in args.metrics.split(",") if m.strip()}
 	unknown = want - set(METRIC_KEYS)
@@ -289,6 +301,12 @@ def main() -> int:
 		node_id = int(meta["node"])
 	if node_id is None:
 		node_id = 0
+	hostname = args.hostname
+	if hostname is None and "hostname" in meta:
+		hostname = str(meta["hostname"])
+	if hostname:
+		# Для имени файла оставляем только безопасные символы.
+		hostname = re.sub(r"[^0-9A-Za-z_.-]", "_", hostname)
 
 	args.out_dir.mkdir(parents=True, exist_ok=True)
 	params = _param_block(meta)
@@ -298,12 +316,13 @@ def main() -> int:
 		if key not in want:
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
-		out_file = args.out_dir / f"node{node_id}_{stem}.png"
+		prefix = hostname if hostname else f"node{node_id}"
+		out_file = args.out_dir / f"{prefix}_{stem}.png"
 		draw_heatmap(
 			mats[key],
 			key,
 			out_file,
-			title_block=_title_block(meta, key, node_id=node_id),
+			title_block=_title_block(meta, key, node_id=node_id, hostname=hostname),
 			param_block=params,
 			cmap=cmap_resolved,
 			dpi=args.dpi,

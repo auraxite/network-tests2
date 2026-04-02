@@ -30,6 +30,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -93,7 +94,8 @@ void help(int rank) {
 			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
 			  << "  -o FILE         same as --out\n"
 			  << "Env (global G in pair lines; heterogeneous nodes OK):\n"
-			  << "  SLURM_NODEID   node id (GPU count per node = ranks on that node)\n"
+			  << "  HOSTNAME=cnN   preferred node key source (uses N)\n"
+			  << "  SLURM_NODEID   fallback node key source\n"
 			  << "  SLURM_LOCALID or OMPI_COMM_WORLD_LOCAL_RANK  slot hint on node\n";
 }
 
@@ -283,12 +285,48 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	return ack;
 }
 
-// Номер узла для строки Node: (печать с rank 0); SLURM_NODEID — индекс узла в задании Slurm.
-static int slurm_node_id() {
+static int slurm_node_id_fallback() {
 	const char *s = std::getenv("SLURM_NODEID");
 	if (s && *s)
 		return std::atoi(s);
 	return 0;
+}
+
+static std::string host_name() {
+	const char *env_host = std::getenv("HOSTNAME");
+	if (env_host && *env_host)
+		return std::string(env_host);
+	char buf[256];
+	buf[0] = '\0';
+	if (gethostname(buf, sizeof(buf)) == 0) {
+		buf[sizeof(buf) - 1] = '\0';
+		return std::string(buf);
+	}
+	return std::string();
+}
+
+// Извлекает N из hostname вида cnN (например cn2 -> 2). Иначе -1.
+static int node_id_from_cn_host(const std::string &host) {
+	if (host.size() < 3 || host[0] != 'c' || host[1] != 'n')
+		return -1;
+	size_t i = 2;
+	int value = 0;
+	bool has_digit = false;
+	while (i < host.size() && host[i] >= '0' && host[i] <= '9') {
+		has_digit = true;
+		value = value * 10 + static_cast<int>(host[i] - '0');
+		++i;
+	}
+	if (!has_digit)
+		return -1;
+	return value;
+}
+
+static int node_id_for_layout() {
+	const int host_key = node_id_from_cn_host(host_name());
+	if (host_key >= 0)
+		return host_key;
+	return slurm_node_id_fallback();
 }
 
 // Подсказка слота на узле; −1 — сортировать только по MPI rank внутри узла.
@@ -424,7 +462,8 @@ int main(int argc, char **argv) {
 		}
 		{
 			std::ostringstream oss;
-			oss << "Node: " << slurm_node_id() << "\n";
+			oss << "Hostname: " << host_name() << "\n";
+			oss << "Node: " << node_id_for_layout() << "\n";
 			mirror(oss.str());
 		}
 		{
@@ -446,7 +485,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	int node_pack[2] = {slurm_node_id(), local_slot_hint()};
+	int node_pack[2] = {node_id_for_layout(), local_slot_hint()};
 	std::vector<int> node_recv;
 	if (rank == 0)
 		node_recv.resize(static_cast<size_t>(nproc) * 2);
