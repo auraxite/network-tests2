@@ -1,0 +1,1 @@
+docker run --rm -v "$(pwd)":/app -w /app msu270 mpicxx -O2 gpu_one_to_one.cpp -o gpu_one_to_one -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart
