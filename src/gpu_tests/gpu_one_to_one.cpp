@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
-#include <map>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
@@ -95,9 +94,8 @@ void help(int rank) {
 			  << "  --mode M        auto | host\n"
 			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
 			  << "  -o FILE         same as --out\n"
-			  << "Env (global G in pair lines; heterogeneous nodes OK):\n"
-			  << "  HOSTNAME=cnN   preferred node key source (uses N)\n"
-			  << "  SLURM_NODEID   fallback node key source\n"
+			  << "Env (layout by local indices):\n"
+			  << "  SLURM_NODEID   node key source\n"
 			  << "  SLURM_LOCALID or OMPI_COMM_WORLD_LOCAL_RANK  slot hint on node\n";
 }
 
@@ -292,13 +290,6 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	return ack;
 }
 
-static int slurm_node_id_fallback() {
-	const char *s = std::getenv("SLURM_NODEID");
-	if (s && *s)
-		return std::atoi(s);
-	return 0;
-}
-
 static std::string host_name() {
 	const char *env_host = std::getenv("HOSTNAME");
 	if (env_host && *env_host)
@@ -312,28 +303,11 @@ static std::string host_name() {
 	return std::string();
 }
 
-// Извлекает N из hostname вида cnN (например cn2 -> 2). Иначе -1.
-static int node_id_from_cn_host(const std::string &host) {
-	if (host.size() < 3 || host[0] != 'c' || host[1] != 'n')
-		return -1;
-	size_t i = 2;
-	int value = 0;
-	bool has_digit = false;
-	while (i < host.size() && host[i] >= '0' && host[i] <= '9') {
-		has_digit = true;
-		value = value * 10 + static_cast<int>(host[i] - '0');
-		++i;
-	}
-	if (!has_digit)
-		return -1;
-	return value;
-}
-
-static int node_id_for_layout() {
-	const int host_key = node_id_from_cn_host(host_name());
-	if (host_key >= 0)
-		return host_key;
-	return slurm_node_id_fallback();
+static int slurm_node_id() {
+	const char *s = std::getenv("SLURM_NODEID");
+	if (s && *s)
+		return std::atoi(s);
+	return -1;
 }
 
 // Подсказка слота на узле; −1 — сортировать только по MPI rank внутри узла.
@@ -347,66 +321,13 @@ static int local_slot_hint() {
 	return -1;
 }
 
-/*
- * recv2[2*r]=node_id, recv2[2*r+1]=local_hint для rank r.
- * Глобальный G: узлы по возрастанию node_id, на узле слоты 0..(число рангов−1).
- */
-static std::vector<int> build_global_gpu_ids(int nproc,
-											 const std::vector<int> &recv2) {
-	std::vector<int> node_of(static_cast<size_t>(nproc));
-	std::vector<int> loc_raw(static_cast<size_t>(nproc));
-	for (int r = 0; r < nproc; ++r) {
-		node_of[static_cast<size_t>(r)] = recv2[static_cast<size_t>(2 * r)];
-		loc_raw[static_cast<size_t>(r)] = recv2[static_cast<size_t>(2 * r + 1)];
-	}
-	std::map<int, std::vector<int>> by_node;
-	for (int r = 0; r < nproc; ++r)
-		by_node[node_of[static_cast<size_t>(r)]].push_back(r);
-	for (auto &pr : by_node) {
-		auto &vec = pr.second;
-		std::sort(vec.begin(), vec.end(), [&](int a, int b) {
-			const int la = loc_raw[static_cast<size_t>(a)];
-			const int lb = loc_raw[static_cast<size_t>(b)];
-			if (la >= 0 && lb >= 0 && la != lb)
-				return la < lb;
-			return a < b;
-		});
-	}
-	std::vector<int> local_slot(static_cast<size_t>(nproc), 0);
-	for (auto &pr : by_node) {
-		const auto &vec = pr.second;
-		for (size_t i = 0; i < vec.size(); ++i)
-			local_slot[static_cast<size_t>(vec[i])] = static_cast<int>(i);
-	}
-	std::vector<int> nodes;
-	nodes.reserve(by_node.size());
-	for (const auto &pr : by_node)
-		nodes.push_back(pr.first);
-	std::sort(nodes.begin(), nodes.end());
-	std::map<int, int> offset;
-	int acc = 0;
-	for (int nid : nodes) {
-		offset[nid] = acc;
-		acc += static_cast<int>(by_node[nid].size());
-	}
-	std::vector<int> out(static_cast<size_t>(nproc));
-	for (int r = 0; r < nproc; ++r)
-		out[static_cast<size_t>(r)] =
-			offset[node_of[static_cast<size_t>(r)]] +
-			local_slot[static_cast<size_t>(r)];
-	return out;
-}
-
-static std::string format_pair_line(int src_rank, int dst_rank,
-									const std::vector<int> &global_gpu, double avg_us,
+static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 									double med_us, double min_us, double max_us,
 									double var_us) {
-	const int gs = global_gpu[static_cast<size_t>(src_rank)];
-	const int gd = global_gpu[static_cast<size_t>(dst_rank)];
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
-	oss << "pair G" << gs << " -> G" << gd << " (r" << src_rank << ":0 -> r"
-		<< dst_rank << ":0"
+	oss << "pair " << src_rank << " -> " << dst_rank << " (r" << src_rank << " -> r"
+		<< dst_rank
 		<< ") avg_us=" << avg_us << " median_us=" << med_us
 		<< " min_us=" << min_us << " max_us=" << max_us << " var_us=" << var_us
 		<< "\n";
@@ -444,26 +365,25 @@ int main(int argc, char **argv) {
 			*out_file << s;
 	};
 
+	constexpr int HOST_LEN = 64;
+	char my_host[HOST_LEN];
+	std::vector<char> hosts_recv;
+	std::snprintf(my_host, sizeof(my_host), "%s", host_name().c_str());
+
+	constexpr int PCI_LEN = 32;
+	char my_pci[PCI_LEN];
+	std::vector<char> pci_recv;
+	std::snprintf(my_pci, sizeof(my_pci), "n/a");
+
 	int local_gpu_count = 0;
-	cudaError_t cnt_err = cudaGetDeviceCount(
-		&local_gpu_count); // сколько GPU видит именно этот процесс
+	cudaError_t cnt_err = cudaGetDeviceCount(&local_gpu_count); // сколько GPU видит именно этот процесс
 	if (cnt_err != cudaSuccess)
 		local_gpu_count = 0;
-
 	std::vector<int> gpu_counts(nproc, 0);
-	/* Каждый rank шлёт 1×MPI_INT (local_gpu_count); root=0 получает массив
-	 * gpu_counts[0..nproc-1] по порядку рангов. */
 	mpi_ok(MPI_Gather(&local_gpu_count, 1, MPI_INT,
 		gpu_counts.data(), 1, MPI_INT,
 		0, MPI_COMM_WORLD),
 		   "MPI_Gather");
-
-	constexpr int HOST_LEN = 64;
-	constexpr int PCI_LEN = 32;
-	char my_host[HOST_LEN];
-	std::snprintf(my_host, sizeof(my_host), "%s", host_name().c_str());
-	char my_pci[PCI_LEN];
-	std::snprintf(my_pci, sizeof(my_pci), "n/a");
 	if (local_gpu_count > 0) {
 		cudaError_t set_err = cudaSetDevice(0);
 		if (set_err == cudaSuccess) {
@@ -472,17 +392,18 @@ int main(int argc, char **argv) {
 				std::snprintf(my_pci, sizeof(my_pci), "n/a");
 		}
 	}
+
 	int my_slot = local_slot_hint();
-	int my_node = node_id_for_layout();
-	std::vector<char> hosts_recv;
-	std::vector<char> pci_recv;
 	std::vector<int> slot_recv;
+
+	int my_node = slurm_node_id();
 	std::vector<int> node_recv;
+	
 	if (rank == 0) {
 		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
 		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
 		slot_recv.resize(static_cast<size_t>(nproc));
-		node_recv.resize(static_cast<size_t>(nproc) * 2);
+		node_recv.resize(static_cast<size_t>(nproc));
 	}
 	mpi_ok(MPI_Gather(my_host, HOST_LEN, MPI_CHAR,
 					  rank == 0 ? hosts_recv.data() : nullptr, HOST_LEN, MPI_CHAR, 0,
@@ -496,11 +417,12 @@ int main(int argc, char **argv) {
 					  rank == 0 ? slot_recv.data() : nullptr, 1, MPI_INT, 0,
 					  MPI_COMM_WORLD),
 		   "MPI_Gather local slot");
+	mpi_ok(MPI_Gather(&my_node, 1, MPI_INT,
+					  rank == 0 ? node_recv.data() : nullptr, 1, MPI_INT, 0,
+					  MPI_COMM_WORLD),
+		   "MPI_Gather local node");
 
-	// Мастер: печать режима и проверка схемы «1 MPI rank = 1 видимый GPU».
 	if (rank == 0) {
-		mirror(std::string("CUDA-aware MPI: ") + (cuda_aware ? "yes" : "no") +
-			   "\n");
 		{
 			std::ostringstream oss;
 			oss << "Mode: " << (via_host ? "host" : "GPUDirect") << "\n";
@@ -509,7 +431,6 @@ int main(int argc, char **argv) {
 		{
 			std::ostringstream oss;
 			oss << "Hostname: " << host_name() << "\n";
-			oss << "Node: " << node_id_for_layout() << "\n";
 			mirror(oss.str());
 		}
 		{
@@ -531,18 +452,6 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	int node_pack[2] = {my_node, my_slot};
-	mpi_ok(MPI_Gather(node_pack, 2, MPI_INT,
-					  rank == 0 ? node_recv.data() : nullptr, 2, MPI_INT, 0,
-					  MPI_COMM_WORLD),
-		   "MPI_Gather node layout");
-	std::vector<int> global_gpu;
-	if (rank == 0)
-		global_gpu = build_global_gpu_ids(nproc, node_recv);
-
-	/* Мастер: полный перебор пар (src_rank, dst_rank), печать метрик; воркеры в
-	 * ветке else. Сообщения: тег 1 — структура Task, тег 2 — вектор из 6 double
-	 * (метрики). */
 	if (rank == 0) {
 		{
 			std::ostringstream oss;
@@ -556,11 +465,10 @@ int main(int argc, char **argv) {
 			const char *p = pci_recv.data() + static_cast<size_t>(r) * PCI_LEN;
 			std::ostringstream oss;
 			oss << "  r" << r << " host=" << h
-				<< " node=" << node_recv[static_cast<size_t>(2 * r)]
-				<< " slot=" << slot_recv[static_cast<size_t>(r)]
-				<< " gpu=0"
-				<< " pci=" << p
-				<< " G=" << global_gpu[static_cast<size_t>(r)] << "\n";
+				<< " local_node=" << node_recv[static_cast<size_t>(r)]
+				<< " local_slot=" << slot_recv[static_cast<size_t>(r)]
+				<< " local_gpu=0"
+				<< " pci=" << p << "\n";
 			mirror(oss.str());
 		}
 		std::cout << std::fixed << std::setprecision(3);
@@ -580,8 +488,8 @@ int main(int argc, char **argv) {
 				if (src_rank == dst_rank) {
 					if (src_rank == 0) {
 						auto ack = run_task(rank, t, args, via_host);
-						if (ack[5] > 0.5) {
-							mirror(format_pair_line(src_rank, dst_rank, global_gpu,
+						if (ack[5] == 1.0) { // ack[5] - код валидности результата
+							mirror(format_pair_line(src_rank, dst_rank,
 													ack[0], ack[1], ack[2], ack[3],
 													ack[4]));
 						}
@@ -592,8 +500,8 @@ int main(int argc, char **argv) {
 						mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, src_rank, 2,
 										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 							   "MPI_Recv ack (same-rank non-root)");
-						if (ack[5] > 0.5) {
-							mirror(format_pair_line(src_rank, dst_rank, global_gpu,
+						if (ack[5] == 1.0) {
+							mirror(format_pair_line(src_rank, dst_rank,
 													ack[0], ack[1], ack[2], ack[3],
 													ack[4]));
 						}
@@ -603,42 +511,44 @@ int main(int argc, char **argv) {
 
 				/* Разные ранги: копия Task отправителю и получателю (если это
 				 * не мастер). */
-				if (src_rank != 0)
-					mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src_rank, 1,
-									MPI_COMM_WORLD),
-						   "MPI_Send Task (src)");
-				if (dst_rank != 0)
-					mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, dst_rank, 1,
-									MPI_COMM_WORLD),
-						   "MPI_Send Task (dst)");
+				else {
+					if (src_rank != 0)
+						mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src_rank, 1,
+										MPI_COMM_WORLD),
+							"MPI_Send Task (src)");
+					if (dst_rank != 0)
+						mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, dst_rank, 1,
+										MPI_COMM_WORLD),
+							"MPI_Send Task (dst)");
 
-				std::vector<double> metric(6, 0.0);
-				if (src_rank == 0 || dst_rank == 0) {
-					auto ack0 = run_task(rank, t, args, via_host);
-					if (ack0[5] > 0.5)
-						metric = ack0;
-				}
+					std::vector<double> metric(6, 0.0);
+					if (src_rank == 0 || dst_rank == 0) {
+						auto ack0 = run_task(rank, t, args, via_host);
+						if (ack0[5] == 1.0)
+							metric = ack0;
+					}
 
-				if (src_rank != 0) {
-					std::vector<double> ack(6, 0.0);
-					mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, src_rank, 2,
-									MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-						   "MPI_Recv ack (src)");
-					if (ack[5] > 0.5)
-						metric = ack;
-				}
-				if (dst_rank != 0) {
-					std::vector<double> ack(6, 0.0);
-					mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, dst_rank, 2,
-									MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-						   "MPI_Recv ack (dst)");
-					if (ack[5] > 0.5)
-						metric = ack;
-				}
+					if (src_rank != 0) {
+						std::vector<double> ack(6, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, src_rank, 2,
+										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+							"MPI_Recv ack (src)");
+						if (ack[5] == 1.0)
+							metric = ack;
+					}
+					if (dst_rank != 0) {
+						std::vector<double> ack(6, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, dst_rank, 2,
+										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+							"MPI_Recv ack (dst)");
+						if (ack[5] == 1.0)
+							metric = ack;
+					}
 
-				mirror(format_pair_line(src_rank, dst_rank, global_gpu, metric[0],
-										metric[1], metric[2], metric[3],
-										metric[4]));
+					mirror(format_pair_line(src_rank, dst_rank, metric[0],
+											metric[1], metric[2], metric[3],
+											metric[4]));
+				}
 			}
 		}
 

@@ -17,7 +17,7 @@ from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 
 PAIR_LINE_RE = re.compile(
-    r"^pair (?:g|G|GPU)(\d+) -> (?:g|G|GPU)(\d+) \(r(\d+):0 -> r(\d+):0\) "
+    r"^pair (?:(?:g|G|GPU))?(\d+) -> (?:(?:g|G|GPU))?(\d+) \(r(\d+)(?::0)? -> r(\d+)(?::0)?\) "
     r"avg_us=([0-9.eE+-]+)\s+"
     r"median_us=([0-9.eE+-]+)\s+"
     r"min_us=([0-9.eE+-]+)\s+"
@@ -74,17 +74,13 @@ def resolve_colormap(name: str) -> Colormap:
 	return cmap
 
 """Разбор текста лога в метаданные и список пар rank->rank."""
-def parse_gpu_one_to_one_text(
-	text: str,
-) -> tuple[dict[str, Any], list[tuple[int, int, list[float]]]]:
+def parse_gpu_one_to_one_text(text: str,) -> tuple[dict[str, Any], list[tuple[int, int, list[float]]]]:
 	meta: dict[str, Any] = {}
 	pairs: list[tuple[int, int, list[float]]] = []
 
 	for raw in text.splitlines():
 		line = raw.strip()
-		if line.startswith("CUDA-aware MPI:"):
-			meta["cuda_aware"] = line.split(":", 1)[1].strip()
-		elif line.startswith("Mode:"):
+		if line.startswith("Mode:"):
 			meta["mode"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Ranks:"):
 			m = RANKS_LINE_RE.match(line)
@@ -101,7 +97,7 @@ def parse_gpu_one_to_one_text(
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m:
-				_ = int(m.group(1))  # G-индексы присутствуют в логе, но не используются в рендере.
+				_ = int(m.group(1))
 				_ = int(m.group(2))
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
@@ -244,7 +240,7 @@ def main() -> int:
 
 	meta, pairs = parse_gpu_one_to_one_text(text)
 	if not pairs:
-		print("gpu_render: no matching 'pair GPU...' lines found.", file=sys.stderr)
+		print("gpu_render: no matching 'pair ...' lines found.", file=sys.stderr)
 		return 1
 
 	n = matrix_size(meta, pairs)
@@ -259,7 +255,6 @@ def main() -> int:
 
 	hostname = str(meta["hostname"]) if "hostname" in meta else None
 	if hostname:
-		# Для имени файла оставляем только безопасные символы.
 		hostname = re.sub(r"[^0-9A-Za-z_.-]", "_", hostname)
 	else:
 		hostname = "host-unknown"
