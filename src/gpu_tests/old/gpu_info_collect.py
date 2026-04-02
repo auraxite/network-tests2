@@ -29,13 +29,7 @@ def strip_ansi_escapes(s: str) -> str:
 
 
 def collect_mpi_gpudirect_hints() -> dict[str, str]:
-    """
-    Эвристики для CUDA-aware MPI и GPUDirect (не доказывают RDMA на сети).
-
-    В приложении нет отдельного «if rdma» — RDMA выбирает стек (MPI/UCX/драйвер),
-    если вы передаёте указатели на GPU и окружение собрано (peermem, P2P и т.д.).
-    Здесь только то, что можно снять без запуска MPI-программы.
-    """
+    """Эвристики для CUDA-aware MPI и GPUDirect (не доказывают RDMA на сети)."""
     hints: dict[str, str] = {}
     ok, out, err = run_cmd(
         ["sh", "-c", "lsmod 2>/dev/null | grep -E '^nvidia_peermem|^nv_peer_mem' || true"]

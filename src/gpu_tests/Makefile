@@ -26,19 +26,20 @@ endif
 
 MPI_CXXFLAGS += $(CUDA_CPPFLAGS)
 
-EXECS = gpu_one_to_one
-SRCS = gpu_one_to_one.cpp
-OBJS = $(SRCS:.cpp=.o)
+EXECS = gpu_one_to_one gpu_all_to_all
 
 all: $(EXECS)
 
-gpu_one_to_one: $(OBJS)
+gpu_one_to_one: gpu_one_to_one.o
+	$(MPI_CXX) $(MPI_CXXFLAGS) -o $@ $^ $(CUDA_LIBS)
+
+gpu_all_to_all: gpu_all_to_all.o
 	$(MPI_CXX) $(MPI_CXXFLAGS) -o $@ $^ $(CUDA_LIBS)
 
 %.o: %.cpp
 	$(MPI_CXX) $(MPI_CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(EXECS)
+	rm -f *.o $(EXECS)
 
 .PHONY: all clean
