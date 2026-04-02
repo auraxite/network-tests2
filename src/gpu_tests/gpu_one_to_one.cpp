@@ -168,6 +168,11 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	const bool is_receiver = (rank == t.dst_rank);
 	if (!is_sender && !is_receiver)
 		return ack;
+	if (t.src_rank == t.dst_rank && t.src_gpu == t.dst_gpu) {
+		// Диагональ "сам в себя": по договоренности считаем метрики нулевыми.
+		ack[5] = 1.0;
+		return ack;
+	}
 
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
