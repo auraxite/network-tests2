@@ -26,6 +26,8 @@
 #include <map>
 #include <iomanip>
 #include <iostream>
+#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -451,6 +453,45 @@ int main(int argc, char **argv) {
 		0, MPI_COMM_WORLD),
 		   "MPI_Gather");
 
+	constexpr int HOST_LEN = 64;
+	constexpr int PCI_LEN = 32;
+	char my_host[HOST_LEN];
+	std::snprintf(my_host, sizeof(my_host), "%s", host_name().c_str());
+	char my_pci[PCI_LEN];
+	std::snprintf(my_pci, sizeof(my_pci), "n/a");
+	if (local_gpu_count > 0) {
+		cudaError_t set_err = cudaSetDevice(0);
+		if (set_err == cudaSuccess) {
+			cudaError_t bus_err = cudaDeviceGetPCIBusId(my_pci, sizeof(my_pci), 0);
+			if (bus_err != cudaSuccess)
+				std::snprintf(my_pci, sizeof(my_pci), "n/a");
+		}
+	}
+	int my_slot = local_slot_hint();
+	int my_node = node_id_for_layout();
+	std::vector<char> hosts_recv;
+	std::vector<char> pci_recv;
+	std::vector<int> slot_recv;
+	std::vector<int> node_recv;
+	if (rank == 0) {
+		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
+		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
+		slot_recv.resize(static_cast<size_t>(nproc));
+		node_recv.resize(static_cast<size_t>(nproc) * 2);
+	}
+	mpi_ok(MPI_Gather(my_host, HOST_LEN, MPI_CHAR,
+					  rank == 0 ? hosts_recv.data() : nullptr, HOST_LEN, MPI_CHAR, 0,
+					  MPI_COMM_WORLD),
+		   "MPI_Gather hostnames");
+	mpi_ok(MPI_Gather(my_pci, PCI_LEN, MPI_CHAR,
+					  rank == 0 ? pci_recv.data() : nullptr, PCI_LEN, MPI_CHAR, 0,
+					  MPI_COMM_WORLD),
+		   "MPI_Gather pci bus ids");
+	mpi_ok(MPI_Gather(&my_slot, 1, MPI_INT,
+					  rank == 0 ? slot_recv.data() : nullptr, 1, MPI_INT, 0,
+					  MPI_COMM_WORLD),
+		   "MPI_Gather local slot");
+
 	// Мастер: печать режима и проверка схемы «1 MPI rank = 1 видимый GPU».
 	if (rank == 0) {
 		mirror(std::string("CUDA-aware MPI: ") + (cuda_aware ? "yes" : "no") +
@@ -485,10 +526,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	int node_pack[2] = {node_id_for_layout(), local_slot_hint()};
-	std::vector<int> node_recv;
-	if (rank == 0)
-		node_recv.resize(static_cast<size_t>(nproc) * 2);
+	int node_pack[2] = {my_node, my_slot};
 	mpi_ok(MPI_Gather(node_pack, 2, MPI_INT,
 					  rank == 0 ? node_recv.data() : nullptr, 2, MPI_INT, 0,
 					  MPI_COMM_WORLD),
@@ -505,6 +543,19 @@ int main(int argc, char **argv) {
 			std::ostringstream oss;
 			oss << "Ranks: " << nproc
 				<< ", total GPUs (1 per rank): " << nproc << "\n";
+			mirror(oss.str());
+		}
+		mirror("Rank map:\n");
+		for (int r = 0; r < nproc; ++r) {
+			const char *h = hosts_recv.data() + static_cast<size_t>(r) * HOST_LEN;
+			const char *p = pci_recv.data() + static_cast<size_t>(r) * PCI_LEN;
+			std::ostringstream oss;
+			oss << "  r" << r << " host=" << h
+				<< " node=" << node_recv[static_cast<size_t>(2 * r)]
+				<< " slot=" << slot_recv[static_cast<size_t>(r)]
+				<< " gpu=0"
+				<< " pci=" << p
+				<< " G=" << global_gpu[static_cast<size_t>(r)] << "\n";
 			mirror(oss.str());
 		}
 		std::cout << std::fixed << std::setprecision(3);

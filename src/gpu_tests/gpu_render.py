@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
 Строит heatmap-матрицы по текстовому выводу gpu_one_to_one (stdout или --out).
-
-В логе можно задать hostname строкой «Hostname: cn2» (или --hostname cn2).
-PNG: cn2_avg.png, cn2_median.png, … (если hostname неизвестен: node<N>_...).
 """
 from __future__ import annotations
 
@@ -18,41 +15,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import Colormap, LinearSegmentedColormap
 
-LATENCY_GR = LinearSegmentedColormap.from_list(
-	"latency_gr",
-	["#045a2d", "#16a34a", "#f97316", "#dc2626", "#7f1d1d"],
-	N=256,
-)
 
-
-def resolve_colormap(name: str) -> Colormap:
-	if name == "latency_gr":
-		base: Colormap = LATENCY_GR
-	else:
-		base = mpl.colormaps[name] if hasattr(mpl, "colormaps") else mpl.cm.get_cmap(name)
-	cmap = base.copy()
-	cmap.set_bad(color="white", alpha=1.0)
-	return cmap
-
-# G… — глобальный id; r… — MPI rank (индекс в матрице).
 PAIR_LINE_RE = re.compile(
-	r"^pair (?:g|G|GPU)(\d+) -> (?:g|G|GPU)(\d+) \(r(\d+):0 -> r(\d+):0\) "
-	r"avg_us=([0-9.eE+-]+) median_us=([0-9.eE+-]+) min_us=([0-9.eE+-]+) "
-	r"max_us=([0-9.eE+-]+) var_us=([0-9.eE+-]+)\s*$"
+    r"^pair (?:g|G|GPU)(\d+) -> (?:g|G|GPU)(\d+) \(r(\d+):0 -> r(\d+):0\) "
+    r"avg_us=([0-9.eE+-]+)\s+"
+    r"median_us=([0-9.eE+-]+)\s+"
+    r"min_us=([0-9.eE+-]+)\s+"
+    r"max_us=([0-9.eE+-]+)\s+"
+    r"var_us=([0-9.eE+-]+)\s*$"
 )
-
-RANKS_LINE_RE = re.compile(r"^Ranks:\s*(\d+)")
-NODE_LINE_RE = re.compile(r"^Node:\s*(\d+)\s*$", re.I)
-HOSTNAME_LINE_RE = re.compile(r"^Hostname:\s*(\S+)\s*$", re.I)
-BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
-_DECIMAL_MB = 1_000_000
-WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
-ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
-
-
 METRIC_KEYS = ("avg_us", "median_us", "min_us", "max_us", "var_us")
-
-# Суффикс файла: cn2_avg.png или node0_avg.png.
 METRIC_FILE_STEM = {
 	"avg_us": "avg",
 	"median_us": "median",
@@ -60,8 +32,6 @@ METRIC_FILE_STEM = {
 	"max_us": "max",
 	"var_us": "var",
 }
-
-
 METRIC_CBAR_LABEL = {
 	"avg_us": "мкс",
 	"median_us": "мкс",
@@ -78,6 +48,32 @@ METRIC_TITLE = {
 }
 
 
+RANKS_LINE_RE = re.compile(r"^Ranks:\s*(\d+)")
+HOSTNAME_LINE_RE = re.compile(r"^Hostname:\s*(\S+)\s*$", re.I)
+BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
+DECIMAL_MB = 1_000_000
+WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
+ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
+
+
+LATENCY_GR = LinearSegmentedColormap.from_list(
+	"latency_gr",
+	["#045a2d", "#16a34a", "#f97316", "#dc2626", "#7f1d1d"],
+	N=256,
+)
+
+
+"""Выбор colormap и цвет для NaN."""
+def resolve_colormap(name: str) -> Colormap:
+	if name == "latency_gr":
+		base: Colormap = LATENCY_GR
+	else:
+		base = mpl.colormaps[name] if hasattr(mpl, "colormaps") else mpl.cm.get_cmap(name)
+	cmap = base.copy()
+	cmap.set_bad(color="white", alpha=1.0)
+	return cmap
+
+"""Разбор текста лога в метаданные и список пар rank->rank."""
 def parse_gpu_one_to_one_text(
 	text: str,
 ) -> tuple[dict[str, Any], list[tuple[int, int, list[float]]]]:
@@ -94,8 +90,6 @@ def parse_gpu_one_to_one_text(
 			m = RANKS_LINE_RE.match(line)
 			if m:
 				meta["ranks"] = int(m.group(1))
-		elif (m := NODE_LINE_RE.match(line)):
-			meta["node"] = int(m.group(1))
 		elif (m := HOSTNAME_LINE_RE.match(line)):
 			meta["hostname"] = m.group(1)
 		elif (m := BYTES_LINE_RE.match(line)):
@@ -107,20 +101,18 @@ def parse_gpu_one_to_one_text(
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m:
-				src_g = int(m.group(1))
-				dst_g = int(m.group(2))
+				_ = int(m.group(1))  # G-индексы присутствуют в логе, но не используются в рендере.
+				_ = int(m.group(2))
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				vals = [float(m.group(i)) for i in range(5, 10)]
-				gmap: dict[int, int] = meta.setdefault("global_by_rank", {})
-				gmap[src_r] = src_g
-				gmap[dst_r] = dst_g
 				pairs.append((src_r, dst_r, vals))
 
 	return meta, pairs
 
 
-def infer_n(meta: dict[str, Any], pairs: list[tuple[int, int, list[float]]]) -> int:
+"""Определяет размер матрицы n x n."""
+def matrix_size(meta: dict[str, Any], pairs: list[tuple[int, int, list[float]]]) -> int:
 	if "ranks" in meta:
 		return int(meta["ranks"])
 	if not pairs:
@@ -128,6 +120,7 @@ def infer_n(meta: dict[str, Any], pairs: list[tuple[int, int, list[float]]]) -> 
 	return max(max(s, d) for s, d, _ in pairs) + 1
 
 
+"""Заполняет матрицы метрик по парам src/dst rank."""
 def fill_matrices(
 	n: int, pairs: list[tuple[int, int, list[float]]]
 ) -> dict[str, np.ndarray]:
@@ -141,36 +134,37 @@ def fill_matrices(
 	return mats
 
 
-def _title_block(
-	meta: dict[str, Any], metric: str, *, node_id: int | None, hostname: str | None
+"""Собирает многострочный заголовок графика."""
+def title_block(
+	meta: dict[str, Any], metric: str, *, hostname: str | None
 ) -> str:
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
 	parts: list[str] = []
 	if hostname:
 		parts.append(f"Узел {hostname}")
-	elif node_id is not None:
-		parts.append(f"Узел node{node_id}")
 	parts.extend(
 		[
 			title_line,
-			"Схема обмена: GPU one-to-one",
+			"Схема обмена: one-to-one",
 			f"Режим копирования: {mode}",
 		]
 	)
 	return "\n".join(parts)
 
 
-def _format_size_mb_decimal(b: int) -> str:
-	mb = b / _DECIMAL_MB
+"""Форматирует размер в десятичных MB."""
+def format_size_mb_decimal(b: int) -> str:
+	mb = b / DECIMAL_MB
 	text = f"{mb:.12f}".rstrip("0").rstrip(".")
 	return f"size: {text} MB"
 
 
-def _param_block(meta: dict[str, Any]) -> str:
+"""Собирает блок параметров (size/warmup/iters)."""
+def param_block(meta: dict[str, Any]) -> str:
 	lines: list[str] = []
 	if "bytes" in meta:
-		lines.append(_format_size_mb_decimal(int(meta["bytes"])))
+		lines.append(format_size_mb_decimal(int(meta["bytes"])))
 	if "warmup" in meta:
 		lines.append(f"warmup: {int(meta['warmup'])}")
 	if "iters" in meta:
@@ -178,6 +172,7 @@ def _param_block(meta: dict[str, Any]) -> str:
 	return "\n".join(lines)
 
 
+"""Рисует и сохраняет одну heatmap-картинку."""
 def draw_heatmap(
 	matrix: np.ndarray,
 	metric: str,
@@ -202,16 +197,13 @@ def draw_heatmap(
 	ax.set_xticklabels(labels, rotation=0, fontsize=9)
 	ax.set_yticklabels(labels, fontsize=9)
 
-	if param_block:
-		ax.set_xlabel(
-			f"dst (глоб. GPU)\n\n{param_block}",
-			fontsize=8,
-			family="monospace",
-			labelpad=4,
-		)
-	else:
-		ax.set_xlabel("dst (глоб. GPU)")
-	ax.set_ylabel("src (глоб. GPU)")
+	ax.set_xlabel(
+		f"dst GPU\n\n{param_block}",
+		fontsize=8,
+		family="monospace",
+		labelpad=4,
+	)
+	ax.set_ylabel("src GPU")
 
 	ax.set_title(title_block, fontsize=9)
 
@@ -241,29 +233,6 @@ def main() -> int:
 		default=Path("."),
 		help="Directory for PNG files (default: current directory)",
 	)
-	p.add_argument(
-		"--node-id",
-		type=int,
-		default=None,
-		help="(legacy) Номер узла для fallback-имени node<N>_....png, если hostname не задан",
-	)
-	p.add_argument(
-		"--hostname",
-		default=None,
-		help="Hostname для заголовка и имени <hostname>_....png; иначе из строки Hostname: в логе",
-	)
-	p.add_argument(
-		"--metrics",
-		default=",".join(METRIC_KEYS),
-		help=f"Подмножество через запятую: {','.join(METRIC_KEYS)} (default: all)",
-	)
-	p.add_argument(
-		"--cmap",
-		default="latency_gr",
-		help="Colormap: latency_gr или имя matplotlib",
-	)
-	p.add_argument("--dpi", type=int, default=150, help="Разрешение PNG (default: 150)")
-
 	args = p.parse_args()
 
 	in_path = args.input
@@ -278,54 +247,40 @@ def main() -> int:
 		print("gpu_render: no matching 'pair GPU...' lines found.", file=sys.stderr)
 		return 1
 
-	n = infer_n(meta, pairs)
+	n = matrix_size(meta, pairs)
 	if n <= 0:
 		print("gpu_render: could not infer matrix size.", file=sys.stderr)
 		return 1
 
 	mats = fill_matrices(n, pairs)
-	gmap = meta.get("global_by_rank")
-	if isinstance(gmap, dict) and len(gmap) > 0:
-		tick_labels = [f"gpu{int(gmap.get(i, i))}" for i in range(n)]
-	else:
-		tick_labels = [f"gpu{i}" for i in range(n)]
+	tick_labels = [str(i) for i in range(n)]
 
-	want = {m.strip() for m in args.metrics.split(",") if m.strip()}
-	unknown = want - set(METRIC_KEYS)
-	if unknown:
-		print(f"gpu_render: unknown metrics: {unknown}", file=sys.stderr)
-		return 1
+	want = set(METRIC_KEYS)
 
-	node_id = args.node_id
-	if node_id is None and "node" in meta:
-		node_id = int(meta["node"])
-	if node_id is None:
-		node_id = 0
-	hostname = args.hostname
-	if hostname is None and "hostname" in meta:
-		hostname = str(meta["hostname"])
+	hostname = str(meta["hostname"]) if "hostname" in meta else None
 	if hostname:
 		# Для имени файла оставляем только безопасные символы.
 		hostname = re.sub(r"[^0-9A-Za-z_.-]", "_", hostname)
+	else:
+		hostname = "host-unknown"
 
 	args.out_dir.mkdir(parents=True, exist_ok=True)
-	params = _param_block(meta)
-	cmap_resolved = resolve_colormap(args.cmap)
+	params = param_block(meta)
+	cmap_resolved = resolve_colormap("latency_gr")
 
 	for key in METRIC_KEYS:
 		if key not in want:
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
-		prefix = hostname if hostname else f"node{node_id}"
-		out_file = args.out_dir / f"{prefix}_{stem}.png"
+		out_file = args.out_dir / f"{hostname}_{stem}.png"
 		draw_heatmap(
 			mats[key],
 			key,
 			out_file,
-			title_block=_title_block(meta, key, node_id=node_id, hostname=hostname),
+			title_block=title_block(meta, key, hostname=hostname),
 			param_block=params,
 			cmap=cmap_resolved,
-			dpi=args.dpi,
+			dpi=150,
 			tick_labels=tick_labels,
 		)
 		print(out_file)
