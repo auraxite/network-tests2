@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
 Строит heatmap-матрицы по текстовому выводу gpu_one_to_one (stdout или --out).
+
+Если первый аргумент — каталог, обрабатываются все *.txt; PNG кладутся в
+--out-dir/<имя_файла_без_txt>/ для каждого лога.
 """
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import sys
 from pathlib import Path
@@ -16,14 +20,27 @@ import numpy as np
 from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 
-PAIR_LINE_RE = re.compile(
-    r"^pair (?:(?:g|G|GPU))?(\d+) -> (?:(?:g|G|GPU))?(\d+) \(r(\d+)(?::0)? -> r(\d+)(?::0)?\) "
-    r"avg_us=([0-9.eE+-]+)\s+"
-    r"median_us=([0-9.eE+-]+)\s+"
-    r"min_us=([0-9.eE+-]+)\s+"
-    r"max_us=([0-9.eE+-]+)\s+"
-    r"var_us=([0-9.eE+-]+)\s*$"
+_PAIR_HEAD = (
+	r"^pair (?:(?:g|G|GPU))?(\d+) -> (?:(?:g|G|GPU))?(\d+) "
+	r"\(r(\d+)(?::0)? -> r(\d+)(?::0)?\) "
 )
+
+# Полная строка (как по умолчанию в gpu_one_to_one --stat all).
+PAIR_LINE_RE = re.compile(
+	_PAIR_HEAD
+	+ r"avg_us=([0-9.eE+-]+)\s+"
+	+ r"median_us=([0-9.eE+-]+)\s+"
+	+ r"min_us=([0-9.eE+-]+)\s+"
+	+ r"max_us=([0-9.eE+-]+)\s+"
+	+ r"var_us=([0-9.eE+-]+)\s*$"
+)
+
+# Одна метрика (--stat avg|median|min|max|var).
+PAIR_AVG_ONLY = re.compile(_PAIR_HEAD + r"avg_us=([0-9.eE+-]+)\s*$")
+PAIR_MEDIAN_ONLY = re.compile(_PAIR_HEAD + r"median_us=([0-9.eE+-]+)\s*$")
+PAIR_MIN_ONLY = re.compile(_PAIR_HEAD + r"min_us=([0-9.eE+-]+)\s*$")
+PAIR_MAX_ONLY = re.compile(_PAIR_HEAD + r"max_us=([0-9.eE+-]+)\s*$")
+PAIR_VAR_ONLY = re.compile(_PAIR_HEAD + r"var_us=([0-9.eE+-]+)\s*$")
 METRIC_KEYS = ("avg_us", "median_us", "min_us", "max_us", "var_us")
 METRIC_FILE_STEM = {
 	"avg_us": "avg",
@@ -74,7 +91,9 @@ def resolve_colormap(name: str) -> Colormap:
 	return cmap
 
 """Разбор текста лога в метаданные и список пар rank->rank."""
-def parse_gpu_one_to_one_text(text: str,) -> tuple[dict[str, Any], list[tuple[int, int, list[float]]]]:
+def parse_gpu_one_to_one_text(
+	text: str,
+) -> tuple[dict[str, Any], list[tuple[int, int, list[float]]]]:
 	meta: dict[str, Any] = {}
 	pairs: list[tuple[int, int, list[float]]] = []
 
@@ -97,11 +116,45 @@ def parse_gpu_one_to_one_text(text: str,) -> tuple[dict[str, Any], list[tuple[in
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m:
-				_ = int(m.group(1))
-				_ = int(m.group(2))
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				vals = [float(m.group(i)) for i in range(5, 10)]
+				pairs.append((src_r, dst_r, vals))
+				continue
+			nan5 = [math.nan, math.nan, math.nan, math.nan, math.nan]
+			if (m := PAIR_AVG_ONLY.match(line)):
+				src_r = int(m.group(3))
+				dst_r = int(m.group(4))
+				v = float(m.group(5))
+				vals = [v, nan5[1], nan5[2], nan5[3], nan5[4]]
+				pairs.append((src_r, dst_r, vals))
+				continue
+			if (m := PAIR_MEDIAN_ONLY.match(line)):
+				src_r = int(m.group(3))
+				dst_r = int(m.group(4))
+				v = float(m.group(5))
+				vals = [nan5[0], v, nan5[2], nan5[3], nan5[4]]
+				pairs.append((src_r, dst_r, vals))
+				continue
+			if (m := PAIR_MIN_ONLY.match(line)):
+				src_r = int(m.group(3))
+				dst_r = int(m.group(4))
+				v = float(m.group(5))
+				vals = [nan5[0], nan5[1], v, nan5[3], nan5[4]]
+				pairs.append((src_r, dst_r, vals))
+				continue
+			if (m := PAIR_MAX_ONLY.match(line)):
+				src_r = int(m.group(3))
+				dst_r = int(m.group(4))
+				v = float(m.group(5))
+				vals = [nan5[0], nan5[1], nan5[2], v, nan5[4]]
+				pairs.append((src_r, dst_r, vals))
+				continue
+			if (m := PAIR_VAR_ONLY.match(line)):
+				src_r = int(m.group(3))
+				dst_r = int(m.group(4))
+				v = float(m.group(5))
+				vals = [nan5[0], nan5[1], nan5[2], nan5[3], v]
 				pairs.append((src_r, dst_r, vals))
 
 	return meta, pairs
@@ -126,6 +179,8 @@ def fill_matrices(
 			continue
 		if 0 <= src < n and 0 <= dst < n:
 			for k, v in zip(METRIC_KEYS, vals):
+				if isinstance(v, float) and math.isnan(v):
+					continue
 				mats[k][src, dst] = v
 	return mats
 
@@ -181,6 +236,7 @@ def draw_heatmap(
 	tick_labels: list[str],
 ) -> None:
 	labels = tick_labels
+	axis_fs = 9
 	fig_w = max(5.0, 0.45 * matrix.shape[1] + 2.5)
 	fig_h = max(4.5, 0.45 * matrix.shape[0] + 2.4)
 	fig, ax = plt.subplots(figsize=(fig_w, fig_h))
@@ -190,16 +246,15 @@ def draw_heatmap(
 
 	ax.set_xticks(range(len(labels)))
 	ax.set_yticks(range(len(labels)))
-	ax.set_xticklabels(labels, rotation=0, fontsize=9)
-	ax.set_yticklabels(labels, fontsize=9)
+	ax.set_xticklabels(labels, rotation=0, fontsize=axis_fs)
+	ax.set_yticklabels(labels, fontsize=axis_fs)
 
 	ax.set_xlabel(
 		f"dst GPU\n\n{param_block}",
-		fontsize=8,
-		family="monospace",
+		fontsize=axis_fs,
 		labelpad=4,
 	)
-	ax.set_ylabel("src GPU")
+	ax.set_ylabel("src GPU", fontsize=axis_fs, labelpad=4)
 
 	ax.set_title(title_block, fontsize=9)
 
@@ -212,40 +267,15 @@ def draw_heatmap(
 	plt.close(fig)
 
 
-def main() -> int:
-	p = argparse.ArgumentParser(
-		description="Heatmaps from gpu_one_to_one text output (pair ... lines)."
-	)
-	p.add_argument(
-		"input",
-		nargs="?",
-		default="-",
-		help="Path to captured output, or '-' for stdin (default: -)",
-	)
-	p.add_argument(
-		"-o",
-		"--out-dir",
-		type=Path,
-		default=Path("."),
-		help="Directory for PNG files (default: current directory)",
-	)
-	args = p.parse_args()
-
-	in_path = args.input
-	if in_path == "-":
-		text = sys.stdin.read()
-	else:
-		path = Path(in_path)
-		text = path.read_text(encoding="utf-8", errors="replace")
-
+def render_one_text(text: str, out_dir: Path, *, label: str) -> int:
 	meta, pairs = parse_gpu_one_to_one_text(text)
 	if not pairs:
-		print("gpu_render: no matching 'pair ...' lines found.", file=sys.stderr)
+		print(f"gpu_render: [{label}] no matching 'pair ...' lines found.", file=sys.stderr)
 		return 1
 
 	n = matrix_size(meta, pairs)
 	if n <= 0:
-		print("gpu_render: could not infer matrix size.", file=sys.stderr)
+		print(f"gpu_render: [{label}] could not infer matrix size.", file=sys.stderr)
 		return 1
 
 	mats = fill_matrices(n, pairs)
@@ -259,15 +289,18 @@ def main() -> int:
 	else:
 		hostname = "host-unknown"
 
-	args.out_dir.mkdir(parents=True, exist_ok=True)
+	out_dir.mkdir(parents=True, exist_ok=True)
 	params = param_block(meta)
 	cmap_resolved = resolve_colormap("latency_gr")
 
+	written = 0
 	for key in METRIC_KEYS:
 		if key not in want:
 			continue
+		if bool(np.all(np.isnan(mats[key]))):
+			continue
 		stem = METRIC_FILE_STEM.get(key, key)
-		out_file = args.out_dir / f"{hostname}_{stem}.png"
+		out_file = out_dir / f"{hostname}_{stem}.png"
 		draw_heatmap(
 			mats[key],
 			key,
@@ -279,8 +312,66 @@ def main() -> int:
 			tick_labels=tick_labels,
 		)
 		print(out_file)
+		written += 1
+
+	if written == 0:
+		print(f"gpu_render: [{label}] no non-empty metric matrices to plot.", file=sys.stderr)
+		return 1
 
 	return 0
+
+
+def main() -> int:
+	p = argparse.ArgumentParser(
+		description="Heatmaps from gpu_one_to_one text output (pair ... lines)."
+	)
+	p.add_argument(
+		"input",
+		nargs="?",
+		default="-",
+		help="Файл .txt, каталог с .txt, или '-' для stdin",
+	)
+	p.add_argument(
+		"-o",
+		"--out-dir",
+		type=Path,
+		default=Path("."),
+		help="Каталог для PNG; для каждого входного .txt создаётся подкаталог по имени файла",
+	)
+	args = p.parse_args()
+
+	in_path = args.input
+	if in_path == "-":
+		text = sys.stdin.read()
+		return render_one_text(text, args.out_dir, label="stdin")
+
+	path = Path(in_path)
+	if not path.exists():
+		print(
+			f"gpu_render: path not found: {path.resolve()}",
+			file=sys.stderr,
+		)
+		return 1
+	if path.is_dir():
+		txts = sorted(path.glob("*.txt"))
+		if not txts:
+			print(f"gpu_render: no *.txt in {path}", file=sys.stderr)
+			return 1
+		code = 0
+		for txt in txts:
+			text = txt.read_text(encoding="utf-8", errors="replace")
+			sub = args.out_dir / txt.stem
+			r = render_one_text(text, sub, label=str(txt))
+			if r != 0:
+				code = 1
+		return code
+
+	if path.is_file():
+		text = path.read_text(encoding="utf-8", errors="replace")
+		return render_one_text(text, args.out_dir, label=str(path))
+
+	print(f"gpu_render: not a file or directory: {path}", file=sys.stderr)
+	return 1
 
 
 if __name__ == "__main__":

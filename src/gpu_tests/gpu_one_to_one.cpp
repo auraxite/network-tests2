@@ -68,11 +68,22 @@ enum class Mode {
 	Host,
 };
 
+// Что печатать в строке pair ... (остальные величины всё равно считаются внутри).
+enum class StatOut {
+	All,
+	Avg,
+	Median,
+	Min,
+	Max,
+	Var,
+};
+
 struct Args { // Параметры запуска бенчмарка (CLI-аргументы).
 	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB).
 	int warmup = 10;		// Прогревочные итерации (не в статистике).
 	int iters = 50;			// Измеряемые итерации.
 	Mode mode = Mode::Auto; // host или auto (device при CUDA-aware MPI).
+	StatOut stat_out = StatOut::All;
 	std::string out_path;
 };
 
@@ -92,6 +103,7 @@ void help(int rank) {
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --mode M        auto | host\n"
+			  << "  --stat S        all | avg | median | min | max | var (pair line output)\n"
 			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
 			  << "  -o FILE         same as --out\n"
 			  << "Env (layout by local indices):\n"
@@ -108,6 +120,26 @@ Mode parse_mode(const std::string &s, int rank) {
 		std::cerr << "unknown --mode: " << s << " (use auto|host)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Mode::Auto;
+}
+
+StatOut parse_stat_out(const std::string &s, int rank) {
+	if (s == "all")
+		return StatOut::All;
+	if (s == "avg")
+		return StatOut::Avg;
+	if (s == "median")
+		return StatOut::Median;
+	if (s == "min")
+		return StatOut::Min;
+	if (s == "max")
+		return StatOut::Max;
+	if (s == "var")
+		return StatOut::Var;
+	if (rank == 0)
+		std::cerr << "unknown --stat: " << s
+				  << " (use all|avg|median|min|max|var)\n";
+	MPI_Abort(MPI_COMM_WORLD, 1);
+	return StatOut::All;
 }
 
 Args parse_args(int argc, char **argv, int rank) {
@@ -132,6 +164,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.iters = std::atoi(next("--iters"));
 		else if (s == "--mode")
 			a.mode = parse_mode(next("--mode"), rank);
+		else if (s == "--stat")
+			a.stat_out = parse_stat_out(next("--stat"), rank);
 		else if (s == "--out" || s == "-o")
 			a.out_path = next("--out");
 		else if (s == "--help" || s == "-h") {
@@ -323,14 +357,33 @@ static int local_slot_hint() {
 
 static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 									double med_us, double min_us, double max_us,
-									double var_us) {
+									double var_us, StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
 	oss << "pair " << src_rank << " -> " << dst_rank << " (r" << src_rank << " -> r"
-		<< dst_rank
-		<< ") avg_us=" << avg_us << " median_us=" << med_us
-		<< " min_us=" << min_us << " max_us=" << max_us << " var_us=" << var_us
-		<< "\n";
+		<< dst_rank << ") ";
+	switch (stat) {
+	case StatOut::All:
+		oss << "avg_us=" << avg_us << " median_us=" << med_us
+			<< " min_us=" << min_us << " max_us=" << max_us << " var_us=" << var_us;
+		break;
+	case StatOut::Avg:
+		oss << "avg_us=" << avg_us;
+		break;
+	case StatOut::Median:
+		oss << "median_us=" << med_us;
+		break;
+	case StatOut::Min:
+		oss << "min_us=" << min_us;
+		break;
+	case StatOut::Max:
+		oss << "max_us=" << max_us;
+		break;
+	case StatOut::Var:
+		oss << "var_us=" << var_us;
+		break;
+	}
+	oss << "\n";
 	return oss.str();
 }
 
@@ -491,7 +544,7 @@ int main(int argc, char **argv) {
 						if (ack[5] == 1.0) { // ack[5] - код валидности результата
 							mirror(format_pair_line(src_rank, dst_rank,
 													ack[0], ack[1], ack[2], ack[3],
-													ack[4]));
+													ack[4], args.stat_out));
 						}
 					} else {
 						mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src_rank, 1, MPI_COMM_WORLD),
@@ -503,7 +556,7 @@ int main(int argc, char **argv) {
 						if (ack[5] == 1.0) {
 							mirror(format_pair_line(src_rank, dst_rank,
 													ack[0], ack[1], ack[2], ack[3],
-													ack[4]));
+													ack[4], args.stat_out));
 						}
 					}
 					continue;
@@ -547,7 +600,7 @@ int main(int argc, char **argv) {
 
 					mirror(format_pair_line(src_rank, dst_rank, metric[0],
 											metric[1], metric[2], metric[3],
-											metric[4]));
+											metric[4], args.stat_out));
 				}
 			}
 		}
