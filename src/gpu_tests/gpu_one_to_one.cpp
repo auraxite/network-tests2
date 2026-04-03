@@ -106,9 +106,8 @@ void help(int rank) {
 			  << "  --stat S        all | avg | median | min | max | var (pair line output)\n"
 			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
 			  << "  -o FILE         same as --out\n"
-			  << "Env (layout by local indices):\n"
-			  << "  SLURM_NODEID   node key source\n"
-			  << "  SLURM_LOCALID or OMPI_COMM_WORLD_LOCAL_RANK  slot hint on node\n";
+			  << "Env (layout):\n"
+			  << "  SLURM_NODEID   node key source\n";
 }
 
 Mode parse_mode(const std::string &s, int rank) {
@@ -344,17 +343,6 @@ static int slurm_node_id() {
 	return -1;
 }
 
-// Подсказка слота на узле; −1 — сортировать только по MPI rank внутри узла.
-static int local_slot_hint() {
-	const char *s = std::getenv("SLURM_LOCALID");
-	if (s && *s)
-		return std::atoi(s);
-	s = std::getenv("OMPI_COMM_WORLD_LOCAL_RANK");
-	if (s && *s)
-		return std::atoi(s);
-	return -1;
-}
-
 static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 									double med_us, double min_us, double max_us,
 									double var_us, StatOut stat) {
@@ -446,16 +434,12 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	int my_slot = local_slot_hint();
-	std::vector<int> slot_recv;
-
 	int my_node = slurm_node_id();
 	std::vector<int> node_recv;
 	
 	if (rank == 0) {
 		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
 		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
-		slot_recv.resize(static_cast<size_t>(nproc));
 		node_recv.resize(static_cast<size_t>(nproc));
 	}
 	mpi_ok(MPI_Gather(my_host, HOST_LEN, MPI_CHAR,
@@ -466,10 +450,6 @@ int main(int argc, char **argv) {
 					  rank == 0 ? pci_recv.data() : nullptr, PCI_LEN, MPI_CHAR, 0,
 					  MPI_COMM_WORLD),
 		   "MPI_Gather pci bus ids");
-	mpi_ok(MPI_Gather(&my_slot, 1, MPI_INT,
-					  rank == 0 ? slot_recv.data() : nullptr, 1, MPI_INT, 0,
-					  MPI_COMM_WORLD),
-		   "MPI_Gather local slot");
 	mpi_ok(MPI_Gather(&my_node, 1, MPI_INT,
 					  rank == 0 ? node_recv.data() : nullptr, 1, MPI_INT, 0,
 					  MPI_COMM_WORLD),
@@ -519,7 +499,6 @@ int main(int argc, char **argv) {
 			std::ostringstream oss;
 			oss << "  r" << r << " host=" << h
 				<< " local_node=" << node_recv[static_cast<size_t>(r)]
-				<< " local_slot=" << slot_recv[static_cast<size_t>(r)]
 				<< " local_gpu=0"
 				<< " pci=" << p << "\n";
 			mirror(oss.str());
@@ -528,6 +507,8 @@ int main(int argc, char **argv) {
 		if (out_file)
 			*out_file << std::fixed << std::setprecision(3);
 
+		// Реальное суммарное время прогона: от первой пары до последней.
+		const double test_t0 = MPI_Wtime();
 		Task t{};
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 			for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
@@ -603,6 +584,13 @@ int main(int argc, char **argv) {
 											metric[4], args.stat_out));
 				}
 			}
+		}
+		const double total_elapsed_s = MPI_Wtime() - test_t0;
+		{
+			std::ostringstream oss;
+			oss << "TotalElapsedSec: " << std::fixed << std::setprecision(6)
+				<< total_elapsed_s << "\n";
+			mirror(oss.str());
 		}
 
 		t.stop = 1;

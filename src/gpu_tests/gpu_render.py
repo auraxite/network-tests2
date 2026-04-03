@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import math
 import re
 import sys
@@ -71,6 +72,13 @@ BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
 DECIMAL_MB = 1_000_000
 WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
 ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
+TOTAL_ELAPSED_LINE_RE = re.compile(r"^TotalElapsedSec:\s*([0-9.eE+-]+)\s*$")
+REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
+CPU_TAG_RE = re.compile(r"(?:^|_)c(\d+)(?:_|$)", re.I)
+MODE_TAG_RE = re.compile(r"(?:^|_)m([A-Za-z0-9]+)(?:_|$)", re.I)
+BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
+WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
+ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
 
 
 LATENCY_GR = LinearSegmentedColormap.from_list(
@@ -113,6 +121,8 @@ def parse_gpu_one_to_one_text(
 			meta["warmup"] = int(m.group(1))
 		elif (m := ITERS_LINE_RE.match(line)):
 			meta["iters"] = int(m.group(1))
+		elif (m := TOTAL_ELAPSED_LINE_RE.match(line)):
+			meta["total_elapsed_s"] = float(m.group(1))
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m:
@@ -211,16 +221,81 @@ def format_size_mb_decimal(b: int) -> str:
 	return f"size: {text} MB"
 
 
-"""Собирает блок параметров (size/warmup/iters)."""
-def param_block(meta: dict[str, Any]) -> str:
+def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
+	stem = source_path.stem if source_path is not None else ""
+	mode_meta = str(meta.get("mode", "unknown")).lower()
+	mode_default = "host" if mode_meta == "host" else ("auto" if mode_meta == "gpudirect" else mode_meta)
+
+	def pick(pattern: re.Pattern[str], fallback: str) -> str:
+		m = pattern.search(stem)
+		return m.group(1) if m else fallback
+
+	return {
+		"rep": pick(REP_TAG_RE, "na"),
+		"c": pick(CPU_TAG_RE, "na"),
+		"mode": pick(MODE_TAG_RE, mode_default),
+		"b": pick(BYTES_TAG_RE, str(meta.get("bytes", "na"))),
+		"w": pick(WARMUP_TAG_RE, str(meta.get("warmup", "na"))),
+		"i": pick(ITERS_TAG_RE, str(meta.get("iters", "na"))),
+	}
+
+
+def total_time_line(meta: dict[str, Any]) -> str:
+	v = meta.get("total_elapsed_s")
+	if isinstance(v, (int, float)):
+		return f"total_elapsed: {float(v):.6f}s"
+	return "total_elapsed: n/a"
+
+
+"""Собирает блок параметров под графиком."""
+def param_block(
+	meta: dict[str, Any], tags: dict[str, str], run_time: str, total_time: str
+) -> str:
 	lines: list[str] = []
 	if "bytes" in meta:
 		lines.append(format_size_mb_decimal(int(meta["bytes"])))
-	if "warmup" in meta:
-		lines.append(f"warmup: {int(meta['warmup'])}")
-	if "iters" in meta:
-		lines.append(f"iters: {int(meta['iters'])}")
+	lines.append(
+		f"rep: {tags['rep']}  c: {tags['c']}  mode: {tags['mode']}  "
+		f"b: {tags['b']}  w: {tags['w']}  i: {tags['i']}"
+	)
+	lines.append(f"run_time: {run_time}")
+	lines.append(total_time)
 	return "\n".join(lines)
+
+
+def format_cell_value(metric: str, v: float) -> str:
+	av = abs(v)
+	if metric == "var_us":
+		return f"{v:.2g}" if av >= 1000 else f"{v:.1f}"
+	if av >= 1000:
+		return f"{v:.0f}"
+	if av >= 100:
+		return f"{v:.1f}"
+	if av >= 10:
+		return f"{v:.2f}"
+	return f"{v:.3f}"
+
+
+def annotate_cells(ax: Any, im: Any, matrix: np.ndarray, metric: str) -> None:
+	n = matrix.shape[0]
+	fontsize = max(5, min(9, int(90 / max(1, n))))
+	for i in range(matrix.shape[0]):
+		for j in range(matrix.shape[1]):
+			v = matrix[i, j]
+			if np.isnan(v):
+				continue
+			rgba = im.cmap(im.norm(v))
+			luma = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+			color = "black" if luma > 0.55 else "white"
+			ax.text(
+				j,
+				i,
+				format_cell_value(metric, float(v)),
+				ha="center",
+				va="center",
+				fontsize=fontsize,
+				color=color,
+			)
 
 
 """Рисует и сохраняет одну heatmap-картинку."""
@@ -258,6 +333,8 @@ def draw_heatmap(
 
 	ax.set_title(title_block, fontsize=9)
 
+	annotate_cells(ax, im, matrix, metric)
+
 	cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 	cbar.set_label(METRIC_CBAR_LABEL.get(metric, "мкс"), rotation=0, labelpad=12)
 
@@ -267,7 +344,9 @@ def draw_heatmap(
 	plt.close(fig)
 
 
-def render_one_text(text: str, out_dir: Path, *, label: str) -> int:
+def render_one_text(
+	text: str, out_dir: Path, *, label: str, source_path: Path | None = None
+) -> int:
 	meta, pairs = parse_gpu_one_to_one_text(text)
 	if not pairs:
 		print(f"gpu_render: [{label}] no matching 'pair ...' lines found.", file=sys.stderr)
@@ -290,7 +369,13 @@ def render_one_text(text: str, out_dir: Path, *, label: str) -> int:
 		hostname = "host-unknown"
 
 	out_dir.mkdir(parents=True, exist_ok=True)
-	params = param_block(meta)
+	tags = run_tags(source_path, meta)
+	if source_path is not None and source_path.exists():
+		run_time = datetime.fromtimestamp(source_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+	else:
+		run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+	total_time = total_time_line(meta)
+	params = param_block(meta, tags, run_time, total_time)
 	cmap_resolved = resolve_colormap("latency_gr")
 
 	written = 0
@@ -300,7 +385,10 @@ def render_one_text(text: str, out_dir: Path, *, label: str) -> int:
 		if bool(np.all(np.isnan(mats[key]))):
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
-		out_file = out_dir / f"{hostname}_{stem}.png"
+		out_file = out_dir / (
+			f"{hostname}_rep{tags['rep']}_c{tags['c']}_m{tags['mode']}"
+			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
+		)
 		draw_heatmap(
 			mats[key],
 			key,
@@ -343,7 +431,7 @@ def main() -> int:
 	in_path = args.input
 	if in_path == "-":
 		text = sys.stdin.read()
-		return render_one_text(text, args.out_dir, label="stdin")
+		return render_one_text(text, args.out_dir, label="stdin", source_path=None)
 
 	path = Path(in_path)
 	if not path.exists():
@@ -361,14 +449,14 @@ def main() -> int:
 		for txt in txts:
 			text = txt.read_text(encoding="utf-8", errors="replace")
 			sub = args.out_dir / txt.stem
-			r = render_one_text(text, sub, label=str(txt))
+			r = render_one_text(text, sub, label=str(txt), source_path=txt)
 			if r != 0:
 				code = 1
 		return code
 
 	if path.is_file():
 		text = path.read_text(encoding="utf-8", errors="replace")
-		return render_one_text(text, args.out_dir, label=str(path))
+		return render_one_text(text, args.out_dir, label=str(path), source_path=path)
 
 	print(f"gpu_render: not a file or directory: {path}", file=sys.stderr)
 	return 1
