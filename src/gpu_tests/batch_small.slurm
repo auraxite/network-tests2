@@ -28,7 +28,7 @@ ITERS=100
 MODE="host"
 CPUS="${SLURM_CPUS_PER_TASK:-2}"
 
-for REP in 1 2 3; do
+for REP in 1; do
 	OUT_TXT="${OUT_DIR}/${HOSTNAME}_rep${REP}_c${CPUS}_m${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
 	echo "RUN rep=${REP} mode=${MODE} cpus=${CPUS} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 	srun --mpi=pmix -n"${NTASKS}" --cpus-per-task="${CPUS}" "${BIN}" \

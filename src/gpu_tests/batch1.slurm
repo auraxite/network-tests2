@@ -36,14 +36,14 @@ for REP in 1 2; do
 		for MODE in "${MODES[@]}"; do
 			for BYTES in "${SIZES[@]}"; do
 				if ((BYTES <= 256 * 1000)); then
-					WARMUP=90
-					ITERS=900
-				elif ((BYTES <= 4 * 1000 * 1000)); then
 					WARMUP=60
 					ITERS=600
+				elif ((BYTES <= 4 * 1000 * 1000)); then
+					WARMUP=40
+					ITERS=400
 				else
-					WARMUP=30
-					ITERS=300
+					WARMUP=20
+					ITERS=200
 				fi
 
 				OUT_TXT="${OUT_DIR}/${HOSTNAME}_rep${REP}_c${CPUS}_m${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"

@@ -252,12 +252,7 @@ def param_block(
 	meta: dict[str, Any], tags: dict[str, str], run_time: str, total_time: str
 ) -> str:
 	lines: list[str] = []
-	if "bytes" in meta:
-		lines.append(format_size_mb_decimal(int(meta["bytes"])))
-	lines.append(
-		f"rep: {tags['rep']}  c: {tags['c']}  mode: {tags['mode']}  "
-		f"b: {tags['b']}  w: {tags['w']}  i: {tags['i']}"
-	)
+	lines.append(f"w: {tags['w']}  i: {tags['i']}")
 	lines.append(f"run_time: {run_time}")
 	lines.append(total_time)
 	return "\n".join(lines)
@@ -284,9 +279,6 @@ def annotate_cells(ax: Any, im: Any, matrix: np.ndarray, metric: str) -> None:
 			v = matrix[i, j]
 			if np.isnan(v):
 				continue
-			rgba = im.cmap(im.norm(v))
-			luma = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
-			color = "black" if luma > 0.55 else "white"
 			ax.text(
 				j,
 				i,
@@ -294,7 +286,7 @@ def annotate_cells(ax: Any, im: Any, matrix: np.ndarray, metric: str) -> None:
 				ha="center",
 				va="center",
 				fontsize=fontsize,
-				color=color,
+				color="white",
 			)
 
 
