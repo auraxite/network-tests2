@@ -19,32 +19,22 @@ mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu_one_to_one"
 
-SIZES=(
-	$((64 * 1000))
-	$((256 * 1000))
-	$((1 * 1000 * 1000))
-	$((4 * 1000 * 1000))
-	$((16 * 1000 * 1000))
-	$((32 * 1000 * 1000))
+CASES=(
+	"500000:1600:80"
+	"2000000:800:40"
+	"8000000:400:20"
+	"32000000:200:10"
 )
 
-MODES=(auto host)
+REPS=(1 2)
 CPUS_LIST=(1 2)
+MODES=(auto host)
 
-for REP in 1 2; do
+for REP in "${REPS[@]}"; do
 	for CPUS in "${CPUS_LIST[@]}"; do
 		for MODE in "${MODES[@]}"; do
-			for BYTES in "${SIZES[@]}"; do
-				if ((BYTES <= 256 * 1000)); then
-					WARMUP=60
-					ITERS=600
-				elif ((BYTES <= 4 * 1000 * 1000)); then
-					WARMUP=40
-					ITERS=400
-				else
-					WARMUP=20
-					ITERS=200
-				fi
+			for CASE in "${CASES[@]}"; do
+				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
 				OUT_TXT="${OUT_DIR}/${HOSTNAME}_rep${REP}_c${CPUS}_m${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
 				echo "RUN rep=${REP} cpus=${CPUS} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"

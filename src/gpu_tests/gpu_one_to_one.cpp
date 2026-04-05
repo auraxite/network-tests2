@@ -21,6 +21,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -76,12 +77,14 @@ enum class StatOut {
 	Min,
 	Max,
 	Var,
+	Std,
 };
 
 struct Args { // Параметры запуска бенчмарка (CLI-аргументы).
 	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB).
 	int warmup = 10;		// Прогревочные итерации (не в статистике).
 	int iters = 50;			// Измеряемые итерации.
+	double limit_sec = 0.0; // Если > 0, режим по времени: прогрев limit/10, измерение limit.
 	Mode mode = Mode::Auto; // host или auto (device при CUDA-aware MPI).
 	StatOut stat_out = StatOut::All;
 	std::string out_path;
@@ -102,8 +105,9 @@ void help(int rank) {
 			  << "  --bytes N       size in bytes (default 4 MB)\n"
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
+			  << "  --limit S       time mode per pair: warmup S/10 sec, measured S sec\n"
 			  << "  --mode M        auto | host\n"
-			  << "  --stat S        all | avg | median | min | max | var (pair line output)\n"
+			  << "  --stat S        all | avg | median | min | max | var | std (pair line output)\n"
 			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
 			  << "  -o FILE         same as --out\n"
 			  << "Env (layout):\n"
@@ -134,9 +138,11 @@ StatOut parse_stat_out(const std::string &s, int rank) {
 		return StatOut::Max;
 	if (s == "var")
 		return StatOut::Var;
+	if (s == "std")
+		return StatOut::Std;
 	if (rank == 0)
 		std::cerr << "unknown --stat: " << s
-				  << " (use all|avg|median|min|max|var)\n";
+				  << " (use all|avg|median|min|max|var|std)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return StatOut::All;
 }
@@ -161,6 +167,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.warmup = std::atoi(next("--warmup"));
 		else if (s == "--iters")
 			a.iters = std::atoi(next("--iters"));
+		else if (s == "--limit")
+			a.limit_sec = std::strtod(next("--limit"), nullptr);
 		else if (s == "--mode")
 			a.mode = parse_mode(next("--mode"), rank);
 		else if (s == "--stat")
@@ -177,6 +185,21 @@ Args parse_args(int argc, char **argv, int rank) {
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
 	}
+	if (a.warmup < 0) {
+		if (rank == 0)
+			std::cerr << "--warmup must be >= 0\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+	if (a.limit_sec < 0.0) {
+		if (rank == 0)
+			std::cerr << "--limit must be >= 0\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+	if (a.iters <= 0 && a.limit_sec <= 0.0) {
+		if (rank == 0)
+			std::cerr << "--iters must be > 0 when --limit is not set\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
 	return a;
 }
 
@@ -188,20 +211,20 @@ bool check_host(Mode mode, bool cuda_aware) {
 
 /*
  * Одно задание (одна пара GPU). Возврат:
- * {avg_us, median_us, min_us, max_us, var_us, valid_metric}.
+ * {avg_us, median_us, min_us, max_us, var_us, std_us, valid_metric}.
  * valid=1 выставляет отправитель (или единственный участник при src==dst на
  * одном rank).
  */
 std::vector<double> run_task(int rank, const Task &t, const Args &args,
 							 bool check_host) {
-	std::vector<double> ack(6, 0.0);
+	std::vector<double> ack(7, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
 	if (!is_sender && !is_receiver)
 		return ack;
 	if (t.src_rank == t.dst_rank && t.src_gpu == t.dst_gpu) {
 		// Диагональ "сам в себя": по договоренности считаем метрики нулевыми.
-		ack[5] = 1.0;
+		ack[6] = 1.0;
 		return ack;
 	}
 
@@ -266,17 +289,39 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 		}
 	};
 
-	for (int i = 0; i < args.warmup; ++i)
-		do_one(i);
+	std::vector<double> samples_us;
+	if (args.limit_sec > 0.0) {
+		// Временной режим: прогрев limit/10 секунд, затем измерения limit секунд.
+		const double warmup_limit_sec = args.limit_sec * 0.1;
+		const double warmup_t0 = MPI_Wtime();
+		int wi = 0;
+		do {
+			do_one(wi);
+			++wi;
+		} while ((MPI_Wtime() - warmup_t0) < warmup_limit_sec);
 
-	std::vector<double> samples_us; // длительности итераций (мкс) для статистики ниже
-	samples_us.reserve(static_cast<size_t>(std::max(1, args.iters))); // ёмкость под iters
-	for (int i = 0; i < args.iters; ++i) {
-		const double t0 = MPI_Wtime();
-		do_one(1000 + i);
-		const double t1 = MPI_Wtime();
-		if (is_sender || (t.src_rank == t.dst_rank && is_receiver))
-			samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
+		samples_us.reserve(256);
+		const double measure_t0 = MPI_Wtime();
+		int i = 0;
+		do {
+			const double t0 = MPI_Wtime();
+			do_one(1000 + i);
+			const double t1 = MPI_Wtime();
+			if (is_sender || (t.src_rank == t.dst_rank && is_receiver))
+				samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
+			++i;
+		} while ((MPI_Wtime() - measure_t0) < args.limit_sec);
+	} else {
+		for (int i = 0; i < args.warmup; ++i)
+			do_one(i);
+		samples_us.reserve(static_cast<size_t>(std::max(1, args.iters))); // ёмкость под iters
+		for (int i = 0; i < args.iters; ++i) {
+			const double t0 = MPI_Wtime();
+			do_one(1000 + i);
+			const double t1 = MPI_Wtime();
+			if (is_sender || (t.src_rank == t.dst_rank && is_receiver))
+				samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
+		}
 	}
 
 	if (!samples_us.empty()) {
@@ -305,13 +350,15 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 			}
 			var /= static_cast<double>(samples_us.size() - 1);
 		}
+		const double stddev = std::sqrt(var);
 
 		ack[0] = mean;
 		ack[1] = median;
 		ack[2] = min_v;
 		ack[3] = max_v;
 		ack[4] = var;
-		ack[5] = 1.0;
+		ack[5] = stddev;
+		ack[6] = 1.0;
 	}
 
 	if (h_buf)
@@ -343,9 +390,19 @@ static int slurm_node_id() {
 	return -1;
 }
 
+static int threads_hint() {
+	const char *s = std::getenv("SLURM_CPUS_PER_TASK");
+	if (s && *s)
+		return std::atoi(s);
+	s = std::getenv("OMP_NUM_THREADS");
+	if (s && *s)
+		return std::atoi(s);
+	return 1;
+}
+
 static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 									double med_us, double min_us, double max_us,
-									double var_us, StatOut stat) {
+									double var_us, double std_us, StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
 	oss << "pair " << src_rank << " -> " << dst_rank << " (r" << src_rank << " -> r"
@@ -353,7 +410,8 @@ static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 	switch (stat) {
 	case StatOut::All:
 		oss << "avg_us=" << avg_us << " median_us=" << med_us
-			<< " min_us=" << min_us << " max_us=" << max_us << " var_us=" << var_us;
+			<< " min_us=" << min_us << " max_us=" << max_us
+			<< " var_us=" << var_us << " std_us=" << std_us;
 		break;
 	case StatOut::Avg:
 		oss << "avg_us=" << avg_us;
@@ -369,6 +427,9 @@ static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 		break;
 	case StatOut::Var:
 		oss << "var_us=" << var_us;
+		break;
+	case StatOut::Std:
+		oss << "std_us=" << std_us;
 		break;
 	}
 	oss << "\n";
@@ -470,7 +531,11 @@ int main(int argc, char **argv) {
 			std::ostringstream oss;
 			oss << "Bytes: " << args.nbytes << "\n"
 				<< "Warmup: " << args.warmup << "\n"
-				<< "Iters: " << args.iters << "\n";
+				<< "Iters: " << args.iters << "\n"
+				<< "Threads: " << threads_hint() << "\n";
+			if (args.limit_sec > 0.0)
+				oss << "Time limit: " << std::fixed << std::setprecision(3)
+					<< args.limit_sec << " sec\n";
 			mirror(oss.str());
 		}
 
@@ -522,22 +587,22 @@ int main(int argc, char **argv) {
 				if (src_rank == dst_rank) {
 					if (src_rank == 0) {
 						auto ack = run_task(rank, t, args, via_host);
-						if (ack[5] == 1.0) { // ack[5] - код валидности результата
+						if (ack[6] == 1.0) { // ack[6] - код валидности результата
 							mirror(format_pair_line(src_rank, dst_rank,
 													ack[0], ack[1], ack[2], ack[3],
-													ack[4], args.stat_out));
+													ack[4], ack[5], args.stat_out));
 						}
 					} else {
 						mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src_rank, 1, MPI_COMM_WORLD),
 							   "MPI_Send Task (same-rank non-root)");
-						std::vector<double> ack(6, 0.0);
-						mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, src_rank, 2,
+						std::vector<double> ack(7, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), 7, MPI_DOUBLE, src_rank, 2,
 										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 							   "MPI_Recv ack (same-rank non-root)");
-						if (ack[5] == 1.0) {
+						if (ack[6] == 1.0) {
 							mirror(format_pair_line(src_rank, dst_rank,
 													ack[0], ack[1], ack[2], ack[3],
-													ack[4], args.stat_out));
+													ack[4], ack[5], args.stat_out));
 						}
 					}
 					continue;
@@ -555,40 +620,40 @@ int main(int argc, char **argv) {
 										MPI_COMM_WORLD),
 							"MPI_Send Task (dst)");
 
-					std::vector<double> metric(6, 0.0);
+					std::vector<double> metric(7, 0.0);
 					if (src_rank == 0 || dst_rank == 0) {
 						auto ack0 = run_task(rank, t, args, via_host);
-						if (ack0[5] == 1.0)
+						if (ack0[6] == 1.0)
 							metric = ack0;
 					}
 
 					if (src_rank != 0) {
-						std::vector<double> ack(6, 0.0);
-						mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, src_rank, 2,
+						std::vector<double> ack(7, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), 7, MPI_DOUBLE, src_rank, 2,
 										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 							"MPI_Recv ack (src)");
-						if (ack[5] == 1.0)
+						if (ack[6] == 1.0)
 							metric = ack;
 					}
 					if (dst_rank != 0) {
-						std::vector<double> ack(6, 0.0);
-						mpi_ok(MPI_Recv(ack.data(), 6, MPI_DOUBLE, dst_rank, 2,
+						std::vector<double> ack(7, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), 7, MPI_DOUBLE, dst_rank, 2,
 										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 							"MPI_Recv ack (dst)");
-						if (ack[5] == 1.0)
+						if (ack[6] == 1.0)
 							metric = ack;
 					}
 
 					mirror(format_pair_line(src_rank, dst_rank, metric[0],
 											metric[1], metric[2], metric[3],
-											metric[4], args.stat_out));
+											metric[4], metric[5], args.stat_out));
 				}
 			}
 		}
 		const double total_elapsed_s = MPI_Wtime() - test_t0;
 		{
 			std::ostringstream oss;
-			oss << "TotalElapsedSec: " << std::fixed << std::setprecision(6)
+			oss << "TotalTimeSec: " << std::fixed << std::setprecision(6)
 				<< total_elapsed_s << "\n";
 			mirror(oss.str());
 		}
@@ -606,7 +671,7 @@ int main(int argc, char **argv) {
 			if (t.stop)
 				break;
 			auto ack = run_task(rank, t, args, via_host);
-			mpi_ok(MPI_Send(ack.data(), 6, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
+			mpi_ok(MPI_Send(ack.data(), 7, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
 				   "MPI_Send ack (worker)");
 		}
 	}

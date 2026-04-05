@@ -33,22 +33,25 @@ PAIR_LINE_RE = re.compile(
 	+ r"median_us=([0-9.eE+-]+)\s+"
 	+ r"min_us=([0-9.eE+-]+)\s+"
 	+ r"max_us=([0-9.eE+-]+)\s+"
-	+ r"var_us=([0-9.eE+-]+)\s*$"
+	+ r"var_us=([0-9.eE+-]+)"
+	+ r"(?:\s+std_us=([0-9.eE+-]+))?\s*$"
 )
 
-# Одна метрика (--stat avg|median|min|max|var).
+# Одна метрика (--stat avg|median|min|max|var|std).
 PAIR_AVG_ONLY = re.compile(_PAIR_HEAD + r"avg_us=([0-9.eE+-]+)\s*$")
 PAIR_MEDIAN_ONLY = re.compile(_PAIR_HEAD + r"median_us=([0-9.eE+-]+)\s*$")
 PAIR_MIN_ONLY = re.compile(_PAIR_HEAD + r"min_us=([0-9.eE+-]+)\s*$")
 PAIR_MAX_ONLY = re.compile(_PAIR_HEAD + r"max_us=([0-9.eE+-]+)\s*$")
 PAIR_VAR_ONLY = re.compile(_PAIR_HEAD + r"var_us=([0-9.eE+-]+)\s*$")
-METRIC_KEYS = ("avg_us", "median_us", "min_us", "max_us", "var_us")
+PAIR_STD_ONLY = re.compile(_PAIR_HEAD + r"std_us=([0-9.eE+-]+)\s*$")
+METRIC_KEYS = ("avg_us", "median_us", "min_us", "max_us", "var_us", "std_us")
 METRIC_FILE_STEM = {
 	"avg_us": "avg",
 	"median_us": "median",
 	"min_us": "min",
 	"max_us": "max",
 	"var_us": "var",
+	"std_us": "std",
 }
 METRIC_CBAR_LABEL = {
 	"avg_us": "мкс",
@@ -56,6 +59,7 @@ METRIC_CBAR_LABEL = {
 	"min_us": "мкс",
 	"max_us": "мкс",
 	"var_us": "мкс²",
+	"std_us": "мкс",
 }
 METRIC_TITLE = {
 	"avg_us": "Среднее арифметическое задержек",
@@ -63,6 +67,7 @@ METRIC_TITLE = {
 	"min_us": "Минимальное задержек",
 	"max_us": "Максимальное задержек",
 	"var_us": "Выборочная дисперсия задержек",
+	"std_us": "Стандартное отклонение задержек",
 }
 
 
@@ -72,6 +77,8 @@ BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
 DECIMAL_MB = 1_000_000
 WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
 ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
+THREADS_LINE_RE = re.compile(r"^Threads:\s*(\d+)\s*$")
+TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
 TOTAL_ELAPSED_LINE_RE = re.compile(r"^TotalElapsedSec:\s*([0-9.eE+-]+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 CPU_TAG_RE = re.compile(r"(?:^|_)c(\d+)(?:_|$)", re.I)
@@ -121,6 +128,10 @@ def parse_gpu_one_to_one_text(
 			meta["warmup"] = int(m.group(1))
 		elif (m := ITERS_LINE_RE.match(line)):
 			meta["iters"] = int(m.group(1))
+		elif (m := THREADS_LINE_RE.match(line)):
+			meta["threads"] = int(m.group(1))
+		elif (m := TOTAL_TIME_LINE_RE.match(line)):
+			meta["total_elapsed_s"] = float(m.group(1))
 		elif (m := TOTAL_ELAPSED_LINE_RE.match(line)):
 			meta["total_elapsed_s"] = float(m.group(1))
 		else:
@@ -128,43 +139,51 @@ def parse_gpu_one_to_one_text(
 			if m:
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
-				vals = [float(m.group(i)) for i in range(5, 10)]
+				std_v = float(m.group(10)) if m.group(10) is not None else math.nan
+				vals = [float(m.group(i)) for i in range(5, 10)] + [std_v]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			nan5 = [math.nan, math.nan, math.nan, math.nan, math.nan]
+			nan6 = [math.nan, math.nan, math.nan, math.nan, math.nan, math.nan]
 			if (m := PAIR_AVG_ONLY.match(line)):
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				v = float(m.group(5))
-				vals = [v, nan5[1], nan5[2], nan5[3], nan5[4]]
+				vals = [v, nan6[1], nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MEDIAN_ONLY.match(line)):
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				v = float(m.group(5))
-				vals = [nan5[0], v, nan5[2], nan5[3], nan5[4]]
+				vals = [nan6[0], v, nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MIN_ONLY.match(line)):
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				v = float(m.group(5))
-				vals = [nan5[0], nan5[1], v, nan5[3], nan5[4]]
+				vals = [nan6[0], nan6[1], v, nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MAX_ONLY.match(line)):
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				v = float(m.group(5))
-				vals = [nan5[0], nan5[1], nan5[2], v, nan5[4]]
+				vals = [nan6[0], nan6[1], nan6[2], v, nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_VAR_ONLY.match(line)):
 				src_r = int(m.group(3))
 				dst_r = int(m.group(4))
 				v = float(m.group(5))
-				vals = [nan5[0], nan5[1], nan5[2], nan5[3], v]
+				vals = [nan6[0], nan6[1], nan6[2], nan6[3], v, nan6[5]]
+				pairs.append((src_r, dst_r, vals))
+				continue
+			if (m := PAIR_STD_ONLY.match(line)):
+				src_r = int(m.group(3))
+				dst_r = int(m.group(4))
+				v = float(m.group(5))
+				vals = [nan6[0], nan6[1], nan6[2], nan6[3], nan6[4], v]
 				pairs.append((src_r, dst_r, vals))
 
 	return meta, pairs
@@ -197,7 +216,7 @@ def fill_matrices(
 
 """Собирает многострочный заголовок графика."""
 def title_block(
-	meta: dict[str, Any], metric: str, *, hostname: str | None
+	meta: dict[str, Any], metric: str, *, hostname: str | None, threads: str
 ) -> str:
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
@@ -208,7 +227,7 @@ def title_block(
 		[
 			title_line,
 			"Схема обмена: one-to-one",
-			f"Режим копирования: {mode}",
+			f"Режим копирования: {mode}; потоки: {threads}",
 		]
 	)
 	return "\n".join(parts)
@@ -243,17 +262,17 @@ def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 def total_time_line(meta: dict[str, Any]) -> str:
 	v = meta.get("total_elapsed_s")
 	if isinstance(v, (int, float)):
-		return f"total_elapsed: {float(v):.6f}s"
-	return "total_elapsed: n/a"
+		return f"затраченное время: {float(v):.6f}s"
+	return "затраченное время: n/a"
 
 
 """Собирает блок параметров под графиком."""
 def param_block(
-	meta: dict[str, Any], tags: dict[str, str], run_time: str, total_time: str
+	meta: dict[str, Any], tags: dict[str, str], creation_time: str, total_time: str
 ) -> str:
 	lines: list[str] = []
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
-	lines.append(f"run_time: {run_time}")
+	lines.append(f"время создания: {creation_time}")
 	lines.append(total_time)
 	return "\n".join(lines)
 
@@ -362,12 +381,10 @@ def render_one_text(
 
 	out_dir.mkdir(parents=True, exist_ok=True)
 	tags = run_tags(source_path, meta)
-	if source_path is not None and source_path.exists():
-		run_time = datetime.fromtimestamp(source_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-	else:
-		run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+	threads = str(meta.get("threads", tags.get("c", "na")))
+	creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 	total_time = total_time_line(meta)
-	params = param_block(meta, tags, run_time, total_time)
+	params = param_block(meta, tags, creation_time, total_time)
 	cmap_resolved = resolve_colormap("latency_gr")
 
 	written = 0
@@ -385,7 +402,7 @@ def render_one_text(
 			mats[key],
 			key,
 			out_file,
-			title_block=title_block(meta, key, hostname=hostname),
+			title_block=title_block(meta, key, hostname=hostname, threads=threads),
 			param_block=params,
 			cmap=cmap_resolved,
 			dpi=150,
