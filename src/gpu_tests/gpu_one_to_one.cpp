@@ -69,25 +69,24 @@ enum class Mode {
 	Host,
 };
 
-// Что печатать в строке pair ... (остальные величины всё равно считаются внутри).
 enum class StatOut {
 	All,
 	Avg,
 	Median,
 	Min,
 	Max,
-	Var,
 	Std,
+	Var,
 };
 
 struct Args { // Параметры запуска бенчмарка (CLI-аргументы).
 	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB).
 	int warmup = 10;		// Прогревочные итерации (не в статистике).
 	int iters = 50;			// Измеряемые итерации.
-	double limit_sec = 0.0; // Если > 0, режим по времени: прогрев limit/10, измерение limit.
-	Mode mode = Mode::Auto; // host или auto (device при CUDA-aware MPI).
+	Mode mode = Mode::Auto; // auto (device при CUDA-aware MPI) или host
 	StatOut stat_out = StatOut::All;
 	std::string out_path;
+	bool dump_raw_samples = true; // Сохранять сырые выборки samples_us по парам.
 };
 
 struct Task { // Задание мастера
@@ -105,7 +104,6 @@ void help(int rank) {
 			  << "  --bytes N       size in bytes (default 4 MB)\n"
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
-			  << "  --limit S       time mode per pair: warmup S/10 sec, measured S sec\n"
 			  << "  --mode M        auto | host\n"
 			  << "  --stat S        all | avg | median | min | max | var | std (pair line output)\n"
 			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
@@ -167,8 +165,6 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.warmup = std::atoi(next("--warmup"));
 		else if (s == "--iters")
 			a.iters = std::atoi(next("--iters"));
-		else if (s == "--limit")
-			a.limit_sec = std::strtod(next("--limit"), nullptr);
 		else if (s == "--mode")
 			a.mode = parse_mode(next("--mode"), rank);
 		else if (s == "--stat")
@@ -190,14 +186,9 @@ Args parse_args(int argc, char **argv, int rank) {
 			std::cerr << "--warmup must be >= 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
-	if (a.limit_sec < 0.0) {
+	if (a.iters <= 0) {
 		if (rank == 0)
-			std::cerr << "--limit must be >= 0\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
-	if (a.iters <= 0 && a.limit_sec <= 0.0) {
-		if (rank == 0)
-			std::cerr << "--iters must be > 0 when --limit is not set\n";
+			std::cerr << "--iters must be > 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 	return a;
@@ -208,6 +199,9 @@ bool check_host(Mode mode, bool cuda_aware) {
 		return true;
 	return !cuda_aware;
 }
+
+static void append_raw_samples(const Args &args, int rank, const Task &t,
+							   const std::vector<double> &samples_us);
 
 /*
  * Одно задание (одна пара GPU). Возврат:
@@ -228,9 +222,9 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 		return ack;
 	}
 
-	char *d_send = nullptr;
-	char *d_recv = nullptr;
-	char *h_buf = nullptr;
+	char *d_send = nullptr; // буфер в памяти GPU для отправки 
+	char *d_recv = nullptr; // буфер в памяти GPU для приёма
+	char *h_buf = nullptr; // буфер в host RAM для режима через CPU
 	const int count = static_cast<int>(args.nbytes);
 
 	if (is_sender) {
@@ -243,15 +237,13 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 		cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(dst)");
 		cuda_ok(cudaMemset(d_recv, 0, args.nbytes), "cudaMemset(dst)");
 	}
-	if (check_host && (is_sender || is_receiver))
+	if (check_host)
 		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost");
 
 	MPI_Status st{};
 
 	auto do_one = [&](int tag) {
 		if (t.src_rank == t.dst_rank) { // На одном узле
-			if (t.src_gpu == t.dst_gpu) // Сам себе
-				return;
 			cuda_ok(cudaSetDevice(t.src_gpu), "cudaSetDevice(src local)");
 			if (check_host) { // копирование через ОЗУ
 				cuda_ok(cudaMemcpy(h_buf, d_send, args.nbytes, cudaMemcpyDeviceToHost),
@@ -290,39 +282,18 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	};
 
 	std::vector<double> samples_us;
-	if (args.limit_sec > 0.0) {
-		// Временной режим: прогрев limit/10 секунд, затем измерения limit секунд.
-		const double warmup_limit_sec = args.limit_sec * 0.1;
-		const double warmup_t0 = MPI_Wtime();
-		int wi = 0;
-		do {
-			do_one(wi);
-			++wi;
-		} while ((MPI_Wtime() - warmup_t0) < warmup_limit_sec);
-
-		samples_us.reserve(256);
-		const double measure_t0 = MPI_Wtime();
-		int i = 0;
-		do {
-			const double t0 = MPI_Wtime();
-			do_one(1000 + i);
-			const double t1 = MPI_Wtime();
-			if (is_sender || (t.src_rank == t.dst_rank && is_receiver))
-				samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
-			++i;
-		} while ((MPI_Wtime() - measure_t0) < args.limit_sec);
-	} else {
-		for (int i = 0; i < args.warmup; ++i)
-			do_one(i);
-		samples_us.reserve(static_cast<size_t>(std::max(1, args.iters))); // ёмкость под iters
-		for (int i = 0; i < args.iters; ++i) {
-			const double t0 = MPI_Wtime();
-			do_one(1000 + i);
-			const double t1 = MPI_Wtime();
-			if (is_sender || (t.src_rank == t.dst_rank && is_receiver))
-				samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
-		}
+	for (int i = 0; i < args.warmup; ++i)
+		do_one(i);
+	samples_us.reserve(static_cast<size_t>(std::max(1, args.iters))); // ёмкость под iters
+	for (int i = 0; i < args.iters; ++i) {
+		const double t0 = MPI_Wtime();
+		do_one(1000 + i);
+		const double t1 = MPI_Wtime();
+		if (is_sender)
+    		samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
 	}
+	if (is_sender)
+		append_raw_samples(args, rank, t, samples_us);
 
 	if (!samples_us.empty()) {
 		const double n = static_cast<double>(samples_us.size());
@@ -390,16 +361,6 @@ static int slurm_node_id() {
 	return -1;
 }
 
-static int threads_hint() {
-	const char *s = std::getenv("SLURM_CPUS_PER_TASK");
-	if (s && *s)
-		return std::atoi(s);
-	s = std::getenv("OMP_NUM_THREADS");
-	if (s && *s)
-		return std::atoi(s);
-	return 1;
-}
-
 static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 									double med_us, double min_us, double max_us,
 									double var_us, double std_us, StatOut stat) {
@@ -434,6 +395,27 @@ static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 	}
 	oss << "\n";
 	return oss.str();
+}
+
+static void append_raw_samples(const Args &args, int rank, const Task &t,
+							   const std::vector<double> &samples_us) {
+	if (!args.dump_raw_samples || args.out_path.empty() || samples_us.empty())
+		return;
+	(void)rank;
+	std::string base = args.out_path;
+	const std::string suffix = ".txt";
+	if (base.size() >= suffix.size() &&
+		base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0) {
+		base.erase(base.size() - suffix.size());
+	}
+	std::ostringstream path;
+	path << base << "_src" << t.src_rank << "_dst" << t.dst_rank << ".raw";
+	std::ofstream out(path.str(), std::ios::app);
+	if (!out.is_open())
+		return;
+	for (size_t i = 0; i < samples_us.size(); ++i) {
+		out << std::fixed << std::setprecision(3) << samples_us[i] << "\n";
+	}
 }
 
 } // namespace
@@ -531,32 +513,28 @@ int main(int argc, char **argv) {
 			std::ostringstream oss;
 			oss << "Bytes: " << args.nbytes << "\n"
 				<< "Warmup: " << args.warmup << "\n"
-				<< "Iters: " << args.iters << "\n"
-				<< "Threads: " << threads_hint() << "\n";
-			if (args.limit_sec > 0.0)
-				oss << "Time limit: " << std::fixed << std::setprecision(3)
-					<< args.limit_sec << " sec\n";
+				<< "Iters: " << args.iters << "\n";
 			mirror(oss.str());
 		}
 
 		for (int r = 0; r < nproc; ++r) {
-			if (gpu_counts[r] != 1) {
+			if (gpu_counts[r] <= 0) {
 				std::cerr
-					<< "This benchmark expects 1 MPI rank = 1 visible GPU.\n"
+					<< "This benchmark expects at least 1 visible GPU per MPI rank.\n"
 					<< "Rank " << r << " sees " << gpu_counts[r]
 					<< " GPU(s).\n";
 				MPI_Abort(MPI_COMM_WORLD, 1); // errorcode 1 — ненулевой код выхода процесса
 			}
 		}
-	}
 
-	if (rank == 0) {
-		{
-			std::ostringstream oss;
-			oss << "Ranks: " << nproc
-				<< ", total GPUs (1 per rank): " << nproc << "\n";
-			mirror(oss.str());
-		}
+		std::ostringstream oss;
+		int total_visible_gpus = 0;
+		for (int v : gpu_counts)
+			total_visible_gpus += v;
+		oss << "Ranks: " << nproc
+			<< ", total visible GPUs: " << total_visible_gpus << "\n";
+		mirror(oss.str());
+
 		mirror("Rank map:\n");
 		for (int r = 0; r < nproc; ++r) {
 			const char *h = hosts_recv.data() + static_cast<size_t>(r) * HOST_LEN;
@@ -565,6 +543,7 @@ int main(int argc, char **argv) {
 			oss << "  r" << r << " host=" << h
 				<< " local_node=" << node_recv[static_cast<size_t>(r)]
 				<< " local_gpu=0"
+				<< " visible_gpus=" << gpu_counts[static_cast<size_t>(r)]
 				<< " pci=" << p << "\n";
 			mirror(oss.str());
 		}
@@ -578,33 +557,15 @@ int main(int argc, char **argv) {
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 			for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 				t.src_rank = src_rank;
-				t.src_gpu = 0; // локальный индекс GPU на rank (схема 1 rank = 1 GPU)
+				t.src_gpu = 0; // локальный GPU для rank (в режиме 1 rank = 1 node используем GPU 0)
 				t.dst_rank = dst_rank;
-				t.dst_gpu = 0;
+				t.dst_gpu = 0; // локальный GPU для rank (в режиме 1 rank = 1 node используем GPU 0)
 				t.stop = 0;
-				/* Локальная пара (один MPI-процесс, два GPU): мастер либо сам
-				 * run_task на rank 0, либо шлёт Task на rank и получает ack. */
+				// Диагональ src==dst не измеряем: сразу печатаем нулевые метрики.
 				if (src_rank == dst_rank) {
-					if (src_rank == 0) {
-						auto ack = run_task(rank, t, args, via_host);
-						if (ack[6] == 1.0) { // ack[6] - код валидности результата
-							mirror(format_pair_line(src_rank, dst_rank,
-													ack[0], ack[1], ack[2], ack[3],
-													ack[4], ack[5], args.stat_out));
-						}
-					} else {
-						mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src_rank, 1, MPI_COMM_WORLD),
-							   "MPI_Send Task (same-rank non-root)");
-						std::vector<double> ack(7, 0.0);
-						mpi_ok(MPI_Recv(ack.data(), 7, MPI_DOUBLE, src_rank, 2,
-										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-							   "MPI_Recv ack (same-rank non-root)");
-						if (ack[6] == 1.0) {
-							mirror(format_pair_line(src_rank, dst_rank,
-													ack[0], ack[1], ack[2], ack[3],
-													ack[4], ack[5], args.stat_out));
-						}
-					}
+					mirror(format_pair_line(src_rank, dst_rank,
+											0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+											args.stat_out));
 					continue;
 				}
 

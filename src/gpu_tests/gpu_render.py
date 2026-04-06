@@ -77,11 +77,9 @@ BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
 DECIMAL_MB = 1_000_000
 WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
 ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
-THREADS_LINE_RE = re.compile(r"^Threads:\s*(\d+)\s*$")
 TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
 TOTAL_ELAPSED_LINE_RE = re.compile(r"^TotalElapsedSec:\s*([0-9.eE+-]+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
-CPU_TAG_RE = re.compile(r"(?:^|_)c(\d+)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(r"(?:^|_)m([A-Za-z0-9]+)(?:_|$)", re.I)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
@@ -128,8 +126,6 @@ def parse_gpu_one_to_one_text(
 			meta["warmup"] = int(m.group(1))
 		elif (m := ITERS_LINE_RE.match(line)):
 			meta["iters"] = int(m.group(1))
-		elif (m := THREADS_LINE_RE.match(line)):
-			meta["threads"] = int(m.group(1))
 		elif (m := TOTAL_TIME_LINE_RE.match(line)):
 			meta["total_elapsed_s"] = float(m.group(1))
 		elif (m := TOTAL_ELAPSED_LINE_RE.match(line)):
@@ -215,9 +211,7 @@ def fill_matrices(
 
 
 """Собирает многострочный заголовок графика."""
-def title_block(
-	meta: dict[str, Any], metric: str, *, hostname: str | None, threads: str
-) -> str:
+def title_block(meta: dict[str, Any], metric: str, *, hostname: str | None) -> str:
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
 	parts: list[str] = []
@@ -227,7 +221,7 @@ def title_block(
 		[
 			title_line,
 			"Схема обмена: one-to-one",
-			f"Режим копирования: {mode}; потоки: {threads}",
+			f"Режим копирования: {mode}",
 		]
 	)
 	return "\n".join(parts)
@@ -251,7 +245,6 @@ def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 
 	return {
 		"rep": pick(REP_TAG_RE, "na"),
-		"c": pick(CPU_TAG_RE, "na"),
 		"mode": pick(MODE_TAG_RE, mode_default),
 		"b": pick(BYTES_TAG_RE, str(meta.get("bytes", "na"))),
 		"w": pick(WARMUP_TAG_RE, str(meta.get("warmup", "na"))),
@@ -381,7 +374,6 @@ def render_one_text(
 
 	out_dir.mkdir(parents=True, exist_ok=True)
 	tags = run_tags(source_path, meta)
-	threads = str(meta.get("threads", tags.get("c", "na")))
 	creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 	total_time = total_time_line(meta)
 	params = param_block(meta, tags, creation_time, total_time)
@@ -395,14 +387,14 @@ def render_one_text(
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
 		out_file = out_dir / (
-			f"{hostname}_rep{tags['rep']}_c{tags['c']}_m{tags['mode']}"
+			f"{hostname}_rep{tags['rep']}_m{tags['mode']}"
 			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
 		)
 		draw_heatmap(
 			mats[key],
 			key,
 			out_file,
-			title_block=title_block(meta, key, hostname=hostname, threads=threads),
+			title_block=title_block(meta, key, hostname=hostname),
 			param_block=params,
 			cmap=cmap_resolved,
 			dpi=150,
