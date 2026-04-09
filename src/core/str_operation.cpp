@@ -20,7 +20,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "my_malloc.h"
 
 unsigned int px_num_symbols=0;
 

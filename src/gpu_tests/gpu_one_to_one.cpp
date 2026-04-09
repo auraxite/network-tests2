@@ -22,7 +22,6 @@
 #include <iostream>
 #include <cstdio>
 #include <cstring>
-#include <limits>
 #include <memory>
 #include <mpi.h>
 #if defined(OPEN_MPI) && OPEN_MPI
@@ -36,15 +35,7 @@
 #include <unistd.h>
 #include <vector>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include "../core/data_write_operations.h"
-#include "../core/string_id_converters.h"
-#include "../core/types.h"
-#ifdef __cplusplus
-}
-#endif
+#include "netcdf_writer.h"
 
 
 namespace {
@@ -101,23 +92,6 @@ struct Args { // Параметры запуска бенчмарка (CLI-ар�
 	StatOut stat_out = StatOut::All;
 	std::string out_path;
 	bool dump_raw_samples = true; // Сохранять сырые выборки samples_us по парам.
-};
-
-struct NetcdfBundle {
-	bool enabled = false;
-	int nproc = 0;
-	int avg_file_id = -1;
-	int avg_data_id = -1;
-	int med_file_id = -1;
-	int med_data_id = -1;
-	int min_file_id = -1;
-	int min_data_id = -1;
-	int std_file_id = -1;
-	int std_data_id = -1;
-	std::vector<double> avg;
-	std::vector<double> med;
-	std::vector<double> min;
-	std::vector<double> stddev;
 };
 
 struct Task { // Задание мастера
@@ -272,102 +246,6 @@ static void fill_stats6(const std::vector<double> &samples, double *out6) {
 	out6[3] = max_v;
 	out6[4] = var;
 	out6[5] = stddev;
-}
-
-static int clamp_size_to_int_or_abort(size_t v, const char *name) {
-	if (v <= static_cast<size_t>(std::numeric_limits<int>::max()))
-		return static_cast<int>(v);
-	std::cerr << "gpu_one_to_one: value for " << name
-			  << " does not fit into int: " << v << "\n";
-	MPI_Abort(MPI_COMM_WORLD, 1);
-	return 0;
-}
-
-static NetcdfBundle netcdf_open_bundle(const Args &args, int rank, int nproc) {
-	NetcdfBundle nc{};
-	if (rank != 0 || args.out_path.empty())
-		return nc;
-
-	std::string prefix = args.out_path;
-	const std::string txt_suffix = ".txt";
-	if (prefix.size() >= txt_suffix.size() &&
-		prefix.compare(prefix.size() - txt_suffix.size(), txt_suffix.size(), txt_suffix) == 0) {
-		prefix.erase(prefix.size() - txt_suffix.size());
-	}
-	if (prefix.empty())
-		return nc;
-
-	nc.enabled = true;
-	nc.nproc = nproc;
-	const size_t total = static_cast<size_t>(nproc) * static_cast<size_t>(nproc);
-	nc.avg.assign(total, 0.0);
-	nc.med.assign(total, 0.0);
-	nc.min.assign(total, 0.0);
-	nc.stddev.assign(total, 0.0);
-
-	network_test_parameters_struct p{};
-	p.num_procs = nproc;
-	p.test_type = ONE_TO_ONE_TEST_TYPE;
-	p.begin_message_length = clamp_size_to_int_or_abort(args.nbytes, "--bytes");
-	p.end_message_length = clamp_size_to_int_or_abort(args.nbytes, "--bytes");
-	p.step_length = 1;
-	p.num_repeats = args.iters;
-	p.noise_message_length = 0;
-	p.num_noise_messages = 0;
-	p.num_noise_procs = 0;
-	p.file_name_prefix = prefix.c_str();
-
-	auto create_one = [&](int datatype, int &file_id, int &data_id, const char *label) {
-		const int rc = create_netcdf_header(datatype, &p, &file_id, &data_id);
-		if (rc != 0) {
-			std::cerr << "gpu_one_to_one: failed to create NetCDF for " << label
-					  << " with prefix '" << prefix << "', rc=" << rc << "\n";
-			MPI_Abort(MPI_COMM_WORLD, 1);
-		}
-	};
-	create_one(AVERAGE_NETWORK_TEST_DATATYPE, nc.avg_file_id, nc.avg_data_id, "avg");
-	create_one(MEDIAN_NETWORK_TEST_DATATYPE, nc.med_file_id, nc.med_data_id, "median");
-	create_one(MIN_NETWORK_TEST_DATATYPE, nc.min_file_id, nc.min_data_id, "min");
-	create_one(DEVIATION_NETWORK_TEST_DATATYPE, nc.std_file_id, nc.std_data_id, "std");
-
-	return nc;
-}
-
-static void netcdf_store_pair(NetcdfBundle &nc, int src_rank, int dst_rank,
-							  const std::vector<double> &metric) {
-	if (!nc.enabled)
-		return;
-	const size_t idx = static_cast<size_t>(src_rank) * static_cast<size_t>(nc.nproc) +
-					   static_cast<size_t>(dst_rank);
-	nc.avg[idx] = metric[0];
-	nc.med[idx] = metric[1];
-	nc.min[idx] = metric[2];
-	nc.stddev[idx] = metric[5];
-}
-
-static void netcdf_flush_and_close(NetcdfBundle &nc, int rank) {
-	if (rank != 0 || !nc.enabled)
-		return;
-
-	auto write_one = [&](int file_id, int data_id, const std::vector<double> &matrix,
-						 const char *label) {
-		const int rc = netcdf_write_matrix(file_id, data_id, 0, nc.nproc, nc.nproc,
-										   matrix.data());
-		if (rc != 0) {
-			std::cerr << "gpu_one_to_one: failed to write NetCDF matrix " << label
-					  << ", rc=" << rc << "\n";
-			MPI_Abort(MPI_COMM_WORLD, 1);
-		}
-	};
-	write_one(nc.avg_file_id, nc.avg_data_id, nc.avg, "avg");
-	write_one(nc.med_file_id, nc.med_data_id, nc.med, "median");
-	write_one(nc.min_file_id, nc.min_data_id, nc.min, "min");
-	write_one(nc.std_file_id, nc.std_data_id, nc.stddev, "std");
-
-	netcdf_close_file(nc.avg_file_id);
-	netcdf_close_file(nc.med_file_id);
-	netcdf_close_file(nc.min_file_id);
-	netcdf_close_file(nc.std_file_id);
 }
 
 /*
@@ -744,7 +622,7 @@ int main(int argc, char **argv) {
 		std::cout << std::fixed << std::setprecision(3);
 		if (out_file)
 			*out_file << std::fixed << std::setprecision(3);
-		NetcdfBundle nc = netcdf_open_bundle(args, rank, nproc);
+		NetcdfBundle nc = netcdf_open_bundle(args.out_path, args.nbytes, args.iters, nproc);
 
 		// Реальное суммарное время прогона: от первой пары до последней.
 		const double test_t0 = MPI_Wtime();
@@ -817,7 +695,7 @@ int main(int argc, char **argv) {
 				<< total_elapsed_s << "\n";
 			mirror(oss.str());
 		}
-		netcdf_flush_and_close(nc, rank);
+		netcdf_flush_and_close(nc);
 
 		t.stop = 1;
 		for (int r = 1; r < nproc; ++r)

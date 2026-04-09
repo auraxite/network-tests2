@@ -6,37 +6,17 @@ import argparse
 from pathlib import Path
 
 
-def parse_values(path: Path) -> list[float]:
-	values: list[float] = []
-	for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-		text = line.strip()
-		if not text:
-			continue
-		values.append(float(text))
-	return values
-
-
-def out_path_for(src: Path) -> Path:
-	return src.with_name("sorted_" + src.name)
-
-
 def process_file(path: Path) -> tuple[Path, int]:
-	values = parse_values(path)
-	values.sort()
-	dst = out_path_for(path)
+	values = sorted(
+		float(line.strip())
+		for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+		if line.strip()
+	)
+	dst = path.with_name("sorted_" + path.name)
 	with dst.open("w", encoding="utf-8") as f:
 		for v in values:
 			f.write(f"{v:.3f}\n")
 	return dst, len(values)
-
-
-def collect_files(path: Path, recursive: bool) -> list[Path]:
-	if path.is_file():
-		return [path]
-	if path.is_dir():
-		pattern = "**/*.raw" if recursive else "*.raw"
-		return sorted(p for p in path.glob(pattern) if p.is_file())
-	return []
 
 
 def main() -> int:
@@ -54,7 +34,14 @@ def main() -> int:
 	)
 	args = parser.parse_args()
 
-	files = collect_files(args.input, args.recursive)
+	if args.input.is_file():
+		files = [args.input]
+	elif args.input.is_dir():
+		pattern = "**/*.raw" if args.recursive else "*.raw"
+		files = sorted(p for p in args.input.glob(pattern) if p.is_file())
+	else:
+		files = []
+
 	if not files:
 		print(f"sort_raw_samples: no files found for {args.input}")
 		return 1
@@ -65,7 +52,7 @@ def main() -> int:
 			dst, n = process_file(path)
 			print(f"{path} -> {dst} ({n} values)")
 			ok += 1
-		except Exception as e:  # noqa: BLE001
+		except Exception as e:
 			print(f"{path}: error: {e}")
 
 	return 0 if ok == len(files) else 2

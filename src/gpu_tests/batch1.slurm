@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=clustbench
 #SBATCH --partition=batch
-#SBATCH --time=00:20:00
-#SBATCH --output=slurm-grid-%j.out
-#SBATCH --error=slurm-grid-%j.err
+#SBATCH --time=00:05:00
+#SBATCH --output=clustbench-%j.out
+#SBATCH --error=clustbench-%j.err
 #SBATCH --nodes=2
 #SBATCH --ntasks=4
 #SBATCH --ntasks-per-node=2
@@ -11,6 +11,12 @@
 #SBATCH --cpus-per-task=1
 
 set -euo pipefail
+
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+
+export NETCDF_HOME="$HOME/opt/netcdf-c-4.9.2"
+export PATH="$NETCDF_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$NETCDF_HOME/lib:$LD_LIBRARY_PATH"
 
 HOSTNAME="${SLURMD_NODENAME:-$(hostname -s)}"
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
@@ -40,7 +46,7 @@ for REP in "${REPS[@]}"; do
 			OUT_TXT="${OUT_DIR}/${HOSTNAME}_rep${REP}_m${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
 			echo "RUN rep=${REP} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 
-			srun --mpi=pmix -n"${NTASKS}" --cpus-per-task=1 "${BIN}" \
+			srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \
 				--iters "${ITERS}" \
