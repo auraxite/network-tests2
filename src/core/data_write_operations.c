@@ -68,7 +68,8 @@ int create_netcdf_header
         return NETCDF_ERROR;
     }
 
-а
+	if(nc_def_var(netcdf_file_id,"proc_num",NC_INT,0,0,&num_procs_var_id)!=NC_NOERR)
+	{
 		return NETCDF_ERROR;
 	}
 	
