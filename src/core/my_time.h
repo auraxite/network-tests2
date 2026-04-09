@@ -21,8 +21,6 @@
 #ifndef __MY_TIME_H_
 #define __MY_TIME_H_
 
-#include <time.h>
-
 typedef double px_my_time_type;
 
 #ifdef __cplusplus
@@ -30,9 +28,11 @@ extern "C"
 {
 #endif
 
-//возвращает текущее время с помощью
-// стандартной функции mpi.h
+//возвращает текущее время с помощью стандартной функции mpi.h
 extern px_my_time_type px_my_cpu_time(void);
+
+// Возвращает wall-clock время через gettimeofday().
+extern double MYMPI_Wtime(void);
 
 #ifdef __cplusplus
 }

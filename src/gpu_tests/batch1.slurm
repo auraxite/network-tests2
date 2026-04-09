@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=gpu1to1-grid
+#SBATCH --job-name=clustbench
 #SBATCH --partition=batch
-#SBATCH --time=06:00:00
+#SBATCH --time=00:20:00
 #SBATCH --output=slurm-grid-%j.out
 #SBATCH --error=slurm-grid-%j.err
-#SBATCH --nodes=1
-#SBATCH --ntasks=8
-#SBATCH --ntasks-per-node=8
+#SBATCH --nodes=2
+#SBATCH --ntasks=4
+#SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=1
 
@@ -21,13 +21,16 @@ BIN="${GPU_TESTS}/gpu_one_to_one"
 
 CASES=(
 	"500000:1600:80"
-	"2000000:800:40"
-	"8000000:400:20"
-	"32000000:200:10"
+	# "2000000:800:40"
+	# "8000000:400:20"
+	# "32000000:200:10"
 )
 
 REPS=(1)
-MODES=(auto host)
+MODES=(
+	auto
+	# host
+)
 
 for REP in "${REPS[@]}"; do
 	for MODE in "${MODES[@]}"; do

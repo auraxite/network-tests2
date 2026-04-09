@@ -18,21 +18,16 @@
  *
  */
 
+#include "my_time.h"
+
 #include <mpi.h>
 #include <sys/time.h>
-#include <time.h>
-
-//оно же уже объявлено в хэдере, зачем?
-typedef double px_my_time_type;
-
-px_my_time_type px_my_cpu_time(void);
 
 px_my_time_type px_my_cpu_time(void)
 {
  return MPI_Wtime();
 }
 
-//ПОЧЕМУ ЕЕ НЕТ В ХЭДЭРЕ?
 double MYMPI_Wtime()
 {
 	struct timeval tv;

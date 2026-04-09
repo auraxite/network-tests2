@@ -12,28 +12,40 @@
  *   auto — указатели device при CUDA-aware MPI, иначе host
  */
 
-#include <mpi.h>
-
-#if defined(OPEN_MPI) && OPEN_MPI
-	#include "mpi-ext.h"
-#endif
-
-#include <cuda_runtime.h>
-
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
+#include <cuda_runtime.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
+#include <mpi.h>
+#if defined(OPEN_MPI) && OPEN_MPI
+	#include "mpi-ext.h"
+#endif
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <vector>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "../core/data_write_operations.h"
+#include "../core/string_id_converters.h"
+#include "../core/types.h"
+#ifdef __cplusplus
+}
+#endif
+
 
 namespace {
 
@@ -79,6 +91,8 @@ enum class StatOut {
 	Var,
 };
 
+constexpr int ACK_FIELDS = 13; // 6 MPI + valid + 6 MONOTONIC
+
 struct Args { // Параметры запуска бенчмарка (CLI-аргументы).
 	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB).
 	int warmup = 10;		// Прогревочные итерации (не в статистике).
@@ -89,12 +103,29 @@ struct Args { // Параметры запуска бенчмарка (CLI-ар�
 	bool dump_raw_samples = true; // Сохранять сырые выборки samples_us по парам.
 };
 
+struct NetcdfBundle {
+	bool enabled = false;
+	int nproc = 0;
+	int avg_file_id = -1;
+	int avg_data_id = -1;
+	int med_file_id = -1;
+	int med_data_id = -1;
+	int min_file_id = -1;
+	int min_data_id = -1;
+	int std_file_id = -1;
+	int std_data_id = -1;
+	std::vector<double> avg;
+	std::vector<double> med;
+	std::vector<double> min;
+	std::vector<double> stddev;
+};
+
 struct Task { // Задание мастера
 	int src_rank = -1;
 	int src_gpu = -1;
 	int dst_rank = -1;
 	int dst_gpu = -1;
-	int stop = 0; // 1 — завершить воркер.
+	int stop = 0; // 1 — завершить воркер
 };
 
 void help(int rank) {
@@ -106,10 +137,7 @@ void help(int rank) {
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --mode M        auto | host\n"
 			  << "  --stat S        all | avg | median | min | max | var | std (pair line output)\n"
-			  << "  --out FILE      also write the same output to FILE (rank 0 only)\n"
-			  << "  -o FILE         same as --out\n"
-			  << "Env (layout):\n"
-			  << "  SLURM_NODEID   node key source\n";
+			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n";
 }
 
 Mode parse_mode(const std::string &s, int rank) {
@@ -203,6 +231,145 @@ bool check_host(Mode mode, bool cuda_aware) {
 static void append_raw_samples(const Args &args, int rank, const Task &t,
 							   const std::vector<double> &samples_us);
 
+static double monotonic_now_us() {
+	timespec ts{};
+	#if defined(CLOCK_MONOTONIC_RAW)
+		const clockid_t clk_id = CLOCK_MONOTONIC_RAW;
+	#else
+		const clockid_t clk_id = CLOCK_MONOTONIC;
+	#endif
+	if (clock_gettime(clk_id, &ts) != 0)
+		return 0.0;
+	return static_cast<double>(ts.tv_sec) * 1e6 +
+		   static_cast<double>(ts.tv_nsec) * 1e-3;
+}
+
+static void fill_stats6(const std::vector<double> &samples, double *out6) {
+	const double n = static_cast<double>(samples.size());
+	const double sum = std::accumulate(samples.begin(), samples.end(), 0.0);
+	const double mean = sum / n;
+	auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
+	const double min_v = *it_min;
+	const double max_v = *it_max;
+	std::vector<double> sorted = samples;
+	std::sort(sorted.begin(), sorted.end());
+	const size_t m = sorted.size() / 2;
+	const double median = (sorted.size() % 2 == 0)
+							? (sorted[m - 1] + sorted[m]) * 0.5
+							: sorted[m];
+	double var = 0.0;
+	if (samples.size() > 1) {
+		for (double x : samples) {
+			const double d = x - mean;
+			var += d * d;
+		}
+		var /= static_cast<double>(samples.size() - 1);
+	}
+	const double stddev = std::sqrt(var);
+	out6[0] = mean;
+	out6[1] = median;
+	out6[2] = min_v;
+	out6[3] = max_v;
+	out6[4] = var;
+	out6[5] = stddev;
+}
+
+static int clamp_size_to_int_or_abort(size_t v, const char *name) {
+	if (v <= static_cast<size_t>(std::numeric_limits<int>::max()))
+		return static_cast<int>(v);
+	std::cerr << "gpu_one_to_one: value for " << name
+			  << " does not fit into int: " << v << "\n";
+	MPI_Abort(MPI_COMM_WORLD, 1);
+	return 0;
+}
+
+static NetcdfBundle netcdf_open_bundle(const Args &args, int rank, int nproc) {
+	NetcdfBundle nc{};
+	if (rank != 0 || args.out_path.empty())
+		return nc;
+
+	std::string prefix = args.out_path;
+	const std::string txt_suffix = ".txt";
+	if (prefix.size() >= txt_suffix.size() &&
+		prefix.compare(prefix.size() - txt_suffix.size(), txt_suffix.size(), txt_suffix) == 0) {
+		prefix.erase(prefix.size() - txt_suffix.size());
+	}
+	if (prefix.empty())
+		return nc;
+
+	nc.enabled = true;
+	nc.nproc = nproc;
+	const size_t total = static_cast<size_t>(nproc) * static_cast<size_t>(nproc);
+	nc.avg.assign(total, 0.0);
+	nc.med.assign(total, 0.0);
+	nc.min.assign(total, 0.0);
+	nc.stddev.assign(total, 0.0);
+
+	network_test_parameters_struct p{};
+	p.num_procs = nproc;
+	p.test_type = ONE_TO_ONE_TEST_TYPE;
+	p.begin_message_length = clamp_size_to_int_or_abort(args.nbytes, "--bytes");
+	p.end_message_length = clamp_size_to_int_or_abort(args.nbytes, "--bytes");
+	p.step_length = 1;
+	p.num_repeats = args.iters;
+	p.noise_message_length = 0;
+	p.num_noise_messages = 0;
+	p.num_noise_procs = 0;
+	p.file_name_prefix = prefix.c_str();
+
+	auto create_one = [&](int datatype, int &file_id, int &data_id, const char *label) {
+		const int rc = create_netcdf_header(datatype, &p, &file_id, &data_id);
+		if (rc != 0) {
+			std::cerr << "gpu_one_to_one: failed to create NetCDF for " << label
+					  << " with prefix '" << prefix << "', rc=" << rc << "\n";
+			MPI_Abort(MPI_COMM_WORLD, 1);
+		}
+	};
+	create_one(AVERAGE_NETWORK_TEST_DATATYPE, nc.avg_file_id, nc.avg_data_id, "avg");
+	create_one(MEDIAN_NETWORK_TEST_DATATYPE, nc.med_file_id, nc.med_data_id, "median");
+	create_one(MIN_NETWORK_TEST_DATATYPE, nc.min_file_id, nc.min_data_id, "min");
+	create_one(DEVIATION_NETWORK_TEST_DATATYPE, nc.std_file_id, nc.std_data_id, "std");
+
+	return nc;
+}
+
+static void netcdf_store_pair(NetcdfBundle &nc, int src_rank, int dst_rank,
+							  const std::vector<double> &metric) {
+	if (!nc.enabled)
+		return;
+	const size_t idx = static_cast<size_t>(src_rank) * static_cast<size_t>(nc.nproc) +
+					   static_cast<size_t>(dst_rank);
+	nc.avg[idx] = metric[0];
+	nc.med[idx] = metric[1];
+	nc.min[idx] = metric[2];
+	nc.stddev[idx] = metric[5];
+}
+
+static void netcdf_flush_and_close(NetcdfBundle &nc, int rank) {
+	if (rank != 0 || !nc.enabled)
+		return;
+
+	auto write_one = [&](int file_id, int data_id, const std::vector<double> &matrix,
+						 const char *label) {
+		const int rc = netcdf_write_matrix(file_id, data_id, 0, nc.nproc, nc.nproc,
+										   matrix.data());
+		if (rc != 0) {
+			std::cerr << "gpu_one_to_one: failed to write NetCDF matrix " << label
+					  << ", rc=" << rc << "\n";
+			MPI_Abort(MPI_COMM_WORLD, 1);
+		}
+	};
+	write_one(nc.avg_file_id, nc.avg_data_id, nc.avg, "avg");
+	write_one(nc.med_file_id, nc.med_data_id, nc.med, "median");
+	write_one(nc.min_file_id, nc.min_data_id, nc.min, "min");
+	write_one(nc.std_file_id, nc.std_data_id, nc.stddev, "std");
+
+	netcdf_close_file(nc.avg_file_id);
+	netcdf_close_file(nc.med_file_id);
+	netcdf_close_file(nc.min_file_id);
+	netcdf_close_file(nc.std_file_id);
+}
+
 /*
  * Одно задание (одна пара GPU). Возврат:
  * {avg_us, median_us, min_us, max_us, var_us, std_us, valid_metric}.
@@ -211,7 +378,7 @@ static void append_raw_samples(const Args &args, int rank, const Task &t,
  */
 std::vector<double> run_task(int rank, const Task &t, const Args &args,
 							 bool check_host) {
-	std::vector<double> ack(7, 0.0);
+	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
 	if (!is_sender && !is_receiver)
@@ -265,7 +432,7 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 					"MPI_Send (host staging)");
 			} else {
 				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, tag, MPI_COMM_WORLD),
-					"MPI_Send (device buffer)");
+					"MPI_Send (device buffer)");                                                                                                                                                                                                                                                                                                                            
 			}
 		}
 		if (is_receiver) {
@@ -281,54 +448,29 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 		}
 	};
 
-	std::vector<double> samples_us;
+	std::vector<double> samples_mpi_us;
+	std::vector<double> samples_clock_us;
 	for (int i = 0; i < args.warmup; ++i)
 		do_one(i);
-	samples_us.reserve(static_cast<size_t>(std::max(1, args.iters))); // ёмкость под iters
+	samples_mpi_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
+	samples_clock_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
 	for (int i = 0; i < args.iters; ++i) {
-		const double t0 = MPI_Wtime();
+		const double t0_mpi = MPI_Wtime();
+		const double t0_clk = monotonic_now_us();
 		do_one(1000 + i);
-		const double t1 = MPI_Wtime();
-		if (is_sender)
-    		samples_us.push_back((t1 - t0) * 1e6); // сек -> мкс
+		const double t1_clk = monotonic_now_us();
+		const double t1_mpi = MPI_Wtime();
+		if (is_sender) {
+			samples_mpi_us.push_back((t1_mpi - t0_mpi) * 1e6); // сек -> мкс
+			samples_clock_us.push_back(t1_clk - t0_clk);
+		}
 	}
 	if (is_sender)
-		append_raw_samples(args, rank, t, samples_us);
+		append_raw_samples(args, rank, t, samples_mpi_us);
 
-	if (!samples_us.empty()) {
-		const double n = static_cast<double>(samples_us.size());
-		const double sum = std::accumulate(samples_us.begin(), samples_us.end(), 0.0); // сумма всех значений
-		const double mean = sum / n;
-
-		auto [it_min, it_max] = std::minmax_element(
-			samples_us.begin(),
-			samples_us.end()); // находит мин и макс значения
-		const double min_v = *it_min;
-		const double max_v = *it_max;
-
-		std::vector<double> sorted = samples_us;
-		std::sort(sorted.begin(), sorted.end());
-		const size_t m = sorted.size() / 2;
-		const double median = (sorted.size() % 2 == 0)
-								? (sorted[m - 1] + sorted[m]) * 0.5
-								: sorted[m];
-
-		double var = 0.0;
-		if (samples_us.size() > 1) {
-			for (double x : samples_us) {
-				const double d = x - mean;
-				var += d * d;
-			}
-			var /= static_cast<double>(samples_us.size() - 1);
-		}
-		const double stddev = std::sqrt(var);
-
-		ack[0] = mean;
-		ack[1] = median;
-		ack[2] = min_v;
-		ack[3] = max_v;
-		ack[4] = var;
-		ack[5] = stddev;
+	if (!samples_mpi_us.empty()) {
+		fill_stats6(samples_mpi_us, ack.data());
+		fill_stats6(samples_clock_us, ack.data() + 7);
 		ack[6] = 1.0;
 	}
 
@@ -397,19 +539,71 @@ static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 	return oss.str();
 }
 
+static std::string format_pair_clock_line(int src_rank, int dst_rank,
+										  const std::vector<double> &metric,
+										  StatOut stat) {
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(3);
+	oss << "pair_clock " << src_rank << " -> " << dst_rank << " (r" << src_rank
+		<< " -> r" << dst_rank << ") ";
+	const double avg_us = metric[7];
+	const double med_us = metric[8];
+	const double min_us = metric[9];
+	const double max_us = metric[10];
+	const double var_us = metric[11];
+	const double std_us = metric[12];
+	switch (stat) {
+	case StatOut::All:
+		oss << "avg_us=" << avg_us << " median_us=" << med_us
+			<< " min_us=" << min_us << " max_us=" << max_us
+			<< " var_us=" << var_us << " std_us=" << std_us;
+		break;
+	case StatOut::Avg:
+		oss << "avg_us=" << avg_us;
+		break;
+	case StatOut::Median:
+		oss << "median_us=" << med_us;
+		break;
+	case StatOut::Min:
+		oss << "min_us=" << min_us;
+		break;
+	case StatOut::Max:
+		oss << "max_us=" << max_us;
+		break;
+	case StatOut::Var:
+		oss << "var_us=" << var_us;
+		break;
+	case StatOut::Std:
+		oss << "std_us=" << std_us;
+		break;
+	}
+	oss << "\n";
+	return oss.str();
+}
+
 static void append_raw_samples(const Args &args, int rank, const Task &t,
 							   const std::vector<double> &samples_us) {
 	if (!args.dump_raw_samples || args.out_path.empty() || samples_us.empty())
 		return;
 	(void)rank;
 	std::string base = args.out_path;
+	std::string dir = ".";
+	const size_t slash = base.find_last_of('/');
+	if (slash != std::string::npos) {
+		dir = base.substr(0, slash);
+		base = base.substr(slash + 1);
+	}
 	const std::string suffix = ".txt";
 	if (base.size() >= suffix.size() &&
 		base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0) {
 		base.erase(base.size() - suffix.size());
 	}
+	const std::string raw_dir = dir + "/raw";
+	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST)
+		return;
 	std::ostringstream path;
-	path << base << "_src" << t.src_rank << "_dst" << t.dst_rank << ".raw";
+	path << raw_dir << "/" << base
+		 << "_src" << t.src_rank << "_dst" << t.dst_rank << ".raw";
 	std::ofstream out(path.str(), std::ios::app);
 	if (!out.is_open())
 		return;
@@ -501,7 +695,7 @@ int main(int argc, char **argv) {
 	if (rank == 0) {
 		{
 			std::ostringstream oss;
-			oss << "Mode: " << (via_host ? "host" : "GPUDirect") << "\n";
+			oss << "Mode: " << (via_host ? "host" : "auto") << "\n";
 			mirror(oss.str());
 		}
 		{
@@ -550,6 +744,7 @@ int main(int argc, char **argv) {
 		std::cout << std::fixed << std::setprecision(3);
 		if (out_file)
 			*out_file << std::fixed << std::setprecision(3);
+		NetcdfBundle nc = netcdf_open_bundle(args, rank, nproc);
 
 		// Реальное суммарное время прогона: от первой пары до последней.
 		const double test_t0 = MPI_Wtime();
@@ -563,9 +758,11 @@ int main(int argc, char **argv) {
 				t.stop = 0;
 				// Диагональ src==dst не измеряем: сразу печатаем нулевые метрики.
 				if (src_rank == dst_rank) {
-					mirror(format_pair_line(src_rank, dst_rank,
-											0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-											args.stat_out));
+					std::vector<double> metric(ACK_FIELDS, 0.0);
+					netcdf_store_pair(nc, src_rank, dst_rank, metric);
+					mirror(format_pair_line(src_rank, dst_rank, 0.0, 0.0, 0.0, 0.0,
+											0.0, 0.0, args.stat_out));
+					mirror(format_pair_clock_line(src_rank, dst_rank, metric, args.stat_out));
 					continue;
 				}
 
@@ -581,7 +778,7 @@ int main(int argc, char **argv) {
 										MPI_COMM_WORLD),
 							"MPI_Send Task (dst)");
 
-					std::vector<double> metric(7, 0.0);
+					std::vector<double> metric(ACK_FIELDS, 0.0);
 					if (src_rank == 0 || dst_rank == 0) {
 						auto ack0 = run_task(rank, t, args, via_host);
 						if (ack0[6] == 1.0)
@@ -589,16 +786,16 @@ int main(int argc, char **argv) {
 					}
 
 					if (src_rank != 0) {
-						std::vector<double> ack(7, 0.0);
-						mpi_ok(MPI_Recv(ack.data(), 7, MPI_DOUBLE, src_rank, 2,
+						std::vector<double> ack(ACK_FIELDS, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), ACK_FIELDS, MPI_DOUBLE, src_rank, 2,
 										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 							"MPI_Recv ack (src)");
 						if (ack[6] == 1.0)
 							metric = ack;
 					}
 					if (dst_rank != 0) {
-						std::vector<double> ack(7, 0.0);
-						mpi_ok(MPI_Recv(ack.data(), 7, MPI_DOUBLE, dst_rank, 2,
+						std::vector<double> ack(ACK_FIELDS, 0.0);
+						mpi_ok(MPI_Recv(ack.data(), ACK_FIELDS, MPI_DOUBLE, dst_rank, 2,
 										MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 							"MPI_Recv ack (dst)");
 						if (ack[6] == 1.0)
@@ -608,6 +805,8 @@ int main(int argc, char **argv) {
 					mirror(format_pair_line(src_rank, dst_rank, metric[0],
 											metric[1], metric[2], metric[3],
 											metric[4], metric[5], args.stat_out));
+					mirror(format_pair_clock_line(src_rank, dst_rank, metric, args.stat_out));
+					netcdf_store_pair(nc, src_rank, dst_rank, metric);
 				}
 			}
 		}
@@ -618,6 +817,7 @@ int main(int argc, char **argv) {
 				<< total_elapsed_s << "\n";
 			mirror(oss.str());
 		}
+		netcdf_flush_and_close(nc, rank);
 
 		t.stop = 1;
 		for (int r = 1; r < nproc; ++r)
@@ -632,7 +832,7 @@ int main(int argc, char **argv) {
 			if (t.stop)
 				break;
 			auto ack = run_task(rank, t, args, via_host);
-			mpi_ok(MPI_Send(ack.data(), 7, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
+			mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
 				   "MPI_Send ack (worker)");
 		}
 	}

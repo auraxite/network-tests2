@@ -9,6 +9,7 @@ RUN ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
         build-essential \
         openmpi-bin \
         libopenmpi-dev \
+        libnetcdf-dev \
         libnuma-dev \
         tzdata && \
     apt clean && \

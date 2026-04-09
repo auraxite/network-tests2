@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""
-Строит heatmap-матрицы по текстовому выводу gpu_one_to_one (stdout или --out).
 
-Если первый аргумент — каталог, обрабатываются все *.txt; PNG кладутся в
---out-dir/<имя_файла_без_txt>/ для каждого лога.
-"""
 from __future__ import annotations
+
+"""Render heatmaps from gpu_one_to_one text output.
+
+Arguments:
+  input            .txt file, directory with .txt files, or '-' (stdin)
+  -o, --out-dir    output directory for PNG files
+  --sort, --sorted enable raw sorting pipeline (default: none)
+"""
 
 import argparse
 from datetime import datetime
 import math
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -261,11 +265,12 @@ def total_time_line(meta: dict[str, Any]) -> str:
 
 """Собирает блок параметров под графиком."""
 def param_block(
-	meta: dict[str, Any], tags: dict[str, str], creation_time: str, total_time: str
+	meta: dict[str, Any], tags: dict[str, str], total_time: str, creation_time: str
 ) -> str:
 	lines: list[str] = []
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
-	lines.append(f"время создания: {creation_time}")
+	lines.append(f"b: {tags['b']}")
+	lines.append(f"сгенерировано: {creation_time}")
 	lines.append(total_time)
 	return "\n".join(lines)
 
@@ -374,9 +379,9 @@ def render_one_text(
 
 	out_dir.mkdir(parents=True, exist_ok=True)
 	tags = run_tags(source_path, meta)
-	creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 	total_time = total_time_line(meta)
-	params = param_block(meta, tags, creation_time, total_time)
+	creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+	params = param_block(meta, tags, total_time, creation_time)
 	cmap_resolved = resolve_colormap("latency_gr")
 
 	written = 0
@@ -410,9 +415,66 @@ def render_one_text(
 	return 0
 
 
+def _sort_raw_with_helper(raw_files: list[Path]) -> int:
+	try:
+		import sort_raw_samples as srs
+	except Exception as e:  # noqa: BLE001
+		print(f"gpu_render: cannot import sort_raw_samples.py: {e}", file=sys.stderr)
+		return 1
+
+	code = 0
+	for raw_path in raw_files:
+		try:
+			dst, n = srs.process_file(raw_path)
+			print(f"{raw_path} -> {dst} ({n} values)")
+		except Exception as e:  # noqa: BLE001
+			print(f"{raw_path}: error: {e}", file=sys.stderr)
+			code = 1
+	return code
+
+
+def create_and_sort_raw_for_text(source_path: Path, out_dir: Path, sort_mode: str) -> int:
+	# Собираем raw только для конкретного .txt прогона.
+	pattern = f"{source_path.stem}_src*_dst*.raw"
+	src_raw_files = sorted(p for p in source_path.parent.glob(pattern) if p.is_file())
+	if not src_raw_files:
+		print(
+			f"gpu_render: [{source_path}] no matching raw files for pattern {pattern}",
+			file=sys.stderr,
+		)
+		return 1
+
+	raw_dir = out_dir / "raw"
+	raw_dir.mkdir(parents=True, exist_ok=True)
+	copied_raw: list[Path] = []
+	for src in src_raw_files:
+		dst = raw_dir / src.name
+		shutil.copy2(src, dst)
+		copied_raw.append(dst)
+	print(f"gpu_render: copied {len(copied_raw)} raw files to {raw_dir}")
+
+	if sort_mode != "sorted":
+		return 0
+
+	return _sort_raw_with_helper(copied_raw)
+
+
 def main() -> int:
 	p = argparse.ArgumentParser(
-		description="Heatmaps from gpu_one_to_one text output (pair ... lines)."
+		description="Heatmaps from gpu_one_to_one text output (pair ... lines).",
+		epilog=(
+			"Arguments:\n"
+			"  input            .txt file, directory with .txt files, or '-' for stdin\n"
+			"  -o, --out-dir    output directory for PNG files\n"
+			"  --sort, --sorted enable raw sorting pipeline (default: none)\n\n"
+			"Examples:\n"
+			"  gpu_render.py run.txt\n"
+			"  gpu_render.py grid_out -o grid_out_png\n"
+			"  cat run.txt | gpu_render.py - -o out_png\n"
+			"  gpu_render.py run.txt --sort\n"
+			"  gpu_render.py run.txt --sorted"
+		),
+		formatter_class=argparse.RawTextHelpFormatter,
 	)
 	p.add_argument(
 		"input",
@@ -427,11 +489,23 @@ def main() -> int:
 		default=Path("."),
 		help="Каталог для PNG; для каждого входного .txt создаётся подкаталог по имени файла",
 	)
+	p.add_argument(
+		"--sort",
+		"--sorted",
+		action="store_const",
+		const="sorted",
+		dest="sort_mode",
+		default="none",
+		help="Создать output/raw и отсортировать задержки через sort_raw_samples.py",
+	)
 	args = p.parse_args()
 
 	in_path = args.input
 	if in_path == "-":
 		text = sys.stdin.read()
+		if args.sort_mode == "sorted":
+			print("gpu_render: stdin input cannot create raw files.", file=sys.stderr)
+			return 1
 		return render_one_text(text, args.out_dir, label="stdin", source_path=None)
 
 	path = Path(in_path)
@@ -451,13 +525,22 @@ def main() -> int:
 			text = txt.read_text(encoding="utf-8", errors="replace")
 			sub = args.out_dir / txt.stem
 			r = render_one_text(text, sub, label=str(txt), source_path=txt)
+			if r == 0 and args.sort_mode == "sorted":
+				rr = create_and_sort_raw_for_text(txt, sub, args.sort_mode)
+				if rr != 0:
+					code = 1
 			if r != 0:
 				code = 1
 		return code
 
 	if path.is_file():
 		text = path.read_text(encoding="utf-8", errors="replace")
-		return render_one_text(text, args.out_dir, label=str(path), source_path=path)
+		r = render_one_text(text, args.out_dir, label=str(path), source_path=path)
+		if r != 0:
+			return r
+		if args.sort_mode != "sorted":
+			return 0
+		return create_and_sort_raw_for_text(path, args.out_dir, args.sort_mode)
 
 	print(f"gpu_render: not a file or directory: {path}", file=sys.stderr)
 	return 1
