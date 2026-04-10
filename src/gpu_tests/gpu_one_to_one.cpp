@@ -73,6 +73,13 @@ enum class Mode {
 	Host,
 };
 
+enum class Timer {
+	All,
+	Mpi,
+	Cpu,
+	Cuda,
+};
+
 enum class StatOut {
 	All,
 	Avg,
@@ -83,13 +90,14 @@ enum class StatOut {
 	Var,
 };
 
-constexpr int ACK_FIELDS = 13; // 6 MPI + valid + 6 MONOTONIC
+constexpr int ACK_FIELDS = 25; // 6 selected + valid + 6 CPU + 6 MPI + 6 GPU
 
 struct Args { // Параметры запуска бенчмарка (CLI-аргументы).
 	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB).
 	int warmup = 10;		// Прогревочные итерации (не в статистике).
 	int iters = 50;			// Измеряемые итерации.
 	Mode mode = Mode::Auto; // auto (device при CUDA-aware MPI) или host
+	Timer timer = Timer::All; // источник тайминга для строки pair
 	StatOut stat_out = StatOut::All;
 	std::string out_path;
 	bool dump_raw_samples = true; // Сохранять сырые выборки samples_us по парам.
@@ -111,6 +119,7 @@ void help(int rank) {
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --mode M        auto | host\n"
+			  << "  --timer T       all | mpi | cpu | cuda (default all)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
 			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n";
 }
@@ -124,6 +133,31 @@ Mode parse_mode(const std::string &s, int rank) {
 		std::cerr << "unknown --mode: " << s << " (use auto|host)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Mode::Auto;
+}
+
+Timer parse_timer(const std::string &s, int rank) {
+	if (s == "all")
+		return Timer::All;
+	if (s == "mpi")
+		return Timer::Mpi;
+	if (s == "cpu")
+		return Timer::Cpu;
+	if (s == "cuda" || s == "gpu")
+		return Timer::Cuda;
+	if (rank == 0)
+		std::cerr << "unknown --timer: " << s << " (use all|mpi|cpu|cuda)\n";
+	MPI_Abort(MPI_COMM_WORLD, 1);
+	return Timer::All;
+}
+
+static const char *timer_to_string(Timer t) {
+	switch (t) {
+	case Timer::All: return "all";
+	case Timer::Mpi: return "mpi";
+	case Timer::Cpu: return "cpu";
+	case Timer::Cuda: return "cuda";
+	}
+	return "all";
 }
 
 StatOut parse_stat_out(const std::string &s, int rank) {
@@ -170,6 +204,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.iters = std::atoi(next("--iters"));
 		else if (s == "--mode")
 			a.mode = parse_mode(next("--mode"), rank);
+		else if (s == "--timer")
+			a.timer = parse_timer(next("--timer"), rank);
 		else if (s == "--stat")
 			a.stat_out = parse_stat_out(next("--stat"), rank);
 		else if (s == "--out" || s == "-o")
@@ -375,30 +411,80 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	};
 
 	std::vector<double> samples_mpi_us;
-	std::vector<double> samples_clock_us;
+	std::vector<double> samples_cpu_us;
+	std::vector<double> samples_gpu_us;
+	cudaEvent_t ev_start = nullptr;
+	cudaEvent_t ev_stop = nullptr;
+	if (is_sender) {
+		cuda_ok(cudaSetDevice(t.src_gpu), "cudaSetDevice(src timing)");
+		cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
+		cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
+	}
 	for (int i = 0; i < args.warmup; ++i)
 		do_one(i);
 	samples_mpi_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
-	samples_clock_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
+	samples_cpu_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
+	samples_gpu_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
 	for (int i = 0; i < args.iters; ++i) {
 		const double t0_mpi = MPI_Wtime();
 		const double t0_clk = monotonic_now_us();
+		if (is_sender)
+			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 		do_one(1000 + i);
-		const double t1_clk = monotonic_now_us();
-		const double t1_mpi = MPI_Wtime();
 		if (is_sender) {
-			samples_mpi_us.push_back((t1_mpi - t0_mpi) * 1e6); // сек -> мкс
-			samples_clock_us.push_back(t1_clk - t0_clk);
+			cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
+			cuda_ok(cudaEventSynchronize(ev_stop), "cudaEventSynchronize(stop)");
+			float elapsed_ms = 0.0f;
+			cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop),
+					"cudaEventElapsedTime");
+			samples_gpu_us.push_back(static_cast<double>(elapsed_ms) * 1e3); // ms -> us
+			const double t1_mpi = MPI_Wtime();
+			const double t1_clk = monotonic_now_us();
+			samples_mpi_us.push_back((t1_mpi - t0_mpi) * 1e6); // s -> us
+			samples_cpu_us.push_back(t1_clk - t0_clk);
 		}
 	}
-	if (is_sender)
-		append_raw_samples(args, rank, t, samples_mpi_us);
+	if (is_sender) {
+		switch (args.timer) {
+		case Timer::All:
+			append_raw_samples(args, rank, t, samples_mpi_us);
+			break;
+		case Timer::Mpi:
+			append_raw_samples(args, rank, t, samples_mpi_us);
+			break;
+		case Timer::Cpu:
+			append_raw_samples(args, rank, t, samples_cpu_us);
+			break;
+		case Timer::Cuda:
+			append_raw_samples(args, rank, t, samples_gpu_us);
+			break;
+		}
+	}
 
-	if (!samples_mpi_us.empty()) {
-		fill_stats6(samples_mpi_us, ack.data());
-		fill_stats6(samples_clock_us, ack.data() + 7);
+	if (!samples_gpu_us.empty() && !samples_mpi_us.empty() && !samples_cpu_us.empty()) {
+		switch (args.timer) {
+		case Timer::All:
+			fill_stats6(samples_mpi_us, ack.data());
+			break;
+		case Timer::Mpi:
+			fill_stats6(samples_mpi_us, ack.data());
+			break;
+		case Timer::Cpu:
+			fill_stats6(samples_cpu_us, ack.data());
+			break;
+		case Timer::Cuda:
+			fill_stats6(samples_gpu_us, ack.data());
+			break;
+		}
+		fill_stats6(samples_cpu_us, ack.data() + 7);
+		fill_stats6(samples_mpi_us, ack.data() + 13);
+		fill_stats6(samples_gpu_us, ack.data() + 19);
 		ack[6] = 1.0;
 	}
+	if (ev_start)
+		cudaEventDestroy(ev_start);
+	if (ev_stop)
+		cudaEventDestroy(ev_stop);
 
 	if (h_buf)
 		cudaFreeHost(h_buf);
@@ -409,13 +495,14 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	return ack;
 }
 
-static std::string format_pair_line(const std::string &src_label, const std::string &dst_label,
+static std::string format_pair_line(const char *line_name,
+									const std::string &src_label, const std::string &dst_label,
 									double avg_us,
 									double med_us, double min_us, double max_us,
 									double var_us, double std_us, StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
-	oss << "pair " << src_label << " -> " << dst_label << " ";
+	oss << line_name << " " << src_label << " -> " << dst_label << " ";
 	switch (stat) {
 	case StatOut::All:
 		oss << "avg_us=" << avg_us << " med_us=" << med_us
@@ -602,6 +689,11 @@ int main(int argc, char **argv) {
 		}
 		{
 			std::ostringstream oss;
+			oss << "Timer: " << timer_to_string(args.timer) << "\n";
+			mirror(oss.str());
+		}
+		{
+			std::ostringstream oss;
 			oss << "Bytes: " << args.nbytes << "\n"
 				<< "Warmup: " << args.warmup << "\n"
 				<< "Iters: " << args.iters << "\n";
@@ -657,10 +749,29 @@ int main(int argc, char **argv) {
 				if (src_rank == dst_rank) {
 					std::vector<double> metric(ACK_FIELDS, 0.0);
 					netcdf_store_pair(nc, src_rank, dst_rank, metric);
-					mirror(format_pair_line(rank_labels[static_cast<size_t>(src_rank)],
-											rank_labels[static_cast<size_t>(dst_rank)],
-											0.0, 0.0, 0.0, 0.0,
-											0.0, 0.0, args.stat_out));
+					if (args.timer == Timer::All) {
+						mirror(format_pair_line("pair_mpi",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)],
+												0.0, 0.0, 0.0, 0.0,
+												0.0, 0.0, args.stat_out));
+						mirror(format_pair_line("pair_cpu",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)],
+												0.0, 0.0, 0.0, 0.0,
+												0.0, 0.0, args.stat_out));
+						mirror(format_pair_line("pair_cuda",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)],
+												0.0, 0.0, 0.0, 0.0,
+												0.0, 0.0, args.stat_out));
+					} else {
+						mirror(format_pair_line("pair",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)],
+												0.0, 0.0, 0.0, 0.0,
+												0.0, 0.0, args.stat_out));
+					}
 					mirror(format_pair_clock_line(rank_labels[static_cast<size_t>(src_rank)],
 												  rank_labels[static_cast<size_t>(dst_rank)],
 												  metric, args.stat_out));
@@ -703,10 +814,29 @@ int main(int argc, char **argv) {
 							metric = ack;
 					}
 
-					mirror(format_pair_line(rank_labels[static_cast<size_t>(src_rank)],
-											rank_labels[static_cast<size_t>(dst_rank)], metric[0],
-											metric[1], metric[2], metric[3],
-											metric[4], metric[5], args.stat_out));
+					if (args.timer == Timer::All) {
+						mirror(format_pair_line("pair_mpi",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)], metric[13],
+												metric[14], metric[15], metric[16],
+												metric[17], metric[18], args.stat_out));
+						mirror(format_pair_line("pair_cpu",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)], metric[7],
+												metric[8], metric[9], metric[10],
+												metric[11], metric[12], args.stat_out));
+						mirror(format_pair_line("pair_cuda",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)], metric[19],
+												metric[20], metric[21], metric[22],
+												metric[23], metric[24], args.stat_out));
+					} else {
+						mirror(format_pair_line("pair",
+												rank_labels[static_cast<size_t>(src_rank)],
+												rank_labels[static_cast<size_t>(dst_rank)], metric[0],
+												metric[1], metric[2], metric[3],
+												metric[4], metric[5], args.stat_out));
+					}
 					mirror(format_pair_clock_line(rank_labels[static_cast<size_t>(src_rank)],
 												  rank_labels[static_cast<size_t>(dst_rank)],
 												  metric, args.stat_out));
