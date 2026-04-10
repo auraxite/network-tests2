@@ -25,6 +25,16 @@ int clamp_size_to_int_or_abort(size_t v, const char *name) {
 	return 0;
 }
 
+/* Значения data_type внутри NetCDF для gpu_one_to_one (суффиксы файлов — отдельно). */
+enum : int {
+	GPU_NC_AVG = 1,
+	GPU_NC_VAR = 2,
+	GPU_NC_MIN = 3,
+	GPU_NC_MAX = 4,
+	GPU_NC_MED = 5,
+	GPU_NC_STD = 6,
+};
+
 } // namespace
 
 NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
@@ -46,8 +56,10 @@ NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
 	nc.nproc = nproc;
 	const size_t total = static_cast<size_t>(nproc) * static_cast<size_t>(nproc);
 	nc.avg.assign(total, 0.0);
-	nc.med.assign(total, 0.0);
+	nc.var.assign(total, 0.0);
 	nc.min.assign(total, 0.0);
+	nc.max.assign(total, 0.0);
+	nc.med.assign(total, 0.0);
 	nc.stddev.assign(total, 0.0);
 
 	network_test_parameters_struct p{};
@@ -62,18 +74,22 @@ NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
 	p.num_noise_procs = 0;
 	p.file_name_prefix = prefix.c_str();
 
-	auto create_one = [&](int datatype, int &file_id, int &data_id, const char *label) {
-		const int rc = create_netcdf_header(datatype, &p, &file_id, &data_id);
+	auto create_one = [&](int datatype, int &file_id, int &data_id,
+						  const char *suffix, const char *label) {
+		const int rc = create_netcdf_header_with_suffix(datatype, &p, suffix,
+														&file_id, &data_id);
 		if (rc != 0) {
 			std::cerr << "gpu_one_to_one: failed to create NetCDF for " << label
 					  << " with prefix '" << prefix << "', rc=" << rc << "\n";
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
 	};
-	create_one(AVERAGE_NETWORK_TEST_DATATYPE, nc.avg_file_id, nc.avg_data_id, "avg");
-	create_one(MEDIAN_NETWORK_TEST_DATATYPE, nc.med_file_id, nc.med_data_id, "median");
-	create_one(MIN_NETWORK_TEST_DATATYPE, nc.min_file_id, nc.min_data_id, "min");
-	create_one(DEVIATION_NETWORK_TEST_DATATYPE, nc.std_file_id, nc.std_data_id, "std");
+	create_one(GPU_NC_AVG, nc.avg_file_id, nc.avg_data_id, "avg", "avg");
+	create_one(GPU_NC_VAR, nc.var_file_id, nc.var_data_id, "var", "var");
+	create_one(GPU_NC_MIN, nc.min_file_id, nc.min_data_id, "min", "min");
+	create_one(GPU_NC_MAX, nc.max_file_id, nc.max_data_id, "max", "max");
+	create_one(GPU_NC_MED, nc.med_file_id, nc.med_data_id, "med", "med");
+	create_one(GPU_NC_STD, nc.std_file_id, nc.std_data_id, "std", "std");
 
 	return nc;
 }
@@ -84,9 +100,12 @@ void netcdf_store_pair(NetcdfBundle &nc, int src_rank, int dst_rank,
 		return;
 	const size_t idx = static_cast<size_t>(src_rank) * static_cast<size_t>(nc.nproc) +
 					   static_cast<size_t>(dst_rank);
+	/* metric[0..5]: mean, median, min, max, var, std (как в fill_stats6). */
 	nc.avg[idx] = metric[0];
 	nc.med[idx] = metric[1];
 	nc.min[idx] = metric[2];
+	nc.max[idx] = metric[3];
+	nc.var[idx] = metric[4];
 	nc.stddev[idx] = metric[5];
 }
 
@@ -105,12 +124,16 @@ void netcdf_flush_and_close(NetcdfBundle &nc) {
 		}
 	};
 	write_one(nc.avg_file_id, nc.avg_data_id, nc.avg, "avg");
-	write_one(nc.med_file_id, nc.med_data_id, nc.med, "median");
+	write_one(nc.var_file_id, nc.var_data_id, nc.var, "var");
 	write_one(nc.min_file_id, nc.min_data_id, nc.min, "min");
+	write_one(nc.max_file_id, nc.max_data_id, nc.max, "max");
+	write_one(nc.med_file_id, nc.med_data_id, nc.med, "med");
 	write_one(nc.std_file_id, nc.std_data_id, nc.stddev, "std");
 
 	netcdf_close_file(nc.avg_file_id);
-	netcdf_close_file(nc.med_file_id);
+	netcdf_close_file(nc.var_file_id);
 	netcdf_close_file(nc.min_file_id);
+	netcdf_close_file(nc.max_file_id);
+	netcdf_close_file(nc.med_file_id);
 	netcdf_close_file(nc.std_file_id);
 }

@@ -27,7 +27,6 @@ from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 _PAIR_HEAD = (
 	r"^pair (?:(?:g|G|GPU))?(\d+) -> (?:(?:g|G|GPU))?(\d+) "
-	r"\(r(\d+)(?::0)? -> r(\d+)(?::0)?\) "
 )
 
 # Полная строка (как по умолчанию в gpu_one_to_one --stat all).
@@ -137,52 +136,52 @@ def parse_gpu_one_to_one_text(
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m:
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				std_v = float(m.group(10)) if m.group(10) is not None else math.nan
-				vals = [float(m.group(i)) for i in range(5, 10)] + [std_v]
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				std_v = float(m.group(8)) if m.group(8) is not None else math.nan
+				vals = [float(m.group(i)) for i in range(3, 8)] + [std_v]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			nan6 = [math.nan, math.nan, math.nan, math.nan, math.nan, math.nan]
 			if (m := PAIR_AVG_ONLY.match(line)):
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				v = float(m.group(5))
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				v = float(m.group(3))
 				vals = [v, nan6[1], nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MEDIAN_ONLY.match(line)):
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				v = float(m.group(5))
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				v = float(m.group(3))
 				vals = [nan6[0], v, nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MIN_ONLY.match(line)):
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				v = float(m.group(5))
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], v, nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MAX_ONLY.match(line)):
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				v = float(m.group(5))
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], nan6[2], v, nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_VAR_ONLY.match(line)):
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				v = float(m.group(5))
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], nan6[2], nan6[3], v, nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_STD_ONLY.match(line)):
-				src_r = int(m.group(3))
-				dst_r = int(m.group(4))
-				v = float(m.group(5))
+				src_r = int(m.group(1))
+				dst_r = int(m.group(2))
+				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], nan6[2], nan6[3], nan6[4], v]
 				pairs.append((src_r, dst_r, vals))
 

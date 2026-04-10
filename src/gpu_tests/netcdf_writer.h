@@ -9,15 +9,21 @@ struct NetcdfBundle {
 	int nproc = 0;
 	int avg_file_id = -1;
 	int avg_data_id = -1;
-	int med_file_id = -1;
-	int med_data_id = -1;
+	int var_file_id = -1;
+	int var_data_id = -1;
 	int min_file_id = -1;
 	int min_data_id = -1;
+	int max_file_id = -1;
+	int max_data_id = -1;
+	int med_file_id = -1;
+	int med_data_id = -1;
 	int std_file_id = -1;
 	int std_data_id = -1;
 	std::vector<double> avg;
-	std::vector<double> med;
+	std::vector<double> var;
 	std::vector<double> min;
+	std::vector<double> max;
+	std::vector<double> med;
 	std::vector<double> stddev;
 };
 

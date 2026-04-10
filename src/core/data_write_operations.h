@@ -31,6 +31,21 @@ extern int create_netcdf_header
 	int *data_id
 );
 
+/**
+ * Same as create_netcdf_header, but the file name is
+ *   {prefix}_{metric_suffix}.nc
+ * (metric_suffix must be non-NULL, e.g. "avg", "med").
+ * file_data_type is still written into the NetCDF metadata attribute.
+ */
+extern int create_netcdf_header_with_suffix
+(
+	const int file_data_type,
+	const struct network_test_parameters_struct* test_parameters,
+	const char *metric_suffix,
+	int *file_id,
+	int *data_id
+);
+
 extern int netcdf_write_matrix
 (
         const int netcdf_file_id,

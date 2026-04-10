@@ -10,10 +10,11 @@
 
 
 
-int create_netcdf_header
+int create_netcdf_header_with_suffix
 (
 	const int file_data_type,
 	const struct network_test_parameters_struct *test_parameters,
+	const char *metric_suffix,
 	int *file_id,
 	int *data_id
 )
@@ -32,14 +33,29 @@ int create_netcdf_header
 	
 
 	char *file_name=NULL;
+	const char *suffix = metric_suffix;
 
-	file_name=(char *)malloc(strlen(test_parameters->file_name_prefix)+strlen("_deviation.nc")+1);
-	if(file_name==NULL)
+	if(suffix==NULL||suffix[0]=='\0')
 	{
-		return MEM_ERROR;
+		suffix=file_data_type_to_string(file_data_type);
 	}
 
-	sprintf(file_name,"%s_%s.nc",test_parameters->file_name_prefix,file_data_type_to_string(file_data_type));
+	{
+		const size_t plen=strlen(test_parameters->file_name_prefix);
+		const size_t slen=strlen(suffix);
+		const size_t need=plen+slen+16;
+		file_name=(char *)malloc(need);
+		if(file_name==NULL)
+		{
+			return MEM_ERROR;
+		}
+		if(snprintf(file_name,need,"%s_%s.nc",test_parameters->file_name_prefix,suffix)
+			>=(int)need)
+		{
+			free(file_name);
+			return MEM_ERROR;
+		}
+	}
 
 	if(nc_create(file_name,NC_NOCLOBBER|NC_SHARE|NC_64BIT_OFFSET,&netcdf_file_id)!=NC_NOERR)
 	{
@@ -206,6 +222,23 @@ int create_netcdf_header
 	*file_id=netcdf_file_id;
 	*data_id=data_var_id;
 	return 0;	
+}
+
+int create_netcdf_header
+(
+	const int file_data_type,
+	const struct network_test_parameters_struct *test_parameters,
+	int *file_id,
+	int *data_id
+)
+{
+	return create_netcdf_header_with_suffix(
+		file_data_type,
+		test_parameters,
+		file_data_type_to_string(file_data_type),
+		file_id,
+		data_id
+	);
 }
 
 int netcdf_write_matrix
