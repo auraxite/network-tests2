@@ -361,33 +361,12 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	return ack;
 }
 
-static std::string host_name() {
-	const char *env_host = std::getenv("HOSTNAME");
-	if (env_host && *env_host)
-		return std::string(env_host);
-	char buf[256];
-	buf[0] = '\0';
-	if (gethostname(buf, sizeof(buf)) == 0) {
-		buf[sizeof(buf) - 1] = '\0';
-		return std::string(buf);
-	}
-	return std::string();
-}
-
-static int slurm_node_id() {
-	const char *s = std::getenv("SLURM_NODEID");
-	if (s && *s)
-		return std::atoi(s);
-	return -1;
-}
-
 static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 									double med_us, double min_us, double max_us,
 									double var_us, double std_us, StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
-	oss << "pair " << src_rank << " -> " << dst_rank << " (r" << src_rank << " -> r"
-		<< dst_rank << ") ";
+	oss << "pair " << src_rank << " -> " << dst_rank << " ";
 	switch (stat) {
 	case StatOut::All:
 		oss << "avg_us=" << avg_us << " median_us=" << med_us
@@ -422,8 +401,7 @@ static std::string format_pair_clock_line(int src_rank, int dst_rank,
 										  StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
-	oss << "pair_clock " << src_rank << " -> " << dst_rank << " (r" << src_rank
-		<< " -> r" << dst_rank << ") ";
+	oss << "pair_clock " << src_rank << " -> " << dst_rank << " ";
 	const double avg_us = metric[7];
 	const double med_us = metric[8];
 	const double min_us = metric[9];
@@ -521,10 +499,15 @@ int main(int argc, char **argv) {
 			*out_file << s;
 	};
 
-	constexpr int HOST_LEN = 64;
+	constexpr int HOST_LEN = MPI_MAX_PROCESSOR_NAME;
 	char my_host[HOST_LEN];
 	std::vector<char> hosts_recv;
-	std::snprintf(my_host, sizeof(my_host), "%s", host_name().c_str());
+	{
+		int name_len = 0;
+		mpi_ok(MPI_Get_processor_name(my_host, &name_len),
+			   "MPI_Get_processor_name");
+		my_host[HOST_LEN - 1] = '\0';
+	}
 
 	constexpr int PCI_LEN = 32;
 	char my_pci[PCI_LEN];
@@ -549,13 +532,9 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	int my_node = slurm_node_id();
-	std::vector<int> node_recv;
-	
 	if (rank == 0) {
 		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
 		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
-		node_recv.resize(static_cast<size_t>(nproc));
 	}
 	mpi_ok(MPI_Gather(my_host, HOST_LEN, MPI_CHAR,
 					  rank == 0 ? hosts_recv.data() : nullptr, HOST_LEN, MPI_CHAR, 0,
@@ -565,10 +544,6 @@ int main(int argc, char **argv) {
 					  rank == 0 ? pci_recv.data() : nullptr, PCI_LEN, MPI_CHAR, 0,
 					  MPI_COMM_WORLD),
 		   "MPI_Gather pci bus ids");
-	mpi_ok(MPI_Gather(&my_node, 1, MPI_INT,
-					  rank == 0 ? node_recv.data() : nullptr, 1, MPI_INT, 0,
-					  MPI_COMM_WORLD),
-		   "MPI_Gather local node");
 
 	if (rank == 0) {
 		{
@@ -578,7 +553,7 @@ int main(int argc, char **argv) {
 		}
 		{
 			std::ostringstream oss;
-			oss << "Hostname: " << host_name() << "\n";
+			oss << "Hostname: " << my_host << "\n";
 			mirror(oss.str());
 		}
 		{
@@ -613,7 +588,6 @@ int main(int argc, char **argv) {
 			const char *p = pci_recv.data() + static_cast<size_t>(r) * PCI_LEN;
 			std::ostringstream oss;
 			oss << "  r" << r << " host=" << h
-				<< " local_node=" << node_recv[static_cast<size_t>(r)]
 				<< " local_gpu=0"
 				<< " visible_gpus=" << gpu_counts[static_cast<size_t>(r)]
 				<< " pci=" << p << "\n";
