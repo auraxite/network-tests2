@@ -26,31 +26,31 @@ from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 
 _PAIR_HEAD = (
-	r"^pair (?:(?:g|G|GPU))?(\d+) -> (?:(?:g|G|GPU))?(\d+) "
+	r"^pair (\S+) -> (\S+) "
 )
 
 # Полная строка (как по умолчанию в gpu_one_to_one --stat all).
 PAIR_LINE_RE = re.compile(
 	_PAIR_HEAD
 	+ r"avg_us=([0-9.eE+-]+)\s+"
-	+ r"median_us=([0-9.eE+-]+)\s+"
+	+ r"med_us=([0-9.eE+-]+)\s+"
 	+ r"min_us=([0-9.eE+-]+)\s+"
 	+ r"max_us=([0-9.eE+-]+)\s+"
 	+ r"var_us=([0-9.eE+-]+)"
 	+ r"(?:\s+std_us=([0-9.eE+-]+))?\s*$"
 )
 
-# Одна метрика (--stat avg|median|min|max|var|std).
+# Одна метрика (--stat avg|med|min|max|var|std).
 PAIR_AVG_ONLY = re.compile(_PAIR_HEAD + r"avg_us=([0-9.eE+-]+)\s*$")
-PAIR_MEDIAN_ONLY = re.compile(_PAIR_HEAD + r"median_us=([0-9.eE+-]+)\s*$")
+PAIR_MED_ONLY = re.compile(_PAIR_HEAD + r"med_us=([0-9.eE+-]+)\s*$")
 PAIR_MIN_ONLY = re.compile(_PAIR_HEAD + r"min_us=([0-9.eE+-]+)\s*$")
 PAIR_MAX_ONLY = re.compile(_PAIR_HEAD + r"max_us=([0-9.eE+-]+)\s*$")
 PAIR_VAR_ONLY = re.compile(_PAIR_HEAD + r"var_us=([0-9.eE+-]+)\s*$")
 PAIR_STD_ONLY = re.compile(_PAIR_HEAD + r"std_us=([0-9.eE+-]+)\s*$")
-METRIC_KEYS = ("avg_us", "median_us", "min_us", "max_us", "var_us", "std_us")
+METRIC_KEYS = ("avg_us", "med_us", "min_us", "max_us", "var_us", "std_us")
 METRIC_FILE_STEM = {
 	"avg_us": "avg",
-	"median_us": "median",
+	"med_us": "med",
 	"min_us": "min",
 	"max_us": "max",
 	"var_us": "var",
@@ -58,7 +58,7 @@ METRIC_FILE_STEM = {
 }
 METRIC_CBAR_LABEL = {
 	"avg_us": "мкс",
-	"median_us": "мкс",
+	"med_us": "мкс",
 	"min_us": "мкс",
 	"max_us": "мкс",
 	"var_us": "мкс²",
@@ -66,7 +66,7 @@ METRIC_CBAR_LABEL = {
 }
 METRIC_TITLE = {
 	"avg_us": "Среднее арифметическое задержек",
-	"median_us": "Медиана задержек",
+	"med_us": "Медиана задержек",
 	"min_us": "Минимальное задержек",
 	"max_us": "Максимальное задержек",
 	"var_us": "Выборочная дисперсия задержек",
@@ -75,6 +75,7 @@ METRIC_TITLE = {
 
 
 RANKS_LINE_RE = re.compile(r"^Ranks:\s*(\d+)")
+RANK_MAP_LINE_RE = re.compile(r"^r(\d+)\s+hostname=(\S+)")
 HOSTNAME_LINE_RE = re.compile(r"^Hostname:\s*(\S+)\s*$", re.I)
 BYTES_LINE_RE = re.compile(r"^Bytes:\s*(\d+)\s*$")
 DECIMAL_MB = 1_000_000
@@ -94,6 +95,107 @@ LATENCY_GR = LinearSegmentedColormap.from_list(
 	["#045a2d", "#16a34a", "#f97316", "#dc2626", "#7f1d1d"],
 	N=256,
 )
+
+def _short_host(hostname: str) -> str:
+	return hostname.split(".", 1)[0].strip() or hostname
+
+def rank_hosts_from_meta(meta: dict[str, Any], n: int) -> list[str] | None:
+	hosts_map = meta.get("rank_hosts")
+	if not isinstance(hosts_map, dict):
+		return None
+	rank_hosts: list[str] = []
+	for r in range(n):
+		host = hosts_map.get(r)
+		if not isinstance(host, str) or not host:
+			return None
+		rank_hosts.append(host)
+	return rank_hosts
+
+def node_boundaries(rank_hosts: list[str]) -> list[float]:
+	bounds: list[float] = []
+	for i in range(len(rank_hosts) - 1):
+		if rank_hosts[i] != rank_hosts[i + 1]:
+			bounds.append(float(i) + 0.5)
+	return bounds
+
+def _compress_int_ranges(nums: list[int]) -> str:
+	if not nums:
+		return ""
+	sorted_unique = sorted(set(nums))
+	ranges: list[str] = []
+	start = sorted_unique[0]
+	prev = sorted_unique[0]
+	for x in sorted_unique[1:]:
+		if x == prev + 1:
+			prev = x
+			continue
+		ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
+		start = x
+		prev = x
+	ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
+	return ",".join(ranges)
+
+def nodes_title(rank_hosts: list[str]) -> str:
+	short = [_short_host(h) for h in rank_hosts]
+	if not short:
+		return ""
+	uniq: list[str] = []
+	for h in short:
+		if h not in uniq:
+			uniq.append(h)
+	if len(uniq) == 1:
+		return f"Узел: {uniq[0]}"
+
+	m = [re.match(r"^([A-Za-z_]+)(\d+)$", h) for h in uniq]
+	if all(mm is not None for mm in m):
+		prefixes = {mm.group(1) for mm in m if mm}
+		if len(prefixes) == 1:
+			prefix = next(iter(prefixes))
+			nums = [int(mm.group(2)) for mm in m if mm]
+			return f"Узлы: {prefix}[{_compress_int_ranges(nums)}]"
+	return f"Узлы: {','.join(uniq)}"
+
+def axis_labels_by_node(rank_hosts: list[str]) -> list[str]:
+	short = [_short_host(h) for h in rank_hosts]
+	seen: dict[str, int] = {}
+	labels: list[str] = []
+	for h in short:
+		local_idx = seen.get(h, 0)
+		seen[h] = local_idx + 1
+		m = re.search(r"(\d+)$", h)
+		node_id = m.group(1) if m else h
+		labels.append(f"{node_id}.{local_idx}")
+	return labels
+
+def pair_label_to_rank(label: str, meta: dict[str, Any]) -> int | None:
+	if re.fullmatch(r"\d+", label):
+		return int(label)
+	cache = meta.get("_pair_label_to_rank")
+	if isinstance(cache, dict):
+		v = cache.get(label)
+		if isinstance(v, int):
+			return v
+	n = meta.get("ranks")
+	if not isinstance(n, int):
+		return None
+	rank_hosts = rank_hosts_from_meta(meta, n)
+	if not rank_hosts:
+		return None
+	mapping = {lab: i for i, lab in enumerate(axis_labels_by_node(rank_hosts))}
+	meta["_pair_label_to_rank"] = mapping
+	v = mapping.get(label)
+	return v if isinstance(v, int) else None
+
+def host_stem_for_output(meta: dict[str, Any], rank_hosts: list[str] | None) -> str:
+	if rank_hosts:
+		short = [_short_host(h) for h in rank_hosts]
+		uniq: list[str] = []
+		for s in short:
+			if s not in uniq:
+				uniq.append(s)
+		return re.sub(r"[^0-9A-Za-z_.-]", "_", "_".join(uniq))
+	hostname = str(meta.get("hostname", "host-unknown"))
+	return re.sub(r"[^0-9A-Za-z_.-]", "_", hostname)
 
 
 """Выбор colormap и цвет для NaN."""
@@ -123,6 +225,10 @@ def parse_gpu_one_to_one_text(
 				meta["ranks"] = int(m.group(1))
 		elif (m := HOSTNAME_LINE_RE.match(line)):
 			meta["hostname"] = m.group(1)
+		elif (m := RANK_MAP_LINE_RE.match(line)):
+			r = int(m.group(1))
+			h = m.group(2)
+			meta.setdefault("rank_hosts", {})[r] = h
 		elif (m := BYTES_LINE_RE.match(line)):
 			meta["bytes"] = int(m.group(1))
 		elif (m := WARMUP_LINE_RE.match(line)):
@@ -136,51 +242,65 @@ def parse_gpu_one_to_one_text(
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m:
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				std_v = float(m.group(8)) if m.group(8) is not None else math.nan
 				vals = [float(m.group(i)) for i in range(3, 8)] + [std_v]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			nan6 = [math.nan, math.nan, math.nan, math.nan, math.nan, math.nan]
 			if (m := PAIR_AVG_ONLY.match(line)):
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				v = float(m.group(3))
 				vals = [v, nan6[1], nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			if (m := PAIR_MEDIAN_ONLY.match(line)):
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+			if (m := PAIR_MED_ONLY.match(line)):
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				v = float(m.group(3))
 				vals = [nan6[0], v, nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MIN_ONLY.match(line)):
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], v, nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_MAX_ONLY.match(line)):
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], nan6[2], v, nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_VAR_ONLY.match(line)):
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], nan6[2], nan6[3], v, nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
 			if (m := PAIR_STD_ONLY.match(line)):
-				src_r = int(m.group(1))
-				dst_r = int(m.group(2))
+				src_r = pair_label_to_rank(m.group(1), meta)
+				dst_r = pair_label_to_rank(m.group(2), meta)
+				if src_r is None or dst_r is None:
+					continue
 				v = float(m.group(3))
 				vals = [nan6[0], nan6[1], nan6[2], nan6[3], nan6[4], v]
 				pairs.append((src_r, dst_r, vals))
@@ -214,12 +334,20 @@ def fill_matrices(
 
 
 """Собирает многострочный заголовок графика."""
-def title_block(meta: dict[str, Any], metric: str, *, hostname: str | None) -> str:
+def title_block(
+	meta: dict[str, Any],
+	metric: str,
+	*,
+	n: int,
+	rank_hosts: list[str] | None,
+) -> str:
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
 	parts: list[str] = []
-	if hostname:
-		parts.append(f"Узел {hostname}")
+	if rank_hosts:
+		parts.append(nodes_title(rank_hosts))
+	elif n <= 1 and "hostname" in meta:
+		parts.append(f"Узел: {_short_host(str(meta['hostname']))}")
 	parts.extend(
 		[
 			title_line,
@@ -258,7 +386,7 @@ def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 def total_time_line(meta: dict[str, Any]) -> str:
 	v = meta.get("total_elapsed_s")
 	if isinstance(v, (int, float)):
-		return f"затраченное время: {float(v):.6f}s"
+		return f"затраченное время: {float(v):.6f} сек"
 	return "затраченное время: n/a"
 
 
@@ -268,7 +396,7 @@ def param_block(
 ) -> str:
 	lines: list[str] = []
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
-	lines.append(f"b: {tags['b']}")
+	lines.append(f"b: {tags['b']} байт")
 	lines.append(f"сгенерировано: {creation_time}")
 	lines.append(total_time)
 	return "\n".join(lines)
@@ -317,6 +445,7 @@ def draw_heatmap(
 	cmap: Colormap,
 	dpi: int,
 	tick_labels: list[str],
+	node_bounds: list[float],
 ) -> None:
 	labels = tick_labels
 	axis_fs = 9
@@ -342,6 +471,9 @@ def draw_heatmap(
 	ax.set_title(title_block, fontsize=9)
 
 	annotate_cells(ax, im, matrix, metric)
+	for pos in node_bounds:
+		ax.axvline(pos, color="#111111", linewidth=1.4, alpha=0.55)
+		ax.axhline(pos, color="#111111", linewidth=1.4, alpha=0.55)
 
 	cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 	cbar.set_label(METRIC_CBAR_LABEL.get(metric, "мкс"), rotation=0, labelpad=12)
@@ -366,15 +498,17 @@ def render_one_text(
 		return 1
 
 	mats = fill_matrices(n, pairs)
-	tick_labels = [str(i) for i in range(n)]
+	rank_hosts = rank_hosts_from_meta(meta, n)
+	if rank_hosts:
+		tick_labels = axis_labels_by_node(rank_hosts)
+		node_bounds = node_boundaries(rank_hosts)
+	else:
+		tick_labels = [str(i) for i in range(n)]
+		node_bounds = []
 
 	want = set(METRIC_KEYS)
 
-	hostname = str(meta["hostname"]) if "hostname" in meta else None
-	if hostname:
-		hostname = re.sub(r"[^0-9A-Za-z_.-]", "_", hostname)
-	else:
-		hostname = "host-unknown"
+	hostname = host_stem_for_output(meta, rank_hosts)
 
 	out_dir.mkdir(parents=True, exist_ok=True)
 	tags = run_tags(source_path, meta)
@@ -398,11 +532,12 @@ def render_one_text(
 			mats[key],
 			key,
 			out_file,
-			title_block=title_block(meta, key, hostname=hostname),
+			title_block=title_block(meta, key, n=n, rank_hosts=rank_hosts),
 			param_block=params,
 			cmap=cmap_resolved,
 			dpi=150,
 			tick_labels=tick_labels,
+			node_bounds=node_bounds,
 		)
 		print(out_file)
 		written += 1

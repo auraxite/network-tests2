@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cuda_runtime.h>
@@ -75,7 +76,7 @@ enum class Mode {
 enum class StatOut {
 	All,
 	Avg,
-	Median,
+	Med,
 	Min,
 	Max,
 	Std,
@@ -110,7 +111,7 @@ void help(int rank) {
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --mode M        auto | host\n"
-			  << "  --stat S        all | avg | median | min | max | var | std (pair line output)\n"
+			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
 			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n";
 }
 
@@ -130,8 +131,8 @@ StatOut parse_stat_out(const std::string &s, int rank) {
 		return StatOut::All;
 	if (s == "avg")
 		return StatOut::Avg;
-	if (s == "median")
-		return StatOut::Median;
+	if (s == "med")
+		return StatOut::Med;
 	if (s == "min")
 		return StatOut::Min;
 	if (s == "max")
@@ -142,7 +143,7 @@ StatOut parse_stat_out(const std::string &s, int rank) {
 		return StatOut::Std;
 	if (rank == 0)
 		std::cerr << "unknown --stat: " << s
-				  << " (use all|avg|median|min|max|var|std)\n";
+				  << " (use all|avg|med|min|max|var|std)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return StatOut::All;
 }
@@ -221,36 +222,83 @@ static double monotonic_now_us() {
 static void fill_stats6(const std::vector<double> &samples, double *out6) {
 	const double n = static_cast<double>(samples.size());
 	const double sum = std::accumulate(samples.begin(), samples.end(), 0.0);
-	const double mean = sum / n;
+	const double avg = sum / n;
 	auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
 	const double min_v = *it_min;
 	const double max_v = *it_max;
 	std::vector<double> sorted = samples;
 	std::sort(sorted.begin(), sorted.end());
 	const size_t m = sorted.size() / 2;
-	const double median = (sorted.size() % 2 == 0)
+	const double med = (sorted.size() % 2 == 0)
 							? (sorted[m - 1] + sorted[m]) * 0.5
 							: sorted[m];
 	double var = 0.0;
 	if (samples.size() > 1) {
 		for (double x : samples) {
-			const double d = x - mean;
+			const double d = x - avg;
 			var += d * d;
 		}
 		var /= static_cast<double>(samples.size() - 1);
 	}
 	const double stddev = std::sqrt(var);
-	out6[0] = mean;
-	out6[1] = median;
+	out6[0] = avg;
+	out6[1] = med;
 	out6[2] = min_v;
 	out6[3] = max_v;
 	out6[4] = var;
 	out6[5] = stddev;
 }
 
+static std::string short_host(const std::string &host) {
+	const size_t dot = host.find('.');
+	if (dot == std::string::npos)
+		return host;
+	return host.substr(0, dot);
+}
+
+static std::string host_node_token(const std::string &host) {
+	const std::string sh = short_host(host);
+	size_t pos = sh.size();
+	while (pos > 0 && std::isdigit(static_cast<unsigned char>(sh[pos - 1])))
+		--pos;
+	if (pos < sh.size())
+		return sh.substr(pos);
+	return sh;
+}
+
+static std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
+										   int nproc, int host_len) {
+	std::vector<std::string> labels(static_cast<size_t>(nproc));
+	std::vector<std::string> seen_hosts;
+	std::vector<int> seen_counts;
+	for (int r = 0; r < nproc; ++r) {
+		const char *h = hosts_recv.data() + static_cast<size_t>(r) * static_cast<size_t>(host_len);
+		const std::string sh = short_host(std::string(h));
+		int local_idx = 0;
+		bool found = false;
+		for (size_t i = 0; i < seen_hosts.size(); ++i) {
+			if (seen_hosts[i] == sh) {
+				local_idx = seen_counts[i];
+				seen_counts[i] += 1;
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			seen_hosts.push_back(sh);
+			seen_counts.push_back(1);
+			local_idx = 0;
+		}
+		std::ostringstream oss;
+		oss << host_node_token(sh) << "." << local_idx;
+		labels[static_cast<size_t>(r)] = oss.str();
+	}
+	return labels;
+}
+
 /*
  * Одно задание (одна пара GPU). Возврат:
- * {avg_us, median_us, min_us, max_us, var_us, std_us, valid_metric}.
+ * {avg_us, med_us, min_us, max_us, var_us, std_us, valid_metric}.
  * valid=1 выставляет отправитель (или единственный участник при src==dst на
  * одном rank).
  */
@@ -361,23 +409,24 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	return ack;
 }
 
-static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
+static std::string format_pair_line(const std::string &src_label, const std::string &dst_label,
+									double avg_us,
 									double med_us, double min_us, double max_us,
 									double var_us, double std_us, StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
-	oss << "pair " << src_rank << " -> " << dst_rank << " ";
+	oss << "pair " << src_label << " -> " << dst_label << " ";
 	switch (stat) {
 	case StatOut::All:
-		oss << "avg_us=" << avg_us << " median_us=" << med_us
+		oss << "avg_us=" << avg_us << " med_us=" << med_us
 			<< " min_us=" << min_us << " max_us=" << max_us
 			<< " var_us=" << var_us << " std_us=" << std_us;
 		break;
 	case StatOut::Avg:
 		oss << "avg_us=" << avg_us;
 		break;
-	case StatOut::Median:
-		oss << "median_us=" << med_us;
+	case StatOut::Med:
+		oss << "med_us=" << med_us;
 		break;
 	case StatOut::Min:
 		oss << "min_us=" << min_us;
@@ -396,12 +445,12 @@ static std::string format_pair_line(int src_rank, int dst_rank, double avg_us,
 	return oss.str();
 }
 
-static std::string format_pair_clock_line(int src_rank, int dst_rank,
+static std::string format_pair_clock_line(const std::string &src_label, const std::string &dst_label,
 										  const std::vector<double> &metric,
 										  StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(3);
-	oss << "pair_clock " << src_rank << " -> " << dst_rank << " ";
+	oss << "pair_clock " << src_label << " -> " << dst_label << " ";
 	const double avg_us = metric[7];
 	const double med_us = metric[8];
 	const double min_us = metric[9];
@@ -410,15 +459,15 @@ static std::string format_pair_clock_line(int src_rank, int dst_rank,
 	const double std_us = metric[12];
 	switch (stat) {
 	case StatOut::All:
-		oss << "avg_us=" << avg_us << " median_us=" << med_us
+		oss << "avg_us=" << avg_us << " med_us=" << med_us
 			<< " min_us=" << min_us << " max_us=" << max_us
 			<< " var_us=" << var_us << " std_us=" << std_us;
 		break;
 	case StatOut::Avg:
 		oss << "avg_us=" << avg_us;
 		break;
-	case StatOut::Median:
-		oss << "median_us=" << med_us;
+	case StatOut::Med:
+		oss << "med_us=" << med_us;
 		break;
 	case StatOut::Min:
 		oss << "min_us=" << min_us;
@@ -553,11 +602,6 @@ int main(int argc, char **argv) {
 		}
 		{
 			std::ostringstream oss;
-			oss << "Hostname: " << my_host << "\n";
-			mirror(oss.str());
-		}
-		{
-			std::ostringstream oss;
 			oss << "Bytes: " << args.nbytes << "\n"
 				<< "Warmup: " << args.warmup << "\n"
 				<< "Iters: " << args.iters << "\n";
@@ -587,12 +631,13 @@ int main(int argc, char **argv) {
 			const char *h = hosts_recv.data() + static_cast<size_t>(r) * HOST_LEN;
 			const char *p = pci_recv.data() + static_cast<size_t>(r) * PCI_LEN;
 			std::ostringstream oss;
-			oss << "  r" << r << " host=" << h
+			oss << "  r" << r << " hostname=" << h
 				<< " local_gpu=0"
 				<< " visible_gpus=" << gpu_counts[static_cast<size_t>(r)]
 				<< " pci=" << p << "\n";
 			mirror(oss.str());
 		}
+		const std::vector<std::string> rank_labels = build_rank_labels(hosts_recv, nproc, HOST_LEN);
 		std::cout << std::fixed << std::setprecision(3);
 		if (out_file)
 			*out_file << std::fixed << std::setprecision(3);
@@ -612,9 +657,13 @@ int main(int argc, char **argv) {
 				if (src_rank == dst_rank) {
 					std::vector<double> metric(ACK_FIELDS, 0.0);
 					netcdf_store_pair(nc, src_rank, dst_rank, metric);
-					mirror(format_pair_line(src_rank, dst_rank, 0.0, 0.0, 0.0, 0.0,
+					mirror(format_pair_line(rank_labels[static_cast<size_t>(src_rank)],
+											rank_labels[static_cast<size_t>(dst_rank)],
+											0.0, 0.0, 0.0, 0.0,
 											0.0, 0.0, args.stat_out));
-					mirror(format_pair_clock_line(src_rank, dst_rank, metric, args.stat_out));
+					mirror(format_pair_clock_line(rank_labels[static_cast<size_t>(src_rank)],
+												  rank_labels[static_cast<size_t>(dst_rank)],
+												  metric, args.stat_out));
 					continue;
 				}
 
@@ -654,10 +703,13 @@ int main(int argc, char **argv) {
 							metric = ack;
 					}
 
-					mirror(format_pair_line(src_rank, dst_rank, metric[0],
+					mirror(format_pair_line(rank_labels[static_cast<size_t>(src_rank)],
+											rank_labels[static_cast<size_t>(dst_rank)], metric[0],
 											metric[1], metric[2], metric[3],
 											metric[4], metric[5], args.stat_out));
-					mirror(format_pair_clock_line(src_rank, dst_rank, metric, args.stat_out));
+					mirror(format_pair_clock_line(rank_labels[static_cast<size_t>(src_rank)],
+												  rank_labels[static_cast<size_t>(dst_rank)],
+												  metric, args.stat_out));
 					netcdf_store_pair(nc, src_rank, dst_rank, metric);
 				}
 			}
