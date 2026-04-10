@@ -100,7 +100,7 @@ struct Args { // Параметры запуска бенчмарка (CLI-ар�
 	Timer timer = Timer::All; // Источник тайминга для строки pair
 	StatOut stat_out = StatOut::All;
 	std::string out_path;
-	bool save_raw_samples = true; // Сохранять сырые выборки samples_us по парам
+	bool save_raw_samples = true; // raw/: имя ..._src<узел.локал_gpu>_dst<...>.raw, как в pair_*
 };
 
 struct Task { // Задание мастера
@@ -240,6 +240,7 @@ bool check_host(Mode mode, bool cuda_aware) {
 }
 
 static void append_raw_samples(const Args &args, int rank, const Task &t,
+							   const std::vector<std::string> &rank_labels,
 							   const std::vector<double> &samples_us);
 
 static double monotonic_now_us() {
@@ -332,6 +333,19 @@ static std::vector<std::string> build_rank_labels(const std::vector<char> &hosts
 	return labels;
 }
 
+static std::string sanitize_label_for_raw_path(const std::string &lab) {
+	std::string out;
+	out.reserve(lab.size());
+	for (unsigned char uc : lab) {
+		const char c = static_cast<char>(uc);
+		if (std::isalnum(uc) || c == '.' || c == '-' || c == '_')
+			out.push_back(c);
+		else
+			out.push_back('_');
+	}
+	return out.empty() ? "nolabel" : out;
+}
+
 /*
  * Одно задание (одна пара GPU). Возврат:
  * {avg_us, med_us, min_us, max_us, var_us, std_us, valid_metric}.
@@ -339,7 +353,8 @@ static std::vector<std::string> build_rank_labels(const std::vector<char> &hosts
  * одном rank).
  */
 std::vector<double> run_task(int rank, const Task &t, const Args &args,
-							 bool check_host) {
+							 bool check_host,
+							 const std::vector<std::string> &rank_labels) {
 	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
@@ -446,16 +461,16 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	if (is_sender) {
 		switch (args.timer) {
 		case Timer::All:
-			append_raw_samples(args, rank, t, samples_mpi_us);
+			append_raw_samples(args, rank, t, rank_labels, samples_mpi_us);
 			break;
 		case Timer::Mpi:
-			append_raw_samples(args, rank, t, samples_mpi_us);
+			append_raw_samples(args, rank, t, rank_labels, samples_mpi_us);
 			break;
 		case Timer::Cpu:
-			append_raw_samples(args, rank, t, samples_cpu_us);
+			append_raw_samples(args, rank, t, rank_labels, samples_cpu_us);
 			break;
 		case Timer::Cuda:
-			append_raw_samples(args, rank, t, samples_gpu_us);
+			append_raw_samples(args, rank, t, rank_labels, samples_gpu_us);
 			break;
 		}
 	}
@@ -532,10 +547,19 @@ static std::string format_pair_line(const char *line_name,
 }
 
 static void append_raw_samples(const Args &args, int rank, const Task &t,
+							   const std::vector<std::string> &rank_labels,
 							   const std::vector<double> &samples_us) {
 	if (!args.save_raw_samples || args.out_path.empty() || samples_us.empty())
 		return;
 	(void)rank;
+	if (t.src_rank < 0 || t.dst_rank < 0 ||
+		static_cast<size_t>(t.src_rank) >= rank_labels.size() ||
+		static_cast<size_t>(t.dst_rank) >= rank_labels.size())
+		return;
+	const std::string src_tok =
+		sanitize_label_for_raw_path(rank_labels[static_cast<size_t>(t.src_rank)]);
+	const std::string dst_tok =
+		sanitize_label_for_raw_path(rank_labels[static_cast<size_t>(t.dst_rank)]);
 	std::string base = args.out_path;
 	std::string dir = ".";
 	const size_t slash = base.find_last_of('/');
@@ -552,11 +576,12 @@ static void append_raw_samples(const Args &args, int rank, const Task &t,
 	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST)
 		return;
 	std::ostringstream path;
-	path << raw_dir << "/" << base
-		 << "_src" << t.src_rank << "_dst" << t.dst_rank << ".raw";
+	path << raw_dir << "/" << base << "_src" << src_tok << "_dst" << dst_tok << ".raw";
 	std::ofstream out(path.str(), std::ios::app);
 	if (!out.is_open())
 		return;
+	out << "# src=" << rank_labels[static_cast<size_t>(t.src_rank)] << " dst="
+		<< rank_labels[static_cast<size_t>(t.dst_rank)] << "\n";
 	for (size_t i = 0; i < samples_us.size(); ++i) {
 		out << std::fixed << std::setprecision(3) << samples_us[i] << "\n";
 	}
@@ -638,6 +663,11 @@ int main(int argc, char **argv) {
 					  rank == 0 ? pci_recv.data() : nullptr, PCI_LEN, MPI_CHAR, 0,
 					  MPI_COMM_WORLD),
 		   "MPI_Gather pci bus ids");
+	if (rank != 0)
+		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
+	mpi_ok(MPI_Bcast(hosts_recv.data(), nproc * HOST_LEN, MPI_CHAR, 0, MPI_COMM_WORLD),
+		   "MPI_Bcast hostnames");
+	const std::vector<std::string> rank_labels = build_rank_labels(hosts_recv, nproc, HOST_LEN);
 
 	if (rank == 0) {
 		{
@@ -687,7 +717,6 @@ int main(int argc, char **argv) {
 				<< " pci=" << p << "\n";
 			mirror(oss.str());
 		}
-		const std::vector<std::string> rank_labels = build_rank_labels(hosts_recv, nproc, HOST_LEN);
 		std::cout << std::fixed << std::setprecision(3);
 		if (out_file)
 			*out_file << std::fixed << std::setprecision(3);
@@ -747,7 +776,7 @@ int main(int argc, char **argv) {
 
 					std::vector<double> metric(ACK_FIELDS, 0.0);
 					if (src_rank == 0 || dst_rank == 0) {
-						auto ack0 = run_task(rank, t, args, via_host);
+						auto ack0 = run_task(rank, t, args, via_host, rank_labels);
 						if (ack0[6] == 1.0)
 							metric = ack0;
 					}
@@ -817,7 +846,7 @@ int main(int argc, char **argv) {
 				   "MPI_Recv Task (worker)");
 			if (t.stop)
 				break;
-			auto ack = run_task(rank, t, args, via_host);
+			auto ack = run_task(rank, t, args, via_host, rank_labels);
 			mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
 				   "MPI_Send ack (worker)");
 		}

@@ -38,8 +38,8 @@ PAIR_LINE_RE = re.compile(
 	+ r"med_us=([0-9.eE+-]+)\s+"
 	+ r"min_us=([0-9.eE+-]+)\s+"
 	+ r"max_us=([0-9.eE+-]+)\s+"
-	+ r"var_us=([0-9.eE+-]+)\s"
-	+ r"std_us=([0-9.eE+-]+)\s"
+	+ r"var_us=([0-9.eE+-]+)\s+"
+	+ r"std_us=([0-9.eE+-]+)\s*$"
 )
 
 # Одна метрика (--stat avg|med|min|max|var|std).
@@ -101,6 +101,7 @@ def _short_host(hostname: str) -> str:
 	return hostname.split(".", 1)[0].strip() or hostname
 
 def rank_hosts_from_meta(meta: dict[str, Any], n: int) -> list[str] | None:
+	'''Возвращает список узлов для каждого ранга'''
 	hosts_map = meta.get("rank_hosts")
 	if not isinstance(hosts_map, dict):
 		return None
@@ -111,14 +112,6 @@ def rank_hosts_from_meta(meta: dict[str, Any], n: int) -> list[str] | None:
 			return None
 		rank_hosts.append(host)
 	return rank_hosts
-
-def node_boundaries(rank_hosts: list[str]) -> list[float]:
-	'''Находит границы узлов на оси X и Y для дальнейшей их отрисовки'''
-	bounds: list[float] = []
-	for i in range(len(rank_hosts) - 1):
-		if rank_hosts[i] != rank_hosts[i + 1]:
-			bounds.append(float(i) + 0.5)
-	return bounds
 
 def _compress_int_ranges(nums: list[int]) -> str:
 	'''Сжимает список чисел в диапазоны'''
@@ -160,6 +153,7 @@ def nodes_title(rank_hosts: list[str]) -> str:
 	return f"Узлы: {','.join(uniq)}"
 
 def axis_labels_by_node(rank_hosts: list[str]) -> list[str]:
+	'''Формирует метки для узлов на оси X и Y'''
 	short = [_short_host(h) for h in rank_hosts]
 	seen: dict[str, int] = {}
 	labels: list[str] = []
@@ -172,6 +166,7 @@ def axis_labels_by_node(rank_hosts: list[str]) -> list[str]:
 	return labels
 
 def pair_label_to_rank(label: str, meta: dict[str, Any]) -> int | None:
+	'''Возвращает ранг для заданного узла'''
 	if re.fullmatch(r"\d+", label):
 		return int(label)
 	cache = meta.get("_pair_label_to_rank")
@@ -213,6 +208,13 @@ def host_stem_for_output(meta: dict[str, Any], rank_hosts: list[str] | None) -> 
 	hostname = str(meta.get("hostname", "host-unknown"))
 	return re.sub(r"[^0-9A-Za-z_.-]", "_", hostname)
 
+def node_boundaries(rank_hosts: list[str]) -> list[float]:
+	'''Находит границы узлов на оси X и Y для дальнейшей их отрисовки'''
+	bounds: list[float] = []
+	for i in range(len(rank_hosts) - 1):
+		if rank_hosts[i] != rank_hosts[i + 1]:
+			bounds.append(float(i) + 0.5)
+	return bounds
 
 """Выбор colormap и цвет для NaN."""
 def resolve_colormap(name: str) -> Colormap:
@@ -240,8 +242,6 @@ def parse_gpu_one_to_one_text(
 			m = RANKS_LINE_RE.match(line)
 			if m:
 				meta["ranks"] = int(m.group(1))
-		elif (m := HOSTNAME_LINE_RE.match(line)):
-			meta["hostname"] = m.group(1)
 		elif (m := RANK_MAP_LINE_RE.match(line)):
 			r = int(m.group(1))
 			h = m.group(2)
@@ -253,8 +253,6 @@ def parse_gpu_one_to_one_text(
 		elif (m := ITERS_LINE_RE.match(line)):
 			meta["iters"] = int(m.group(1))
 		elif (m := TOTAL_TIME_LINE_RE.match(line)):
-			meta["total_elapsed_s"] = float(m.group(1))
-		elif (m := TOTAL_ELAPSED_LINE_RE.match(line)):
 			meta["total_elapsed_s"] = float(m.group(1))
 		elif (m := TIMER_LINE_RE.match(line)):
 			ts = m.group(1).lower()
@@ -590,9 +588,15 @@ def render_one_text(
 
 def _sort_raw_with_helper(raw_files: list[Path]) -> int:
 	try:
-		import sort_raw_samples as srs
+		import sort_raw as srs
+	except ImportError:
+		try:
+			import sort_raw_samples as srs  # type: ignore[import-not-found]
+		except ImportError as e:
+			print(f"gpu_render: cannot import sort_raw.py / sort_raw_samples.py: {e}", file=sys.stderr)
+			return 1
 	except Exception as e:  # noqa: BLE001
-		print(f"gpu_render: cannot import sort_raw_samples.py: {e}", file=sys.stderr)
+		print(f"gpu_render: cannot load raw sort helper: {e}", file=sys.stderr)
 		return 1
 
 	code = 0
@@ -658,8 +662,9 @@ def main() -> int:
 		help="Каталог для PNG; для каждого входного .txt создаётся подкаталог по имени файла",
 	)
 	p.add_argument(
-		"-t".
+		"-t",
 		"--timer",
+		dest="timer_source",
 		choices=PAIR_TIMER_SOURCES,
 		default="mpi",
 		help="Источник времени в txt: mpi | cpu | cuda",

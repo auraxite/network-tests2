@@ -7,11 +7,13 @@ from pathlib import Path
 
 
 def process_file(path: Path) -> tuple[Path, int]:
-	values = sorted(
-		float(line.strip())
-		for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
-		if line.strip()
-	)
+	values = []
+	for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+		s = line.strip()
+		if not s or s.startswith("#"):
+			continue
+		values.append(float(s))
+	values.sort()
 	dst = path.with_name("sorted_" + path.name)
 	with dst.open("w", encoding="utf-8") as f:
 		for v in values:
