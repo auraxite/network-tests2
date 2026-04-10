@@ -532,47 +532,6 @@ static std::string format_pair_line(const char *line_name,
 	return oss.str();
 }
 
-static std::string format_pair_clock_line(const std::string &src_label, const std::string &dst_label,
-										  const std::vector<double> &metric,
-										  StatOut stat) {
-	std::ostringstream oss;
-	oss << std::fixed << std::setprecision(3);
-	oss << "pair_clock " << src_label << " -> " << dst_label << " ";
-	const double avg_us = metric[7];
-	const double med_us = metric[8];
-	const double min_us = metric[9];
-	const double max_us = metric[10];
-	const double var_us = metric[11];
-	const double std_us = metric[12];
-	switch (stat) {
-	case StatOut::All:
-		oss << "avg_us=" << avg_us << " med_us=" << med_us
-			<< " min_us=" << min_us << " max_us=" << max_us
-			<< " var_us=" << var_us << " std_us=" << std_us;
-		break;
-	case StatOut::Avg:
-		oss << "avg_us=" << avg_us;
-		break;
-	case StatOut::Med:
-		oss << "med_us=" << med_us;
-		break;
-	case StatOut::Min:
-		oss << "min_us=" << min_us;
-		break;
-	case StatOut::Max:
-		oss << "max_us=" << max_us;
-		break;
-	case StatOut::Var:
-		oss << "var_us=" << var_us;
-		break;
-	case StatOut::Std:
-		oss << "std_us=" << std_us;
-		break;
-	}
-	oss << "\n";
-	return oss.str();
-}
-
 static void append_raw_samples(const Args &args, int rank, const Task &t,
 							   const std::vector<double> &samples_us) {
 	if (!args.dump_raw_samples || args.out_path.empty() || samples_us.empty())
@@ -772,9 +731,6 @@ int main(int argc, char **argv) {
 												0.0, 0.0, 0.0, 0.0,
 												0.0, 0.0, args.stat_out));
 					}
-					mirror(format_pair_clock_line(rank_labels[static_cast<size_t>(src_rank)],
-												  rank_labels[static_cast<size_t>(dst_rank)],
-												  metric, args.stat_out));
 					continue;
 				}
 
@@ -837,9 +793,6 @@ int main(int argc, char **argv) {
 												metric[1], metric[2], metric[3],
 												metric[4], metric[5], args.stat_out));
 					}
-					mirror(format_pair_clock_line(rank_labels[static_cast<size_t>(src_rank)],
-												  rank_labels[static_cast<size_t>(dst_rank)],
-												  metric, args.stat_out));
 					netcdf_store_pair(nc, src_rank, dst_rank, metric);
 				}
 			}
