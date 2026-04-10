@@ -92,15 +92,15 @@ enum class StatOut {
 
 constexpr int ACK_FIELDS = 25; // 6 selected + valid + 6 CPU + 6 MPI + 6 GPU
 
-struct Args { // Параметры запуска бенчмарка (CLI-аргументы).
-	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB).
-	int warmup = 10;		// Прогревочные итерации (не в статистике).
-	int iters = 50;			// Измеряемые итерации.
-	Mode mode = Mode::Auto; // auto (device при CUDA-aware MPI) или host
-	Timer timer = Timer::All; // источник тайминга для строки pair
+struct Args { // Параметры запуска бенчмарка (CLI-аргументы)
+	size_t nbytes = 4u * 1000u * 1000u; // Размер сообщения в байтах (по умолчанию 4 MB)
+	int warmup = 10;		// Прогревочные итерации (не в статистике)
+	int iters = 50;			// Измеряемые итерации
+	Mode mode = Mode::Auto; // auto или host
+	Timer timer = Timer::All; // Источник тайминга для строки pair
 	StatOut stat_out = StatOut::All;
 	std::string out_path;
-	bool dump_raw_samples = true; // Сохранять сырые выборки samples_us по парам.
+	bool save_raw_samples = true; // Сохранять сырые выборки samples_us по парам
 };
 
 struct Task { // Задание мастера
@@ -257,32 +257,32 @@ static double monotonic_now_us() {
 
 static void fill_stats6(const std::vector<double> &samples, double *out6) {
 	const double n = static_cast<double>(samples.size());
-	const double sum = std::accumulate(samples.begin(), samples.end(), 0.0);
-	const double avg = sum / n;
+	const double _sum = std::accumulate(samples.begin(), samples.end(), 0.0);
+	const double _avg = _sum / n;
 	auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
-	const double min_v = *it_min;
-	const double max_v = *it_max;
+	const double _min = *it_min;
+	const double _max = *it_max;
 	std::vector<double> sorted = samples;
 	std::sort(sorted.begin(), sorted.end());
 	const size_t m = sorted.size() / 2;
-	const double med = (sorted.size() % 2 == 0)
+	const double _med = (sorted.size() % 2 == 0)
 							? (sorted[m - 1] + sorted[m]) * 0.5
 							: sorted[m];
-	double var = 0.0;
+	double _var = 0.0;
 	if (samples.size() > 1) {
 		for (double x : samples) {
-			const double d = x - avg;
-			var += d * d;
+			const double d = x - _avg;
+			_var += d * d;
 		}
-		var /= static_cast<double>(samples.size() - 1);
+		_var /= static_cast<double>(samples.size() - 1);
 	}
-	const double stddev = std::sqrt(var);
-	out6[0] = avg;
-	out6[1] = med;
-	out6[2] = min_v;
-	out6[3] = max_v;
-	out6[4] = var;
-	out6[5] = stddev;
+	const double _std = std::sqrt(_var);
+	out6[0] = _avg;
+	out6[1] = _med;
+	out6[2] = _min;
+	out6[3] = _max;
+	out6[4] = _var;
+	out6[5] = _std;
 }
 
 static std::string short_host(const std::string &host) {
@@ -364,7 +364,6 @@ std::vector<double> run_task(int rank, const Task &t, const Args &args,
 	if (is_receiver) {
 		cuda_ok(cudaSetDevice(t.dst_gpu), "cudaSetDevice(dst)");
 		cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(dst)");
-		cuda_ok(cudaMemset(d_recv, 0, args.nbytes), "cudaMemset(dst)");
 	}
 	if (check_host)
 		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost");
@@ -534,7 +533,7 @@ static std::string format_pair_line(const char *line_name,
 
 static void append_raw_samples(const Args &args, int rank, const Task &t,
 							   const std::vector<double> &samples_us) {
-	if (!args.dump_raw_samples || args.out_path.empty() || samples_us.empty())
+	if (!args.save_raw_samples || args.out_path.empty() || samples_us.empty())
 		return;
 	(void)rank;
 	std::string base = args.out_path;

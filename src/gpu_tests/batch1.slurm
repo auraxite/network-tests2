@@ -5,8 +5,8 @@
 #SBATCH --output=clustbench-%j.out
 #SBATCH --error=clustbench-%j.err
 #SBATCH --nodes=2
-#SBATCH --ntasks=4
-#SBATCH --ntasks-per-node=2
+#SBATCH --ntasks=8
+#SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=1
 
@@ -37,13 +37,13 @@ CASES=(
 	"500000:1600:80"
 	# "2000000:800:40"
 	# "8000000:400:20"
-	# "32000000:200:10"
+	"32000000:200:10"
 )
 
 REPS=(1)
 MODES=(
 	auto
-	# host
+	host
 )
 
 for REP in "${REPS[@]}"; do

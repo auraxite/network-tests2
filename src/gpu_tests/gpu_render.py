@@ -7,6 +7,7 @@ from __future__ import annotations
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
   -o, --out-dir    output directory for PNG files
+  -t, --timer      choose timer source: mpi | cpu | cuda
   --sort, --sorted enable raw sorting pipeline (default: none)
 """
 
@@ -31,15 +32,14 @@ _PAIR_HEAD = (
 	r"^pair(?:_(mpi|cpu|cuda|gpu))? (\S+) -> (\S+) "
 )
 
-# Полная строка (как по умолчанию в gpu_one_to_one --stat all).
 PAIR_LINE_RE = re.compile(
 	_PAIR_HEAD
 	+ r"avg_us=([0-9.eE+-]+)\s+"
 	+ r"med_us=([0-9.eE+-]+)\s+"
 	+ r"min_us=([0-9.eE+-]+)\s+"
 	+ r"max_us=([0-9.eE+-]+)\s+"
-	+ r"var_us=([0-9.eE+-]+)"
-	+ r"(?:\s+std_us=([0-9.eE+-]+))?\s*$"
+	+ r"var_us=([0-9.eE+-]+)\s"
+	+ r"std_us=([0-9.eE+-]+)\s"
 )
 
 # Одна метрика (--stat avg|med|min|max|var|std).
@@ -113,6 +113,7 @@ def rank_hosts_from_meta(meta: dict[str, Any], n: int) -> list[str] | None:
 	return rank_hosts
 
 def node_boundaries(rank_hosts: list[str]) -> list[float]:
+	'''Находит границы узлов на оси X и Y для дальнейшей их отрисовки'''
 	bounds: list[float] = []
 	for i in range(len(rank_hosts) - 1):
 		if rank_hosts[i] != rank_hosts[i + 1]:
@@ -120,6 +121,7 @@ def node_boundaries(rank_hosts: list[str]) -> list[float]:
 	return bounds
 
 def _compress_int_ranges(nums: list[int]) -> str:
+	'''Сжимает список чисел в диапазоны'''
 	if not nums:
 		return ""
 	sorted_unique = sorted(set(nums))
@@ -137,6 +139,7 @@ def _compress_int_ranges(nums: list[int]) -> str:
 	return ",".join(ranges)
 
 def nodes_title(rank_hosts: list[str]) -> str:
+	'''Возвращает заголовок для узлов'''
 	short = [_short_host(h) for h in rank_hosts]
 	if not short:
 		return ""
