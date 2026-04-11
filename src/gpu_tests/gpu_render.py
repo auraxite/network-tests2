@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-"""Render heatmaps from gpu_one_to_one text output.
+"""Render heatmaps from gpu_benchmark (formerly gpu_one_to_one) text output.
 
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
@@ -638,7 +638,7 @@ def create_and_sort_raw_for_text(source_path: Path, out_dir: Path, sort_mode: st
 
 def main() -> int:
 	p = argparse.ArgumentParser(
-		description="Heatmaps from gpu_one_to_one text output (pair ... lines).",
+		description="Heatmaps from gpu_benchmark text output (pair ... lines).",
 		epilog=(
 			"Arguments:\n"
 			"  input            .txt file, directory with .txt files, or '-' for stdin\n"

@@ -1,9 +1,6 @@
 #!/bin/sh
-# Сборка gpu_one_to_one: Open MPI с CUDA, NetCDF, CUDA toolkit.
-#
-# Локально (нужны cuda_runtime.h и netcdf.h на ЭТОМ узле):
-#   export OMPI_PREFIX=... NETCDF_HOME=... CUDA_ROOT=...
-#   sh msu270.build
+
+# Сборка gpu_benchmark: Open MPI с CUDA, NetCDF, CUDA toolkit.
 #
 # На кластере с логина (один GPU-узел, те же переменные подставятся в job):
 #   export OMPI_PREFIX=/scratch/asalnikov/opt/openmpi-5.0.10-cuda
@@ -11,8 +8,7 @@
 #   export CUDA_ROOT=/usr/local/cuda
 #   export UCX_PREFIX=/scratch/asalnikov/opt/ucx-1.15.0   # если OMPI собран с --with-ucx
 #   sh msu270.build srun
-#
-# Опционально: SRUN_NODES SRUN_GPUS SRUN_TIME SRUN_PARTITION (например SRUN_PARTITION=batch)
+
 
 set -eu
 
@@ -81,13 +77,15 @@ fi
 "$MPICC" $CFLAGS -c "$REPO_GPU_TESTS/../core/string_id_converters.c" \
 	-o "$REPO_GPU_TESTS/../core/string_id_converters.o"
 
-# Явно тянем opal/orte: иначе при --as-needed линкер может не подтянуть libopen-pal,
-# и получаются undefined reference на opal_* / opal_common_ucx_* из libmpi.
 "$MPICXX" $CXXFLAGS \
-	"$REPO_GPU_TESTS/gpu_one_to_one.cpp" "$REPO_GPU_TESTS/netcdf_writer.cpp" \
+	"$REPO_GPU_TESTS/gpu_benchmark.cpp" \
+	"$REPO_GPU_TESTS/gpu_benchmark_common.cpp" \
+	"$REPO_GPU_TESTS/gpu_benchmark_one_to_one.cpp" \
+	"$REPO_GPU_TESTS/gpu_benchmark_all_to_all.cpp" \
+	"$REPO_GPU_TESTS/netcdf_writer.cpp" \
 	"$REPO_GPU_TESTS/../core/data_write_operations.o" \
 	"$REPO_GPU_TESTS/../core/string_id_converters.o" \
-	-o "$REPO_GPU_TESTS/gpu_one_to_one" \
+	-o "$REPO_GPU_TESTS/gpu_benchmark" \
 	$RPATH \
 	-Wl,--no-as-needed \
 	-L"$OMPI_PREFIX/lib" -lmpi -lopen-rte -lopen-pal \
@@ -95,5 +93,5 @@ fi
 	-L"$NETCDF_HOME/lib" -lnetcdf \
 	-L"$CUDA_ROOT/lib64" -lcudart
 
-echo "OK: $REPO_GPU_TESTS/gpu_one_to_one"
-ldd "$REPO_GPU_TESTS/gpu_one_to_one" | grep -E 'libmpi|libmpi_cxx|open-pal|libcudart|libnetcdf|libucp|libuct' || true
+echo "OK: $REPO_GPU_TESTS/gpu_benchmark"
+ldd "$REPO_GPU_TESTS/gpu_benchmark" | grep -E 'libmpi|libmpi_cxx|open-pal|libcudart|libnetcdf|libucp|libuct' || true

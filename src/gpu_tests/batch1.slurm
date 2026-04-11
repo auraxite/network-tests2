@@ -30,7 +30,7 @@ GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/grid_out"
 mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
-BIN="${GPU_TESTS}/gpu_one_to_one"
+BIN="${GPU_TESTS}/gpu_benchmark"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '___')"
 
