@@ -7,14 +7,14 @@
 #   export NETCDF_HOME=/scratch/asalnikov/opt/netcdf-c-4.9.2
 #   export CUDA_ROOT=/usr/local/cuda
 #   export UCX_PREFIX=/scratch/asalnikov/opt/ucx-1.15.0   # если OMPI собран с --with-ucx
-#   sh msu270.build srun
+#   sh cluster.build srun
 
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_GPU_TESTS="$SCRIPT_DIR"
-SELF="$SCRIPT_DIR/msu270.build"
+SELF="$SCRIPT_DIR/cluster.build"
 
 OMPI_PREFIX="${OMPI_PREFIX:-$HOME/opt/openmpi-5.0.10-cuda}"
 NETCDF_HOME="${NETCDF_HOME:-$HOME/opt/netcdf-c-4.9.2}"
@@ -49,16 +49,16 @@ MPICC="$OMPI_PREFIX/bin/mpicc"
 MPICXX="$OMPI_PREFIX/bin/mpicxx"
 
 for x in "$MPICC" "$MPICXX"; do
-	test -x "$x" || { echo "msu270.build: not executable: $x" >&2; exit 1; }
+	test -x "$x" || { echo "cluster.build: not executable: $x" >&2; exit 1; }
 done
 
 if ! test -f "$NETCDF_HOME/include/netcdf.h"; then
-	echo "msu270.build: missing $NETCDF_HOME/include/netcdf.h (set NETCDF_HOME)" >&2
+	echo "cluster.build: missing $NETCDF_HOME/include/netcdf.h (set NETCDF_HOME)" >&2
 	exit 1
 fi
 if ! test -f "$CUDA_ROOT/include/cuda_runtime.h"; then
-	echo "msu270.build: missing $CUDA_ROOT/include/cuda_runtime.h" >&2
-	echo "  На login-узле часто нет CUDA headers — запусти: sh msu270.build srun" >&2
+	echo "cluster.build: missing $CUDA_ROOT/include/cuda_runtime.h" >&2
+	echo "  На login-узле часто нет CUDA headers — запусти: sh cluster.build srun" >&2
 	exit 1
 fi
 

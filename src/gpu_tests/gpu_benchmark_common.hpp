@@ -51,6 +51,10 @@ constexpr int ACK_FIELDS = 25;
 
 struct Args {
 	size_t nbytes = 4u * 1000u * 1000u;
+	size_t begin_nbytes = 4u * 1000u * 1000u;
+	size_t end_nbytes = 4u * 1000u * 1000u;
+	size_t step_nbytes = 1;
+	bool sweep_sizes = false;
 	int warmup = 10;
 	int iters = 50;
 	Mode mode = Mode::Auto;
@@ -79,6 +83,7 @@ const char *timer_to_string(Timer t);
 StatOut parse_stat_out(const std::string &s, int rank);
 Args parse_args(int argc, char **argv, int rank);
 bool check_host(Mode mode, bool cuda_aware);
+std::vector<size_t> build_message_sizes(const Args &args, int rank);
 
 /* Общий CPU-таймер для one-to-one и all-to-all. */
 double monotonic_now_us();

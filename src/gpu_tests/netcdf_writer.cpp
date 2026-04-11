@@ -1,5 +1,6 @@
 #include "netcdf_writer.h"
 
+#include <algorithm>
 #include <limits>
 #include <iostream>
 #include <mpi.h>
@@ -38,7 +39,8 @@ enum : int {
 } // namespace
 
 NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
-								int iters, int nproc) {
+								size_t end_nbytes, size_t step_nbytes, int iters,
+								int nproc) {
 	NetcdfBundle nc{};
 	if (out_path.empty())
 		return nc;
@@ -66,8 +68,8 @@ NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
 	p.num_procs = nproc;
 	p.test_type = ONE_TO_ONE_TEST_TYPE;
 	p.begin_message_length = clamp_size_to_int_or_abort(nbytes, "--bytes");
-	p.end_message_length = clamp_size_to_int_or_abort(nbytes, "--bytes");
-	p.step_length = 1;
+	p.end_message_length = clamp_size_to_int_or_abort(end_nbytes, "--bytes-end");
+	p.step_length = clamp_size_to_int_or_abort(step_nbytes, "--bytes-step");
 	p.num_repeats = iters;
 	p.noise_message_length = 0;
 	p.num_noise_messages = 0;
@@ -94,6 +96,17 @@ NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
 	return nc;
 }
 
+void netcdf_reset_matrix(NetcdfBundle &nc) {
+	if (!nc.enabled)
+		return;
+	std::fill(nc.avg.begin(), nc.avg.end(), 0.0);
+	std::fill(nc.var.begin(), nc.var.end(), 0.0);
+	std::fill(nc.min.begin(), nc.min.end(), 0.0);
+	std::fill(nc.max.begin(), nc.max.end(), 0.0);
+	std::fill(nc.med.begin(), nc.med.end(), 0.0);
+	std::fill(nc.stddev.begin(), nc.stddev.end(), 0.0);
+}
+
 void netcdf_store_pair(NetcdfBundle &nc, int src_rank, int dst_rank,
 					   const std::vector<double> &metric) {
 	if (!nc.enabled)
@@ -109,14 +122,14 @@ void netcdf_store_pair(NetcdfBundle &nc, int src_rank, int dst_rank,
 	nc.stddev[idx] = metric[5];
 }
 
-void netcdf_flush_and_close(NetcdfBundle &nc) {
+void netcdf_write_matrix_slice(NetcdfBundle &nc, int matrix_idx) {
 	if (!nc.enabled)
 		return;
 
 	auto write_one = [&](int file_id, int data_id, const std::vector<double> &matrix,
 						 const char *label) {
-		const int rc = netcdf_write_matrix(file_id, data_id, 0, nc.nproc, nc.nproc,
-										   matrix.data());
+		const int rc = netcdf_write_matrix(file_id, data_id, matrix_idx, nc.nproc,
+										   nc.nproc, matrix.data());
 		if (rc != 0) {
 			std::cerr << "gpu_benchmark: failed to write NetCDF matrix " << label
 					  << ", rc=" << rc << "\n";
@@ -129,6 +142,11 @@ void netcdf_flush_and_close(NetcdfBundle &nc) {
 	write_one(nc.max_file_id, nc.max_data_id, nc.max, "max");
 	write_one(nc.med_file_id, nc.med_data_id, nc.med, "med");
 	write_one(nc.std_file_id, nc.std_data_id, nc.stddev, "std");
+}
+
+void netcdf_flush_and_close(NetcdfBundle &nc) {
+	if (!nc.enabled)
+		return;
 
 	netcdf_close_file(nc.avg_file_id);
 	netcdf_close_file(nc.var_file_id);

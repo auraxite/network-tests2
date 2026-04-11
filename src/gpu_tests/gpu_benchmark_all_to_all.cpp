@@ -230,13 +230,15 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 void schedule_all_to_all(
 	int rank, int nproc, const Args &args, bool via_host,
 	const std::vector<std::string> &rank_labels,
-	const std::function<void(const std::string &)> &mirror) {
+	const std::function<void(const std::string &)> &mirror, NetcdfBundle *nc,
+	int matrix_idx) {
 	if (rank != 0) {
 		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
 		return;
 	}
 
-	NetcdfBundle nc = netcdf_open_bundle(args.out_path, args.nbytes, args.iters, nproc);
+	if (nc != nullptr)
+		netcdf_reset_matrix(*nc);
 	const double test_t0 = MPI_Wtime();
 	std::vector<double> results =
 		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
@@ -252,7 +254,8 @@ void schedule_all_to_all(
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			std::vector<double> metric(metric_ptr(src_rank, dst_rank),
 									   metric_ptr(src_rank, dst_rank) + ACK_FIELDS);
-			netcdf_store_pair(nc, src_rank, dst_rank, metric);
+			if (nc != nullptr)
+				netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 			if (src_rank == dst_rank) {
 				if (args.timer == Timer::All) {
 					mirror(format_pair_line("pair_mpi",
@@ -309,7 +312,8 @@ void schedule_all_to_all(
 			<< std::setprecision(TOTAL_TIME_DIGITS) << total_elapsed_s << "\n";
 		mirror(oss.str());
 	}
-	netcdf_flush_and_close(nc);
+	if (nc != nullptr)
+		netcdf_write_matrix_slice(*nc, matrix_idx);
 }
 
 } // namespace gpu_benchmark

@@ -136,7 +136,8 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 void schedule_one_to_one(
 	int rank, int nproc, const Args &args, bool via_host,
 	const std::vector<std::string> &rank_labels,
-	const std::function<void(const std::string &)> &mirror) {
+	const std::function<void(const std::string &)> &mirror, NetcdfBundle *nc,
+	int matrix_idx) {
 		if (rank != 0) {
 			while (true) {
 				Task tw{};
@@ -152,7 +153,8 @@ void schedule_one_to_one(
 			return;
 		}
 
-		NetcdfBundle nc = netcdf_open_bundle(args.out_path, args.nbytes, args.iters, nproc);
+		if (nc != nullptr)
+			netcdf_reset_matrix(*nc);
 		const double test_t0 = MPI_Wtime();
 		Task t{};
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
@@ -164,7 +166,8 @@ void schedule_one_to_one(
 				t.stop = 0;
 				if (src_rank == dst_rank) {
 					std::vector<double> metric(ACK_FIELDS, 0.0);
-					netcdf_store_pair(nc, src_rank, dst_rank, metric);
+					if (nc != nullptr)
+						netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 					if (args.timer == Timer::All) {
 						mirror(format_pair_line("pair_mpi",
 												rank_labels[static_cast<size_t>(src_rank)],
@@ -241,7 +244,8 @@ void schedule_one_to_one(
 											metric[1], metric[2], metric[3],
 											metric[4], metric[5], args.stat_out));
 				}
-				netcdf_store_pair(nc, src_rank, dst_rank, metric);
+				if (nc != nullptr)
+					netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 			}
 		}
 		const double total_elapsed_s = MPI_Wtime() - test_t0;
@@ -251,7 +255,8 @@ void schedule_one_to_one(
 				<< std::setprecision(TOTAL_TIME_DIGITS) << total_elapsed_s << "\n";
 			mirror(oss.str());
 		}
-		netcdf_flush_and_close(nc);
+		if (nc != nullptr)
+			netcdf_write_matrix_slice(*nc, matrix_idx);
 
 		t.stop = 1;
 		for (int r = 1; r < nproc; ++r)
