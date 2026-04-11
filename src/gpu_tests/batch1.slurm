@@ -12,7 +12,6 @@
 
 set -euo pipefail
 
-# --- Open MPI (CUDA-aware), UCX (пользовательский префикс), NetCDF, CUDA ---
 OMPI_PREFIX="${OMPI_PREFIX:-$HOME/opt/openmpi-5.0.10-cuda}"
 UCX_PREFIX="${UCX_PREFIX:-$HOME/opt/ucx-1.15.0}"
 NETCDF_HOME="${NETCDF_HOME:-$HOME/opt/netcdf-c-4.9.2}"
@@ -25,20 +24,7 @@ if [[ -d "$UCX_PREFIX/lib" ]]; then
 fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
-# Bus error / SIGBUS в libuct_cuda + ucp_worker_progress + pml_ucx_recv: часто кеш
-# регистрации CUDA-памяти в UCX; см. clustbench-141060.err
 export UCX_MEMTYPE_CACHE=n
-# При ошибках CMA (process_vm_readv / Bad address) можно раскомментировать:
-# export UCX_TLS=^cma
-# Если всё ещё падает на IB+GPU — попробуй (может ухудшить производительность):
-# export UCX_IB_GPU_DIRECT=no
-
-# Если на кластере без этого ломается выбор интерфейсов — раскомментируй блок ниже.
-# unset OMPI_MCA_btl_tcp_if_include OMPI_MCA_oob_tcp_if_include
-# unset OMPI_MCA_btl_tcp_if_exclude OMPI_MCA_oob_tcp_if_exclude
-# export OMPI_MCA_btl=tcp,self,vader
-# export OMPI_MCA_btl_tcp_if_exclude=lo,docker0,virbr0
-# export OMPI_MCA_oob_tcp_if_exclude=lo,docker0,virbr0
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/grid_out"
@@ -66,10 +52,9 @@ ldd "$OMPI_PREFIX/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 echo "======================"
 
 CASES=(
-	"500000:1600:80"
-	# "2000000:800:40"
-	# "8000000:400:20"
-	# "32000000:200:10"
+	"500000:12800:128"
+	"4000000:6400:64"
+	"32000000:1600:16"
 )
 
 REPS=(1)
