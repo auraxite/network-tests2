@@ -43,7 +43,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		}
 	}
 
-	auto do_one = [&](int mpi_tag_base, bool measure,
+	auto do_one = [&](bool measure,
 					  std::vector<std::vector<double>> *samples_mpi_us,
 					  std::vector<std::vector<double>> *samples_cpu_us,
 					  std::vector<std::vector<double>> *samples_gpu_us) {
@@ -53,7 +53,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				continue;
 			char *recv_buf = recv_bufs[static_cast<size_t>(src_rank)];
 			mpi_ok(MPI_Irecv(recv_buf, count, MPI_BYTE, src_rank,
-							 mpi_tag_base + alltoall_pair_tag(src_rank, rank, nproc),
+							 alltoall_pair_tag(src_rank, rank, nproc),
 							 MPI_COMM_WORLD, &recv_req[static_cast<size_t>(src_rank)]),
 				   "MPI_Irecv(all_to_all)");
 		}
@@ -76,12 +76,12 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				cuda_ok(cudaMemcpy(send_buf, d_send, args.nbytes, cudaMemcpyDeviceToHost),
 						"D2H(all_to_all)");
 				mpi_ok(MPI_Send(send_buf, count, MPI_BYTE, dst_rank,
-								mpi_tag_base + alltoall_pair_tag(rank, dst_rank, nproc),
+								alltoall_pair_tag(rank, dst_rank, nproc),
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all host)");
 			} else {
 				mpi_ok(MPI_Send(send_buf, count, MPI_BYTE, dst_rank,
-								mpi_tag_base + alltoall_pair_tag(rank, dst_rank, nproc),
+								alltoall_pair_tag(rank, dst_rank, nproc),
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all dev)");
 			}
@@ -134,11 +134,10 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	}
 
 	for (int i = 0; i < args.warmup; ++i)
-		do_one(i * nproc * nproc, false, nullptr, nullptr, nullptr);
+		do_one(false, nullptr, nullptr, nullptr);
 
 	for (int i = 0; i < args.iters; ++i)
-		do_one((args.warmup + i) * nproc * nproc, true, &samples_mpi_us,
-			   &samples_cpu_us, &samples_gpu_us);
+		do_one(true, &samples_mpi_us, &samples_cpu_us, &samples_gpu_us);
 
 	for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 		if (dst_rank == rank)

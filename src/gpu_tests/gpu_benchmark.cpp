@@ -66,7 +66,8 @@ int main(int argc, char **argv) {
 
 	std::vector<char> hosts_recv;
 	std::vector<char> pci_recv;
-	if (rank == 0 && !args.sweep_sizes) {
+	// Нужно на root всегда: Gather host/pci и Bcast имён — и в режиме sweep (--sweep_sizes).
+	if (rank == 0) {
 		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
 		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
 	}
@@ -96,7 +97,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	if (rank != 0) // увеличиваем размер буфера для slaves, ранее мы это делали только для master
+	if (rank != 0)
 		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
 	mpi_ok(MPI_Bcast(hosts_recv.data(), nproc * HOST_LEN, MPI_CHAR, 0, MPI_COMM_WORLD),
 		   "MPI_Bcast hostnames");

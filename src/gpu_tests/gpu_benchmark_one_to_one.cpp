@@ -9,6 +9,10 @@
 
 namespace gpu_benchmark {
 
+namespace {
+constexpr int kOneToOneDataTag = 0;
+}
+
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 									 bool check_host,
 									 const std::vector<std::string> &rank_labels) {
@@ -39,26 +43,26 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	if (check_host)
 		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost");
 
-	auto do_one = [&](int tag) {
+	auto do_one = [&]() {
 		if (is_sender) {
 			if (check_host) {
 				cuda_ok(cudaMemcpy(h_buf, d_send, count, cudaMemcpyDeviceToHost), "D2H");
-				mpi_ok(MPI_Send(h_buf, count, MPI_BYTE, t.dst_rank, tag, MPI_COMM_WORLD),
+				mpi_ok(MPI_Send(h_buf, count, MPI_BYTE, t.dst_rank, kOneToOneDataTag, MPI_COMM_WORLD),
 					   "MPI_Send (host staging)");
 			} else {
-				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, tag, MPI_COMM_WORLD),
+				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, kOneToOneDataTag, MPI_COMM_WORLD),
 					   "MPI_Send (device buffer)");
 			}
 		}
 		if (is_receiver) {
 			MPI_Status st{};
 			if (check_host) {
-				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, tag, MPI_COMM_WORLD,
+				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, kOneToOneDataTag, MPI_COMM_WORLD,
 								&st),
 					   "MPI_Recv (host staging)");
 				cuda_ok(cudaMemcpy(d_recv, h_buf, count, cudaMemcpyHostToDevice), "H2D");
 			} else {
-				mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, tag, MPI_COMM_WORLD,
+				mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, kOneToOneDataTag, MPI_COMM_WORLD,
 								&st),
 					   "MPI_Recv (device buffer)");
 			}
@@ -80,14 +84,14 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	samples_gpu_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
 
 	for (int i = 0; i < args.warmup; ++i)
-		do_one(i);
+		do_one();
 	
 	for (int i = 0; i < args.iters; ++i) {
 		const double t0_mpi = MPI_Wtime();
 		const double t0_clk = monotonic_now_us();
 		if (is_sender)
 			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
-		do_one(1000 + i);
+		do_one();
 		if (is_sender) {
 			cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
 			cuda_ok(cudaEventSynchronize(ev_stop), "cudaEventSynchronize(stop)");
