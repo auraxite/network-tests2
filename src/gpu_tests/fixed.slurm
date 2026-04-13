@@ -72,14 +72,16 @@ for REP in "${REPS[@]}"; do
 			echo "RUN rep=${REP} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_TXT}"
 
-			srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+			if srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \
 				--iters "${ITERS}" \
 				--mode "${MODE}" \
-				--out "${OUT_TXT}"
-
-			echo "OK  rep=${REP} mode=${MODE} bytes=${BYTES}"
+				--out "${OUT_TXT}"; then
+				echo "OK  rep=${REP} mode=${MODE} bytes=${BYTES}"
+			else
+				echo "FAIL rep=${REP} mode=${MODE} bytes=${BYTES}" >&2
+			fi
 		done
 	done
 done
