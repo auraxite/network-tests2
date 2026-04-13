@@ -10,7 +10,6 @@
 namespace gpu_benchmark {
 
 namespace {
-constexpr int kDebugIterStride = 1000;
 }
 
 static int alltoall_pair_tag(int src_rank, int dst_rank, int nproc) {
@@ -25,13 +24,10 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
 	const int count = static_cast<int>(args.nbytes);
-	const auto should_log_iter = [&](int i, int total) {
-		return i < 3 || i + 1 == total || ((i + 1) % kDebugIterStride == 0);
-	};
 	{
 		std::ostringstream oss;
 		oss << "all_to_all RUN_BEGIN local_gpu=" << local_gpu << " bytes=" << args.nbytes
-			<< " nproc=" << nproc << " host_path=" << (check_host ? 1 : 0);
+			<< " nproc=" << nproc << " mode_path=" << (check_host ? "mhost" : "mauto");
 		debug_log(args.debug, rank, oss.str());
 	}
 
@@ -61,11 +57,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					  std::vector<std::vector<double>> *samples_mpi_us,
 					  std::vector<std::vector<double>> *samples_cpu_us,
 					  std::vector<std::vector<double>> *samples_gpu_us) {
-		if (measure && should_log_iter(iter_idx, args.iters)) {
-			std::ostringstream oss;
-			oss << "all_to_all ITER_BEGIN i=" << iter_idx;
-			debug_log(args.debug, rank, oss.str());
-		}
 		std::vector<MPI_Request> recv_req(static_cast<size_t>(nproc), MPI_REQUEST_NULL);
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 			if (src_rank == rank)
@@ -136,11 +127,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 						"H2D(all_to_all)");
 			}
 		}
-		if (measure && should_log_iter(iter_idx, args.iters)) {
-			std::ostringstream oss;
-			oss << "all_to_all ITER_DONE i=" << iter_idx;
-			debug_log(args.debug, rank, oss.str());
-		}
 	};
 
 	std::vector<std::vector<double>> samples_mpi_us(static_cast<size_t>(nproc));
@@ -162,8 +148,10 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		do_one(i, false, nullptr, nullptr, nullptr);
 	debug_log(args.debug, rank, "all_to_all WARMUP_DONE");
 
+	debug_log(args.debug, rank, "all_to_all ITERS_BEGIN");
 	for (int i = 0; i < args.iters; ++i)
 		do_one(i, true, &samples_mpi_us, &samples_cpu_us, &samples_gpu_us);
+	debug_log(args.debug, rank, "all_to_all ITERS_DONE");
 
 	for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 		if (dst_rank == rank)

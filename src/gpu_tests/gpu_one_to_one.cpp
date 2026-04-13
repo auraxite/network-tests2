@@ -11,7 +11,6 @@ namespace gpu_benchmark {
 
 namespace {
 constexpr int kOneToOneDataTag = 0;
-constexpr int kDebugIterStride = 1000;
 }
 
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
@@ -31,16 +30,13 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	char *d_recv = nullptr;
 	char *h_buf = nullptr;
 	const int count = static_cast<int>(args.nbytes);
-	const auto should_log_iter = [&](int i, int total) {
-		return i < 3 || i + 1 == total || ((i + 1) % kDebugIterStride == 0);
-	};
 	{
 		std::ostringstream oss;
 		oss << "one_to_one RUN_BEGIN src=" << t.src_rank << "." << t.src_gpu
 			<< " dst=" << t.dst_rank << "." << t.dst_gpu << " bytes=" << args.nbytes
 			<< " role_sender=" << (is_sender ? 1 : 0)
 			<< " role_receiver=" << (is_receiver ? 1 : 0)
-			<< " host_path=" << (check_host ? 1 : 0);
+			<< " mode_path=" << (check_host ? "mhost" : "mauto");
 		debug_log(args.debug, rank, oss.str());
 	}
 
@@ -102,12 +98,8 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		do_one();
 	debug_log(args.debug, rank, "one_to_one WARMUP_DONE");
 	
+	debug_log(args.debug, rank, "one_to_one ITERS_BEGIN");
 	for (int i = 0; i < args.iters; ++i) {
-		if (should_log_iter(i, args.iters)) {
-			std::ostringstream oss;
-			oss << "one_to_one ITER_BEGIN i=" << i;
-			debug_log(args.debug, rank, oss.str());
-		}
 		const double t0_mpi = MPI_Wtime();
 		const double t0_clk = clock_gettime_wrapper();
 		if (is_sender)
@@ -125,12 +117,8 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 			samples_mpi_us.push_back((t1_mpi - t0_mpi) * 1e6);
 			samples_cpu_us.push_back(t1_clk - t0_clk);
 		}
-		if (should_log_iter(i, args.iters)) {
-			std::ostringstream oss;
-			oss << "one_to_one ITER_DONE i=" << i;
-			debug_log(args.debug, rank, oss.str());
-		}
 	}
+	debug_log(args.debug, rank, "one_to_one ITERS_DONE");
 	if (is_sender) {
 		switch (args.timer) {
 		case Timer::All:
