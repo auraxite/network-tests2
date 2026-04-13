@@ -63,6 +63,7 @@ struct Args {
 	Scheme scheme = Scheme::OneToOne;
 	std::string out_path;
 	bool save_raw_samples = true;
+	bool debug = false;
 };
 
 /* Описание одной пары src/dst; активно используется в one-to-one. */
@@ -84,6 +85,7 @@ StatOut parse_stat_out(const std::string &s, int rank);
 Args parse_args(int argc, char **argv, int rank);
 bool check_host(Mode mode, bool cuda_aware);
 std::vector<size_t> build_message_sizes(const Args &args, int rank);
+void debug_log(bool enabled, int rank, const std::string &msg);
 
 /* Обёртка над clock_gettime: возвращает время в микросекундах. */
 double clock_gettime_wrapper();

@@ -11,6 +11,7 @@ namespace gpu_benchmark {
 
 namespace {
 constexpr int kOneToOneDataTag = 0;
+constexpr int kDebugIterStride = 1000;
 }
 
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
@@ -30,6 +31,18 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	char *d_recv = nullptr;
 	char *h_buf = nullptr;
 	const int count = static_cast<int>(args.nbytes);
+	const auto should_log_iter = [&](int i, int total) {
+		return i < 3 || i + 1 == total || ((i + 1) % kDebugIterStride == 0);
+	};
+	{
+		std::ostringstream oss;
+		oss << "one_to_one RUN_BEGIN src=" << t.src_rank << "." << t.src_gpu
+			<< " dst=" << t.dst_rank << "." << t.dst_gpu << " bytes=" << args.nbytes
+			<< " role_sender=" << (is_sender ? 1 : 0)
+			<< " role_receiver=" << (is_receiver ? 1 : 0)
+			<< " host_path=" << (check_host ? 1 : 0);
+		debug_log(args.debug, rank, oss.str());
+	}
 
 	if (is_sender) {
 		cuda_ok(cudaSetDevice(t.src_gpu), "cudaSetDevice(src)");
@@ -42,6 +55,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	}
 	if (check_host)
 		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost");
+	debug_log(args.debug, rank, "one_to_one ALLOC_DONE");
 
 	auto do_one = [&]() {
 		if (is_sender) {
@@ -83,10 +97,17 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	samples_cpu_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
 	samples_gpu_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
 
+	debug_log(args.debug, rank, "one_to_one WARMUP_BEGIN");
 	for (int i = 0; i < args.warmup; ++i)
 		do_one();
+	debug_log(args.debug, rank, "one_to_one WARMUP_DONE");
 	
 	for (int i = 0; i < args.iters; ++i) {
+		if (should_log_iter(i, args.iters)) {
+			std::ostringstream oss;
+			oss << "one_to_one ITER_BEGIN i=" << i;
+			debug_log(args.debug, rank, oss.str());
+		}
 		const double t0_mpi = MPI_Wtime();
 		const double t0_clk = clock_gettime_wrapper();
 		if (is_sender)
@@ -103,6 +124,11 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 			const double t1_clk = clock_gettime_wrapper();
 			samples_mpi_us.push_back((t1_mpi - t0_mpi) * 1e6);
 			samples_cpu_us.push_back(t1_clk - t0_clk);
+		}
+		if (should_log_iter(i, args.iters)) {
+			std::ostringstream oss;
+			oss << "one_to_one ITER_DONE i=" << i;
+			debug_log(args.debug, rank, oss.str());
 		}
 	}
 	if (is_sender) {
@@ -123,6 +149,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	if (!samples_gpu_us.empty() && !samples_mpi_us.empty() && !samples_cpu_us.empty())
 		fill_ack(samples_mpi_us, samples_cpu_us, samples_gpu_us, args,
 									 ack.data());
+	debug_log(args.debug, rank, "one_to_one STATS_DONE");
 	if (ev_start)
 		cudaEventDestroy(ev_start);
 	if (ev_stop)
@@ -134,6 +161,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		cudaFree(d_send);
 	if (d_recv)
 		cudaFree(d_recv);
+	debug_log(args.debug, rank, "one_to_one RUN_DONE");
 	return ack;
 }
 
@@ -148,12 +176,20 @@ void schedule_one_to_one(
 				mpi_ok(MPI_Recv(&tw, sizeof(Task), MPI_BYTE, 0, 1, MPI_COMM_WORLD,
 								MPI_STATUS_IGNORE),
 					"MPI_Recv Task (worker)");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one WORKER_TASK_RECV src=" << tw.src_rank << "." << tw.src_gpu
+						<< " dst=" << tw.dst_rank << "." << tw.dst_gpu << " stop=" << tw.stop;
+					debug_log(args.debug, rank, oss.str());
+				}
 				if (tw.stop)
 					break;
 				auto ack = run_one_to_one(rank, tw, args, via_host, rank_labels);
 				mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
 					"MPI_Send ack (worker)");
+				debug_log(args.debug, rank, "one_to_one WORKER_ACK_SENT");
 			}
+			debug_log(args.debug, rank, "one_to_one WORKER_STOP");
 			return;
 		}
 
@@ -168,6 +204,12 @@ void schedule_one_to_one(
 				t.dst_rank = dst_rank;
 				t.dst_gpu = 0;
 				t.stop = 0;
+				{
+					std::ostringstream oss;
+					oss << "one_to_one PAIR_BEGIN src=" << t.src_rank << "." << t.src_gpu
+						<< " dst=" << t.dst_rank << "." << t.dst_gpu;
+					debug_log(args.debug, rank, oss.str());
+				}
 				if (src_rank == dst_rank) {
 					std::vector<double> metric(ACK_FIELDS, 0.0);
 					if (nc != nullptr)
@@ -200,6 +242,7 @@ void schedule_one_to_one(
 				if (dst_rank != 0)
 					mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, dst_rank, 1, MPI_COMM_WORLD),
 						"MPI_Send Task (dst)");
+				debug_log(args.debug, rank, "one_to_one PAIR_DISPATCH_DONE");
 
 				std::vector<double> metric(ACK_FIELDS, 0.0);
 				if (src_rank == 0 || dst_rank == 0) {
@@ -215,6 +258,7 @@ void schedule_one_to_one(
 						"MPI_Recv ack (src)");
 					if (ack[6] == 1.0)
 						metric = ack;
+					debug_log(args.debug, rank, "one_to_one ACK_SRC_RECV");
 				}
 				if (dst_rank != 0) {
 					std::vector<double> ack(ACK_FIELDS, 0.0);
@@ -223,6 +267,7 @@ void schedule_one_to_one(
 						"MPI_Recv ack (dst)");
 					if (ack[6] == 1.0)
 						metric = ack;
+					debug_log(args.debug, rank, "one_to_one ACK_DST_RECV");
 				}
 
 				if (args.timer == Timer::All) {
@@ -250,6 +295,12 @@ void schedule_one_to_one(
 				}
 				if (nc != nullptr)
 					netcdf_store_pair(*nc, src_rank, dst_rank, metric);
+				{
+					std::ostringstream oss;
+					oss << "one_to_one PAIR_DONE src=" << t.src_rank << "." << t.src_gpu
+						<< " dst=" << t.dst_rank << "." << t.dst_gpu;
+					debug_log(args.debug, rank, oss.str());
+				}
 			}
 		}
 		const double total_elapsed_s = MPI_Wtime() - test_t0;

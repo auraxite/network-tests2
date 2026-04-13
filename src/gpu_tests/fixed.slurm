@@ -73,14 +73,6 @@ for REP in "${REPS[@]}"; do
 			for CASE in "${CASES[@]}"; do
 				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-				#
-				#
-				#
-				# auto гоняем только на размере 500000; host — на всех размерах.
-				if [[ "${MODE}" == "auto" && "${BYTES}" != "500000" ]]; then
-					continue
-				fi
-
 				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_s${SCHEME}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
 				echo "RUN rep=${REP} mode=${MODE} scheme=${SCHEME} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 				echo "  -> ${OUT_TXT}"
@@ -91,7 +83,8 @@ for REP in "${REPS[@]}"; do
 					--iters "${ITERS}" \
 					--mode "${MODE}" \
 					--scheme "${SCHEME}" \
-					--out "${OUT_TXT}"
+					--out "${OUT_TXT}" \
+					-d
 
 				echo "OK  rep=${REP} mode=${MODE} scheme=${SCHEME} bytes=${BYTES}"
 			done

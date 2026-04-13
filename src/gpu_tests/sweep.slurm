@@ -53,7 +53,7 @@ ldd "$OMPI_PREFIX/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 echo "======================"
 
 SWEEPS=(
-	"4000:64000:4000:32000:320"
+	"8000:64000:8000:8000:80"
 )
 
 REPS=(1)
@@ -63,6 +63,7 @@ MODES=(
 )
 SCHEMES=(
 	one_to_one
+	all_to_all
 )
 
 for REP in "${REPS[@]}"; do
@@ -83,7 +84,8 @@ for REP in "${REPS[@]}"; do
 					--iters "${ITERS}" \
 					--mode "${MODE}" \
 					--scheme "${SCHEME}" \
-					--out "${OUT_PREFIX}"
+					--out "${OUT_PREFIX}" \
+					-d
 
 				echo "OK  rep=${REP} mode=${MODE} scheme=${SCHEME} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
 			done

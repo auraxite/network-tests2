@@ -9,6 +9,10 @@
 
 namespace gpu_benchmark {
 
+namespace {
+constexpr int kDebugIterStride = 1000;
+}
+
 static int alltoall_pair_tag(int src_rank, int dst_rank, int nproc) {
 	return src_rank * nproc + dst_rank;
 }
@@ -21,11 +25,21 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
 	const int count = static_cast<int>(args.nbytes);
+	const auto should_log_iter = [&](int i, int total) {
+		return i < 3 || i + 1 == total || ((i + 1) % kDebugIterStride == 0);
+	};
+	{
+		std::ostringstream oss;
+		oss << "all_to_all RUN_BEGIN local_gpu=" << local_gpu << " bytes=" << args.nbytes
+			<< " nproc=" << nproc << " host_path=" << (check_host ? 1 : 0);
+		debug_log(args.debug, rank, oss.str());
+	}
 
 	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(all_to_all)");
 	cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(send)");
 	cuda_ok(cudaMemset(d_send, 0xAA, args.nbytes), "cudaMemset(send)");
 	cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(recv)");
+	debug_log(args.debug, rank, "all_to_all ALLOC_DONE");
 
 	std::vector<char *> send_bufs(static_cast<size_t>(nproc), nullptr);
 	std::vector<char *> recv_bufs(static_cast<size_t>(nproc), nullptr);
@@ -43,10 +57,15 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		}
 	}
 
-	auto do_one = [&](bool measure,
+	auto do_one = [&](int iter_idx, bool measure,
 					  std::vector<std::vector<double>> *samples_mpi_us,
 					  std::vector<std::vector<double>> *samples_cpu_us,
 					  std::vector<std::vector<double>> *samples_gpu_us) {
+		if (measure && should_log_iter(iter_idx, args.iters)) {
+			std::ostringstream oss;
+			oss << "all_to_all ITER_BEGIN i=" << iter_idx;
+			debug_log(args.debug, rank, oss.str());
+		}
 		std::vector<MPI_Request> recv_req(static_cast<size_t>(nproc), MPI_REQUEST_NULL);
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 			if (src_rank == rank)
@@ -117,6 +136,11 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 						"H2D(all_to_all)");
 			}
 		}
+		if (measure && should_log_iter(iter_idx, args.iters)) {
+			std::ostringstream oss;
+			oss << "all_to_all ITER_DONE i=" << iter_idx;
+			debug_log(args.debug, rank, oss.str());
+		}
 	};
 
 	std::vector<std::vector<double>> samples_mpi_us(static_cast<size_t>(nproc));
@@ -133,11 +157,13 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			static_cast<size_t>(std::max(1, args.iters)));
 	}
 
+	debug_log(args.debug, rank, "all_to_all WARMUP_BEGIN");
 	for (int i = 0; i < args.warmup; ++i)
-		do_one(false, nullptr, nullptr, nullptr);
+		do_one(i, false, nullptr, nullptr, nullptr);
+	debug_log(args.debug, rank, "all_to_all WARMUP_DONE");
 
 	for (int i = 0; i < args.iters; ++i)
-		do_one(true, &samples_mpi_us, &samples_cpu_us, &samples_gpu_us);
+		do_one(i, true, &samples_mpi_us, &samples_cpu_us, &samples_gpu_us);
 
 	for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 		if (dst_rank == rank)
@@ -198,6 +224,11 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 									nproc * nproc + alltoall_pair_tag(src_rank, dst_rank, nproc),
 									MPI_COMM_WORLD),
 						   "MPI_Send ack(all_to_all)");
+					{
+						std::ostringstream oss;
+						oss << "all_to_all ACK_SENT src=" << src_rank << " dst=" << dst_rank;
+						debug_log(args.debug, rank, oss.str());
+					}
 				}
 			} else if (rank == 0) {
 				mpi_ok(MPI_Recv(result_ptr(src_rank, dst_rank), ACK_FIELDS, MPI_DOUBLE,
@@ -205,6 +236,11 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 								nproc * nproc + alltoall_pair_tag(src_rank, dst_rank, nproc),
 								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 					   "MPI_Recv ack(all_to_all)");
+				{
+					std::ostringstream oss;
+					oss << "all_to_all ACK_RECV src=" << src_rank << " dst=" << dst_rank;
+					debug_log(args.debug, rank, oss.str());
+				}
 			}
 		}
 	}
@@ -223,6 +259,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		cudaFree(d_send);
 	if (d_recv)
 		cudaFree(d_recv);
+	debug_log(args.debug, rank, "all_to_all RUN_DONE");
 	return results;
 }
 
@@ -231,8 +268,10 @@ void schedule_all_to_all(
 	const std::vector<std::string> &rank_labels,
 	const std::function<void(const std::string &)> &mirror, NetcdfBundle *nc,
 	int matrix_idx) {
+	debug_log(args.debug, rank, "all_to_all SCHEDULE_BEGIN");
 	if (rank != 0) {
 		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
+		debug_log(args.debug, rank, "all_to_all SCHEDULE_DONE");
 		return;
 	}
 
@@ -253,6 +292,11 @@ void schedule_all_to_all(
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			std::vector<double> metric(metric_ptr(src_rank, dst_rank),
 									   metric_ptr(src_rank, dst_rank) + ACK_FIELDS);
+			{
+				std::ostringstream oss;
+				oss << "all_to_all PAIR_MERGE src=" << src_rank << " dst=" << dst_rank;
+				debug_log(args.debug, rank, oss.str());
+			}
 			if (nc != nullptr)
 				netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 			if (src_rank == dst_rank) {
@@ -313,6 +357,7 @@ void schedule_all_to_all(
 	}
 	if (nc != nullptr)
 		netcdf_write_matrix_slice(*nc, matrix_idx);
+	debug_log(args.debug, rank, "all_to_all SCHEDULE_DONE");
 }
 
 } // namespace gpu_benchmark

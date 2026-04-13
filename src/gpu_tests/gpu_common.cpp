@@ -61,7 +61,8 @@ void help(int rank) {
 			  << "  --scheme S      one_to_one | all_to_all (default one_to_one)\n"
 			  << "  --timer T       all | mpi | cpu | cuda (default all)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
-			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n";
+			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n"
+			  << "  --debug, -d     verbose debug logs to stderr\n";
 }
 
 Scheme parse_scheme(const std::string &s, int rank) {
@@ -200,6 +201,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.stat_out = parse_stat_out(next("--stat"), rank);
 		else if (s == "--out" || s == "-o")
 			a.out_path = next("--out");
+		else if (s == "--debug" || s == "-d")
+			a.debug = true;
 		else if (s == "--help" || s == "-h") {
 			help(rank);
 			mpi_ok(MPI_Finalize(), "MPI_Finalize");
@@ -261,6 +264,12 @@ Args parse_args(int argc, char **argv, int rank) {
 	}
 	a.nbytes = a.begin_nbytes;
 	return a;
+}
+
+void debug_log(bool enabled, int rank, const std::string &msg) {
+	if (!enabled)
+		return;
+	std::cerr << "[DBG r" << rank << "] " << msg << "\n";
 }
 
 bool check_host(Mode mode, bool cuda_aware) {
