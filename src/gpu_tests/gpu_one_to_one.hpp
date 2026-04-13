@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gpu_benchmark_common.hpp"
+#include "gpu_common.hpp"
 
 #include <functional> // std::function — колбэк mirror в schedule_one_to_one
 #include <vector>     // std::vector в параметрах и возвращаемых типах

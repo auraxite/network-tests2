@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-"""Render heatmaps from gpu_benchmark (formerly gpu_one_to_one) text output.
+"""Render heatmaps from gpu (MPI GPU tests) text output.
 
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
@@ -483,7 +483,10 @@ def draw_heatmap(
 	fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
 	masked = np.ma.masked_invalid(matrix)
-	im = ax.imshow(masked, cmap=cmap, aspect="equal", interpolation="nearest")
+	# origin="lower": ряд/ранг 0 внизу, ось ординат растёт снизу вверх (как привычные координаты).
+	im = ax.imshow(
+		masked, cmap=cmap, aspect="equal", interpolation="nearest", origin="lower"
+	)
 
 	ax.set_xticks(range(len(labels)))
 	ax.set_yticks(range(len(labels)))
@@ -536,11 +539,11 @@ def render_one_text(
 
 	mats = fill_matrices(n, pairs)
 	rank_hosts = rank_hosts_from_meta(meta, n)
+	# Метки на осях: gpu0 … gpu{n-1} (матрица по рангам; границы узлов сохраняем по hostname).
+	tick_labels = [f"gpu{i}" for i in range(n)]
 	if rank_hosts:
-		tick_labels = axis_labels_by_node(rank_hosts)
 		node_bounds = node_boundaries(rank_hosts)
 	else:
-		tick_labels = [str(i) for i in range(n)]
 		node_bounds = []
 
 	want = set(METRIC_KEYS)
@@ -638,7 +641,7 @@ def create_and_sort_raw_for_text(source_path: Path, out_dir: Path, sort_mode: st
 
 def main() -> int:
 	p = argparse.ArgumentParser(
-		description="Heatmaps from gpu_benchmark text output (pair ... lines).",
+		description="Heatmaps from gpu text output (pair ... lines).",
 		epilog=(
 			"Arguments:\n"
 			"  input            .txt file, directory with .txt files, or '-' for stdin\n"

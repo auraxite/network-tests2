@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Сборка gpu_benchmark: Open MPI с CUDA, NetCDF, CUDA toolkit.
+# Сборка gpu (MPI+CUDA+NetCDF): точка входа gpu_benchmark.cpp, gpu_common.cpp, …
 #
 # На кластере с логина (один GPU-узел, те же переменные подставятся в job):
 #   export OMPI_PREFIX=/scratch/asalnikov/opt/openmpi-5.0.10-cuda
@@ -79,13 +79,13 @@ fi
 
 "$MPICXX" $CXXFLAGS \
 	"$REPO_GPU_TESTS/gpu_benchmark.cpp" \
-	"$REPO_GPU_TESTS/gpu_benchmark_common.cpp" \
-	"$REPO_GPU_TESTS/gpu_benchmark_one_to_one.cpp" \
-	"$REPO_GPU_TESTS/gpu_benchmark_all_to_all.cpp" \
+	"$REPO_GPU_TESTS/gpu_common.cpp" \
+	"$REPO_GPU_TESTS/gpu_one_to_one.cpp" \
+	"$REPO_GPU_TESTS/gpu_all_to_all.cpp" \
 	"$REPO_GPU_TESTS/netcdf_writer.cpp" \
 	"$REPO_GPU_TESTS/../core/data_write_operations.o" \
 	"$REPO_GPU_TESTS/../core/string_id_converters.o" \
-	-o "$REPO_GPU_TESTS/gpu_benchmark" \
+	-o "$REPO_GPU_TESTS/gpu" \
 	$RPATH \
 	-Wl,--no-as-needed \
 	-L"$OMPI_PREFIX/lib" -lmpi -lopen-rte -lopen-pal \
@@ -93,5 +93,5 @@ fi
 	-L"$NETCDF_HOME/lib" -lnetcdf \
 	-L"$CUDA_ROOT/lib64" -lcudart
 
-echo "OK: $REPO_GPU_TESTS/gpu_benchmark"
-ldd "$REPO_GPU_TESTS/gpu_benchmark" | grep -E 'libmpi|libmpi_cxx|open-pal|libcudart|libnetcdf|libucp|libuct' || true
+echo "OK: $REPO_GPU_TESTS/gpu"
+ldd "$REPO_GPU_TESTS/gpu" | grep -E 'libmpi|libmpi_cxx|open-pal|libcudart|libnetcdf|libucp|libuct' || true

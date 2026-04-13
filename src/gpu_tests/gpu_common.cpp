@@ -1,4 +1,4 @@
-#include "gpu_benchmark_common.hpp"
+#include "gpu_common.hpp"
 
 #include <algorithm> // std::max, std::sort, …
 #include <cctype>    // std::tolower и т.п. при разборе CLI
@@ -10,9 +10,9 @@
 #include <iomanip>   // std::setprecision, std::fixed (pair_*, raw)
 #include <iostream>  // std::cout, std::cerr — help и ошибки CLI
 #include <numeric>   // std::accumulate и др.
-#include <sstream>   // std::ostringstream — format_pair_line и пути
+#include <sstream>   // std::ostringstream — print_pair_line и пути
 #include <sys/stat.h> // mkdir для каталога raw/
-#include <time.h>    // clock_gettime — monotonic_now_us
+#include <time.h>    // clock_gettime — clock_gettime_wrapper
 
 #if defined(OPEN_MPI) && OPEN_MPI
 #include "mpi-ext.h" // MPIX_Query_cuda_support (CUDA-aware MPI)
@@ -50,7 +50,7 @@ bool mpi_cuda_aware() {
 void help(int rank) {
 	if (rank != 0)
 		return;
-	std::cout << "gpu_benchmark — GPU pair latency (one_to_one | all_to_all)\n"
+	std::cout << "gpu — GPU pair latency (one_to_one | all_to_all)\n"
 			  << "  --bytes N       single-size text benchmark (default 4 MB)\n"
 			  << "  --bytes-begin N first message size for NetCDF-only sweep\n"
 			  << "  --bytes-end N   last message size for NetCDF-only sweep\n"
@@ -278,13 +278,13 @@ std::vector<size_t> build_message_sizes(const Args &args, int rank) {
 	}
 	if (sizes.empty()) {
 		if (rank == 0)
-			std::cerr << "gpu_benchmark: empty message size sweep\n";
+			std::cerr << "gpu: empty message size sweep\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 	return sizes;
 }
 
-double monotonic_now_us() {
+double clock_gettime_wrapper() {
 	timespec ts{};
 #if defined(CLOCK_MONOTONIC_RAW)
 	const clockid_t clk_id = CLOCK_MONOTONIC_RAW;
@@ -297,55 +297,24 @@ double monotonic_now_us() {
 		   static_cast<double>(ts.tv_nsec) * 1e-3;
 }
 
-void fill_stats6(const std::vector<double> &samples, double *out6) {
-	const double n = static_cast<double>(samples.size());
-	const double _sum = std::accumulate(samples.begin(), samples.end(), 0.0);
-	const double _avg = _sum / n;
-	auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
-	const double _min = *it_min;
-	const double _max = *it_max;
-	std::vector<double> sorted = samples;
-	std::sort(sorted.begin(), sorted.end());
-	const size_t m = sorted.size() / 2;
-	const double _med = (sorted.size() % 2 == 0)
-							? (sorted[m - 1] + sorted[m]) * 0.5
-							: sorted[m];
-	double _var = 0.0;
-	if (samples.size() > 1) {
-		for (double x : samples) {
-			const double d = x - _avg;
-			_var += d * d;
-		}
-		_var /= static_cast<double>(samples.size() - 1);
-	}
-	const double _std = std::sqrt(_var);
-	out6[0] = _avg;
-	out6[1] = _med;
-	out6[2] = _min;
-	out6[3] = _max;
-	out6[4] = _var;
-	out6[5] = _std;
-}
-
-static std::string short_host(const std::string &host) {
-	const size_t dot = host.find('.');
-	if (dot == std::string::npos)
-		return host;
-	return host.substr(0, dot);
-}
-
-static std::string host_node_token(const std::string &host) {
-	const std::string sh = short_host(host);
-	size_t pos = sh.size();
-	while (pos > 0 && std::isdigit(static_cast<unsigned char>(sh[pos - 1])))
-		--pos;
-	if (pos < sh.size())
-		return sh.substr(pos);
-	return sh;
-}
-
 std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 										   int nproc, int host_len) {
+	const auto short_host = [](const std::string &host) {
+		const size_t dot = host.find('.');
+		if (dot == std::string::npos)
+			return host;
+		return host.substr(0, dot);
+	};
+	const auto host_node_token = [&](const std::string &host) {
+		const std::string sh = short_host(host);
+		size_t pos = sh.size();
+		while (pos > 0 && std::isdigit(static_cast<unsigned char>(sh[pos - 1])))
+			--pos;
+		if (pos < sh.size())
+			return sh.substr(pos);
+		return sh;
+	};
+
 	std::vector<std::string> labels(static_cast<size_t>(nproc));
 	std::vector<std::string> seen_hosts;
 	std::vector<int> seen_counts;
@@ -374,47 +343,67 @@ std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 	return labels;
 }
 
-std::string sanitize_label_for_raw_path(const std::string &lab) {
-	std::string out;
-	out.reserve(lab.size());
-	for (unsigned char uc : lab) {
-		const char c = static_cast<char>(uc);
-		if (std::isalnum(uc) || c == '.' || c == '-' || c == '_')
-			out.push_back(c);
-		else
-			out.push_back('_');
-	}
-	return out.empty() ? "nolabel" : out;
-}
-
-void fill_ack_from_sender_triples(const std::vector<double> &samples_mpi_us,
+void fill_ack(const std::vector<double> &samples_mpi_us,
 								  const std::vector<double> &samples_cpu_us,
 								  const std::vector<double> &samples_gpu_us,
 								  const Args &args, double *ack) {
+	const auto fill_stats = [](const std::vector<double> &samples, double *out6) {
+		const double n = static_cast<double>(samples.size());
+		const double _sum = std::accumulate(samples.begin(), samples.end(), 0.0);
+		const double _avg = _sum / n;
+		auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
+		const double _min = *it_min;
+		const double _max = *it_max;
+		std::vector<double> sorted = samples;
+		std::sort(sorted.begin(), sorted.end());
+		const size_t m = sorted.size() / 2;
+		const double _med = (sorted.size() % 2 == 0)
+								? (sorted[m - 1] + sorted[m]) * 0.5
+								: sorted[m];
+		double _var = 0.0;
+		if (samples.size() > 1) {
+			for (double x : samples) {
+				const double d = x - _avg;
+				_var += d * d;
+			}
+			_var /= static_cast<double>(samples.size() - 1);
+		}
+		const double _std = std::sqrt(_var);
+		out6[0] = _avg;
+		out6[1] = _med;
+		out6[2] = _min;
+		out6[3] = _max;
+		out6[4] = _var;
+		out6[5] = _std;
+	};
+
 	std::fill(ack, ack + ACK_FIELDS, 0.0);
 	if (samples_mpi_us.empty() || samples_cpu_us.empty() || samples_gpu_us.empty())
 		return;
 	switch (args.timer) {
 	case Timer::All:
-		fill_stats6(samples_mpi_us, ack);
+		fill_stats(samples_mpi_us, ack);
 		break;
 	case Timer::Mpi:
-		fill_stats6(samples_mpi_us, ack);
+		fill_stats(samples_mpi_us, ack);
 		break;
 	case Timer::Cpu:
-		fill_stats6(samples_cpu_us, ack);
+		fill_stats(samples_cpu_us, ack);
 		break;
 	case Timer::Cuda:
-		fill_stats6(samples_gpu_us, ack);
+		fill_stats(samples_gpu_us, ack);
+		break;
+	default:
+		fill_stats(samples_mpi_us, ack);
 		break;
 	}
-	fill_stats6(samples_cpu_us, ack + 7);
-	fill_stats6(samples_mpi_us, ack + 13);
-	fill_stats6(samples_gpu_us, ack + 19);
+	fill_stats(samples_cpu_us, ack + 7);
+	fill_stats(samples_mpi_us, ack + 13);
+	fill_stats(samples_gpu_us, ack + 19);
 	ack[6] = 1.0;
 }
 
-std::string format_pair_line(const char *line_name,
+std::string print_pair_line(const char *line_name,
 							 const std::string &src_label, const std::string &dst_label,
 							 double avg_us, double med_us, double min_us, double max_us,
 							 double var_us, double std_us, StatOut stat) {
@@ -453,6 +442,19 @@ std::string format_pair_line(const char *line_name,
 void append_raw_samples(const Args &args, int rank, const Task &t,
 						const std::vector<std::string> &rank_labels,
 						const std::vector<double> &samples_us) {
+	const auto sanitize_label_for_raw_path = [](const std::string &lab) {
+		std::string out;
+		out.reserve(lab.size());
+		for (unsigned char uc : lab) {
+			const char c = static_cast<char>(uc);
+			if (std::isalnum(uc) || c == '.' || c == '-' || c == '_')
+				out.push_back(c);
+			else
+				out.push_back('_');
+		}
+		return out.empty() ? "nolabel" : out;
+	};
+
 	if (!args.save_raw_samples || args.out_path.empty() || samples_us.empty())
 		return;
 	(void)rank;

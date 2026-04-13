@@ -30,7 +30,7 @@ GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/sweep_out"
 mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
-BIN="${GPU_TESTS}/gpu_benchmark"
+BIN="${GPU_TESTS}/gpu"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '___')"
 
@@ -52,7 +52,7 @@ ldd "$OMPI_PREFIX/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 echo "======================"
 
 SWEEPS=(
-	"500000:32000000:500000:1600:16"
+	"0:64000:8000:32000:320"
 )
 
 REPS=(1)
@@ -66,7 +66,7 @@ for REP in "${REPS[@]}"; do
 		for CASE in "${SWEEPS[@]}"; do
 			IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
 
-			OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
+			 ="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
 			echo "RUN rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 

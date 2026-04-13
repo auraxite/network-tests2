@@ -1,4 +1,4 @@
-#include "gpu_benchmark_one_to_one.hpp"
+#include "gpu_one_to_one.hpp"
 
 #include <algorithm>    // std::max и др.
 #include <cuda_runtime.h> // CUDA: устройство, события, cudaMalloc, ...
@@ -88,7 +88,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	
 	for (int i = 0; i < args.iters; ++i) {
 		const double t0_mpi = MPI_Wtime();
-		const double t0_clk = monotonic_now_us();
+		const double t0_clk = clock_gettime_wrapper();
 		if (is_sender)
 			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 		do_one();
@@ -100,7 +100,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 					"cudaEventElapsedTime");
 			samples_gpu_us.push_back(static_cast<double>(elapsed_ms) * 1e3);
 			const double t1_mpi = MPI_Wtime();
-			const double t1_clk = monotonic_now_us();
+			const double t1_clk = clock_gettime_wrapper();
 			samples_mpi_us.push_back((t1_mpi - t0_mpi) * 1e6);
 			samples_cpu_us.push_back(t1_clk - t0_clk);
 		}
@@ -121,7 +121,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	}
 
 	if (!samples_gpu_us.empty() && !samples_mpi_us.empty() && !samples_cpu_us.empty())
-		fill_ack_from_sender_triples(samples_mpi_us, samples_cpu_us, samples_gpu_us, args,
+		fill_ack(samples_mpi_us, samples_cpu_us, samples_gpu_us, args,
 									 ack.data());
 	if (ev_start)
 		cudaEventDestroy(ev_start);
@@ -173,20 +173,20 @@ void schedule_one_to_one(
 					if (nc != nullptr)
 						netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 					if (args.timer == Timer::All) {
-						mirror(format_pair_line("pair_mpi",
+						mirror(print_pair_line("pair_mpi",
 												rank_labels[static_cast<size_t>(src_rank)],
 												rank_labels[static_cast<size_t>(dst_rank)],
 												0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-						mirror(format_pair_line("pair_cpu",
+						mirror(print_pair_line("pair_cpu",
 												rank_labels[static_cast<size_t>(src_rank)],
 												rank_labels[static_cast<size_t>(dst_rank)],
 												0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-						mirror(format_pair_line("pair_cuda",
+						mirror(print_pair_line("pair_cuda",
 												rank_labels[static_cast<size_t>(src_rank)],
 												rank_labels[static_cast<size_t>(dst_rank)],
 												0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
 					} else {
-						mirror(format_pair_line("pair",
+						mirror(print_pair_line("pair",
 												rank_labels[static_cast<size_t>(src_rank)],
 												rank_labels[static_cast<size_t>(dst_rank)],
 												0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
@@ -226,23 +226,23 @@ void schedule_one_to_one(
 				}
 
 				if (args.timer == Timer::All) {
-					mirror(format_pair_line("pair_mpi",
+					mirror(print_pair_line("pair_mpi",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)], metric[13],
 											metric[14], metric[15], metric[16],
 											metric[17], metric[18], args.stat_out));
-					mirror(format_pair_line("pair_cpu",
+					mirror(print_pair_line("pair_cpu",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)], metric[7],
 											metric[8], metric[9], metric[10],
 											metric[11], metric[12], args.stat_out));
-					mirror(format_pair_line("pair_cuda",
+					mirror(print_pair_line("pair_cuda",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)], metric[19],
 											metric[20], metric[21], metric[22],
 											metric[23], metric[24], args.stat_out));
 				} else {
-					mirror(format_pair_line("pair",
+					mirror(print_pair_line("pair",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)], metric[0],
 											metric[1], metric[2], metric[3],

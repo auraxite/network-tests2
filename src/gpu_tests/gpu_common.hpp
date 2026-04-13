@@ -85,29 +85,26 @@ Args parse_args(int argc, char **argv, int rank);
 bool check_host(Mode mode, bool cuda_aware);
 std::vector<size_t> build_message_sizes(const Args &args, int rank);
 
-/* Общий CPU-таймер для one-to-one и all-to-all. */
-double monotonic_now_us();
-/* Общая свёртка samples -> avg/med/min/max/var/std для обеих схем. */
-void fill_stats6(const std::vector<double> &samples, double *out6);
+/* Обёртка над clock_gettime: возвращает время в микросекундах. */
+double clock_gettime_wrapper();
 /* Общие подписи рангов для pair/raw в one-to-one и all-to-all. */
 std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 											 int nproc, int host_len);
-std::string sanitize_label_for_raw_path(const std::string &lab);
 
 /* Заполняет ack по трем наборам samples; используют обе схемы. */
-void fill_ack_from_sender_triples(const std::vector<double> &samples_mpi_us,
-								  const std::vector<double> &samples_cpu_us,
-								  const std::vector<double> &samples_gpu_us,
-								  const Args &args, double *ack);
+void fill_ack(const std::vector<double> &samples_mpi_us,
+			  const std::vector<double> &samples_cpu_us,
+			  const std::vector<double> &samples_gpu_us, const Args &args,
+			  double *ack);
 
 /* Сохраняет raw samples одной пары src->dst; используют обе схемы. */
 void append_raw_samples(const Args &args, int rank, const Task &t,
 						const std::vector<std::string> &rank_labels,
 						const std::vector<double> &samples_us);
-/* Форматирует pair/pair_mpi/pair_cpu/pair_cuda; используют обе схемы. */
-std::string format_pair_line(const char *line_name,
-							 const std::string &src_label, const std::string &dst_label,
-							 double avg_us, double med_us, double min_us, double max_us,
-							 double var_us, double std_us, StatOut stat);
+/* Печатает строку pair/pair_mpi/pair_cpu/pair_cuda; используют обе схемы. */
+std::string print_pair_line(const char *line_name, const std::string &src_label,
+							const std::string &dst_label, double avg_us, double med_us,
+							double min_us, double max_us, double var_us, double std_us,
+							StatOut stat);
 
 } // namespace gpu_benchmark

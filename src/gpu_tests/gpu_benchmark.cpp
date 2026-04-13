@@ -1,6 +1,6 @@
-#include "gpu_benchmark_all_to_all.hpp"
-#include "gpu_benchmark_common.hpp"
-#include "gpu_benchmark_one_to_one.hpp"
+#include "gpu_all_to_all.hpp"
+#include "gpu_common.hpp"
+#include "gpu_one_to_one.hpp"
 
 #include <fstream>   // std::ofstream — запись текстового вывода в --out
 #include <iomanip>   // std::setprecision, std::fixed — формат чисел в выводе
@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
 	if (rank == 0 && !args.sweep_sizes && !args.out_path.empty()) {
 		out_file = std::make_unique<std::ofstream>(args.out_path);
 		if (!out_file->is_open()) {
-			std::cerr << "gpu_benchmark: cannot open --out " << args.out_path << "\n";
+			std::cerr << "gpu: cannot open --out " << args.out_path << "\n";
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
 	}
@@ -159,6 +159,7 @@ int main(int argc, char **argv) {
 
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
 
+	
 	NetcdfBundle nc{};
 	if (rank == 0 && args.sweep_sizes) {
 		nc = netcdf_open_bundle(args.out_path, args.begin_nbytes, args.end_nbytes,

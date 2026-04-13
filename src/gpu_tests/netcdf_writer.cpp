@@ -20,13 +20,13 @@ namespace {
 int clamp_size_to_int_or_abort(size_t v, const char *name) {
 	if (v <= static_cast<size_t>(std::numeric_limits<int>::max()))
 		return static_cast<int>(v);
-	std::cerr << "gpu_benchmark: value for " << name
+	std::cerr << "gpu: value for " << name
 			  << " does not fit into int: " << v << "\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return 0;
 }
 
-/* Значения data_type внутри NetCDF для gpu_benchmark (суффиксы файлов — отдельно). */
+/* Значения data_type внутри NetCDF для gpu (суффиксы файлов — отдельно). */
 enum : int {
 	GPU_NC_AVG = 1,
 	GPU_NC_VAR = 2,
@@ -81,7 +81,7 @@ NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
 		const int rc = create_netcdf_header_with_suffix(datatype, &p, suffix,
 														&file_id, &data_id);
 		if (rc != 0) {
-			std::cerr << "gpu_benchmark: failed to create NetCDF for " << label
+			std::cerr << "gpu: failed to create NetCDF for " << label
 					  << " with prefix '" << prefix << "', rc=" << rc << "\n";
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
@@ -113,7 +113,7 @@ void netcdf_store_pair(NetcdfBundle &nc, int src_rank, int dst_rank,
 		return;
 	const size_t idx = static_cast<size_t>(src_rank) * static_cast<size_t>(nc.nproc) +
 					   static_cast<size_t>(dst_rank);
-	/* metric[0..5]: mean, median, min, max, var, std (как в fill_stats6). */
+	/* metric[0..5]: mean, median, min, max, var, std (как в fill_ack/fill_stats). */
 	nc.avg[idx] = metric[0];
 	nc.med[idx] = metric[1];
 	nc.min[idx] = metric[2];
@@ -131,7 +131,7 @@ void netcdf_write_matrix_slice(NetcdfBundle &nc, int matrix_idx) {
 		const int rc = netcdf_write_matrix(file_id, data_id, matrix_idx, nc.nproc,
 										   nc.nproc, matrix.data());
 		if (rc != 0) {
-			std::cerr << "gpu_benchmark: failed to write NetCDF matrix " << label
+			std::cerr << "gpu: failed to write NetCDF matrix " << label
 					  << ", rc=" << rc << "\n";
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}

@@ -1,4 +1,4 @@
-#include "gpu_benchmark_all_to_all.hpp"
+#include "gpu_all_to_all.hpp"
 
 #include <algorithm>     // std::max
 #include <cuda_runtime.h> // CUDA: устройство, события, cudaMalloc, ...
@@ -69,7 +69,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 
 			char *send_buf = send_bufs[static_cast<size_t>(dst_rank)];
 			const double t0_mpi = MPI_Wtime();
-			const double t0_clk = monotonic_now_us();
+			const double t0_clk = clock_gettime_wrapper();
 			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 
 			if (check_host) {
@@ -94,7 +94,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop),
 						"cudaEventElapsedTime");
 				const double t1_mpi = MPI_Wtime();
-				const double t1_clk = monotonic_now_us();
+				const double t1_clk = clock_gettime_wrapper();
 				(*samples_mpi_us)[static_cast<size_t>(dst_rank)].push_back(
 					(t1_mpi - t0_mpi) * 1e6);
 				(*samples_cpu_us)[static_cast<size_t>(dst_rank)].push_back(t1_clk - t0_clk);
@@ -187,7 +187,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			}
 
 			if (rank == src_rank) {
-				fill_ack_from_sender_triples(samples_mpi_us[static_cast<size_t>(dst_rank)],
+				fill_ack(samples_mpi_us[static_cast<size_t>(dst_rank)],
 											 samples_cpu_us[static_cast<size_t>(dst_rank)],
 											 samples_gpu_us[static_cast<size_t>(dst_rank)], args,
 											 ack.data());
@@ -257,20 +257,20 @@ void schedule_all_to_all(
 				netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 			if (src_rank == dst_rank) {
 				if (args.timer == Timer::All) {
-					mirror(format_pair_line("pair_mpi",
+					mirror(print_pair_line("pair_mpi",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)],
 											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-					mirror(format_pair_line("pair_cpu",
+					mirror(print_pair_line("pair_cpu",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)],
 											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-					mirror(format_pair_line("pair_cuda",
+					mirror(print_pair_line("pair_cuda",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)],
 											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
 				} else {
-					mirror(format_pair_line("pair",
+					mirror(print_pair_line("pair",
 											rank_labels[static_cast<size_t>(src_rank)],
 											rank_labels[static_cast<size_t>(dst_rank)],
 											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
@@ -279,23 +279,23 @@ void schedule_all_to_all(
 			}
 
 			if (args.timer == Timer::All) {
-				mirror(format_pair_line("pair_mpi",
+				mirror(print_pair_line("pair_mpi",
 										rank_labels[static_cast<size_t>(src_rank)],
 										rank_labels[static_cast<size_t>(dst_rank)], metric[13],
 										metric[14], metric[15], metric[16],
 										metric[17], metric[18], args.stat_out));
-				mirror(format_pair_line("pair_cpu",
+				mirror(print_pair_line("pair_cpu",
 										rank_labels[static_cast<size_t>(src_rank)],
 										rank_labels[static_cast<size_t>(dst_rank)], metric[7],
 										metric[8], metric[9], metric[10],
 										metric[11], metric[12], args.stat_out));
-				mirror(format_pair_line("pair_cuda",
+				mirror(print_pair_line("pair_cuda",
 										rank_labels[static_cast<size_t>(src_rank)],
 										rank_labels[static_cast<size_t>(dst_rank)], metric[19],
 										metric[20], metric[21], metric[22],
 										metric[23], metric[24], args.stat_out));
 			} else {
-				mirror(format_pair_line("pair",
+				mirror(print_pair_line("pair",
 										rank_labels[static_cast<size_t>(src_rank)],
 										rank_labels[static_cast<size_t>(dst_rank)], metric[0],
 										metric[1], metric[2], metric[3],
