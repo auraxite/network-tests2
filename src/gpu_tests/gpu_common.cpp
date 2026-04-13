@@ -244,7 +244,12 @@ Args parse_args(int argc, char **argv, int rank) {
 		a.end_nbytes = a.nbytes;
 		a.step_nbytes = 1;
 	}
-	if (a.begin_nbytes == 0 || a.end_nbytes == 0 || a.step_nbytes == 0) {
+	if (!a.sweep_sizes && a.nbytes == 0) {
+		if (rank == 0)
+			std::cerr << "--bytes must be > 0\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+	if (a.sweep_sizes && (a.begin_nbytes == 0 || a.end_nbytes == 0 || a.step_nbytes == 0)) {
 		if (rank == 0)
 			std::cerr << "--bytes-begin, --bytes-end and --bytes-step must be > 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);

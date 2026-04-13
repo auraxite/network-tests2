@@ -25,6 +25,7 @@ fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
 export UCX_MEMTYPE_CACHE=n
+export OMPI_MCA_pml=ucx
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/sweep_out"
@@ -65,23 +66,25 @@ for REP in "${REPS[@]}"; do
 	for MODE in "${MODES[@]}"; do
 		for CASE in "${SWEEPS[@]}"; do
 			IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
+			if (( BYTES_BEGIN <= 0 || BYTES_END <= 0 || BYTES_STEP <= 0 )); then
+				echo "invalid SWEEP '${CASE}': bytes-begin/end/step must be > 0" >&2
+				exit 1
+			fi
 
 			OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
 			echo "RUN rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 
-			if srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+			srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
 				--bytes-begin "${BYTES_BEGIN}" \
 				--bytes-end "${BYTES_END}" \
 				--bytes-step "${BYTES_STEP}" \
 				--warmup "${WARMUP}" \
 				--iters "${ITERS}" \
 				--mode "${MODE}" \
-				--out "${OUT_PREFIX}"; then
-				echo "OK  rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
-			else
-				echo "FAIL rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}" >&2
-			fi
+				--out "${OUT_PREFIX}"
+
+			echo "OK  rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
 		done
 	done
 done

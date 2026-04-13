@@ -25,6 +25,7 @@ fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
 export UCX_MEMTYPE_CACHE=n
+export OMPI_MCA_pml=ucx
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/grid_out"
@@ -72,16 +73,14 @@ for REP in "${REPS[@]}"; do
 			echo "RUN rep=${REP} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_TXT}"
 
-			if srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+			srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \
 				--iters "${ITERS}" \
 				--mode "${MODE}" \
-				--out "${OUT_TXT}"; then
-				echo "OK  rep=${REP} mode=${MODE} bytes=${BYTES}"
-			else
-				echo "FAIL rep=${REP} mode=${MODE} bytes=${BYTES}" >&2
-			fi
+				--out "${OUT_TXT}"
+
+			echo "OK  rep=${REP} mode=${MODE} bytes=${BYTES}"
 		done
 	done
 done
