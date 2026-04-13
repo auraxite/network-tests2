@@ -57,30 +57,44 @@ CASES=(
 	"4000000:6400:64"
 	"32000000:1600:16"
 )
-
 REPS=(1)
 MODES=(
 	auto
 	host
 )
+SCHEMES=(
+	one_to_one
+	all_to_all
+)
 
 for REP in "${REPS[@]}"; do
 	for MODE in "${MODES[@]}"; do
-		for CASE in "${CASES[@]}"; do
-			IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+		for SCHEME in "${SCHEMES[@]}"; do
+			for CASE in "${CASES[@]}"; do
+				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-			OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-			echo "RUN rep=${REP} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-			echo "  -> ${OUT_TXT}"
+				#
+				#
+				#
+				# auto гоняем только на размере 500000; host — на всех размерах.
+				if [[ "${MODE}" == "auto" && "${BYTES}" != "500000" ]]; then
+					continue
+				fi
 
-			srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
-				--bytes "${BYTES}" \
-				--warmup "${WARMUP}" \
-				--iters "${ITERS}" \
-				--mode "${MODE}" \
-				--out "${OUT_TXT}"
+				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_s${SCHEME}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+				echo "RUN rep=${REP} mode=${MODE} scheme=${SCHEME} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+				echo "  -> ${OUT_TXT}"
 
-			echo "OK  rep=${REP} mode=${MODE} bytes=${BYTES}"
+				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+					--bytes "${BYTES}" \
+					--warmup "${WARMUP}" \
+					--iters "${ITERS}" \
+					--mode "${MODE}" \
+					--scheme "${SCHEME}" \
+					--out "${OUT_TXT}"
+
+				echo "OK  rep=${REP} mode=${MODE} scheme=${SCHEME} bytes=${BYTES}"
+			done
 		done
 	done
 done

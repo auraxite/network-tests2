@@ -25,7 +25,7 @@ case "${1:-}" in
 srun|remote)
 	SRUN_NODES="${SRUN_NODES:-1}"
 	SRUN_GPUS="${SRUN_GPUS:-1}"
-	SRUN_TIME="${SRUN_TIME:-00:30:00}"
+	SRUN_TIME="${SRUN_TIME:-00:05:00}"
 	SRUN_PART=""
 	if [ -n "${SRUN_PARTITION:-}" ]; then
 		SRUN_PART="-p $SRUN_PARTITION"

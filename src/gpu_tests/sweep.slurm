@@ -61,30 +61,32 @@ MODES=(
 	auto
 	host
 )
+SCHEMES=(
+	one_to_one
+)
 
 for REP in "${REPS[@]}"; do
 	for MODE in "${MODES[@]}"; do
-		for CASE in "${SWEEPS[@]}"; do
-			IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
-			if (( BYTES_BEGIN <= 0 || BYTES_END <= 0 || BYTES_STEP <= 0 )); then
-				echo "invalid SWEEP '${CASE}': bytes-begin/end/step must be > 0" >&2
-				exit 1
-			fi
+		for SCHEME in "${SCHEMES[@]}"; do
+			for CASE in "${SWEEPS[@]}"; do
+				IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
 
-			OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
-			echo "RUN rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
-			echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
+				OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_s${SCHEME}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
+				echo "RUN rep=${REP} mode=${MODE} scheme=${SCHEME} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
+				echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 
-			srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
-				--bytes-begin "${BYTES_BEGIN}" \
-				--bytes-end "${BYTES_END}" \
-				--bytes-step "${BYTES_STEP}" \
-				--warmup "${WARMUP}" \
-				--iters "${ITERS}" \
-				--mode "${MODE}" \
-				--out "${OUT_PREFIX}"
+				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+					--bytes-begin "${BYTES_BEGIN}" \
+					--bytes-end "${BYTES_END}" \
+					--bytes-step "${BYTES_STEP}" \
+					--warmup "${WARMUP}" \
+					--iters "${ITERS}" \
+					--mode "${MODE}" \
+					--scheme "${SCHEME}" \
+					--out "${OUT_PREFIX}"
 
-			echo "OK  rep=${REP} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
+				echo "OK  rep=${REP} mode=${MODE} scheme=${SCHEME} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
+			done
 		done
 	done
 done
