@@ -33,7 +33,7 @@ mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
-SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '___')"
+SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"
 
 echo "=== clustbench env ==="
 echo "host: $(hostname -s)"
@@ -73,7 +73,7 @@ for REP in "${REPS[@]}"; do
 			for CASE in "${CASES[@]}"; do
 				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_s${SCHEME}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${MODE}_${SCHEME}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
 				echo "RUN rep=${REP} mode=${MODE} scheme=${SCHEME} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 				echo "  -> ${OUT_TXT}"
 

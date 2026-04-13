@@ -33,7 +33,7 @@ mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
-SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '___')"
+SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"
 
 echo "=== clustbench env ==="
 echo "host: $(hostname -s)"
@@ -58,7 +58,7 @@ SWEEPS=(
 
 REPS=(1)
 MODES=(
-	auto
+	# auto
 	host
 )
 SCHEMES=(
@@ -72,7 +72,7 @@ for REP in "${REPS[@]}"; do
 			for CASE in "${SWEEPS[@]}"; do
 				IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
 
-				OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_m${MODE}_s${SCHEME}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
+				OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${MODE}_${SCHEME}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
 				echo "RUN rep=${REP} mode=${MODE} scheme=${SCHEME} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
 				echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 
