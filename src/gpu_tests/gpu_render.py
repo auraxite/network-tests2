@@ -7,7 +7,7 @@ from __future__ import annotations
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
   -o, --out-dir    output directory for PNG files
-  -t, --timer      choose timer source: mpi | cpu | cuda
+  -t, --timer      choose timer source: mpi | cpu | cuda (default: cuda)
   --sort, --sorted enable raw sorting pipeline (default: none)
 """
 
@@ -669,7 +669,7 @@ def main() -> int:
 		"--timer",
 		dest="timer_source",
 		choices=PAIR_TIMER_SOURCES,
-		default="mpi",
+		default="cuda",
 		help="Источник времени в txt: mpi | cpu | cuda",
 	)
 	p.add_argument(
