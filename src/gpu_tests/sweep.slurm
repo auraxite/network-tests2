@@ -53,7 +53,7 @@ ldd "$OMPI_PREFIX/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 echo "======================"
 
 SWEEPS=(
-	"8000:64000:8000:8000:80"
+	"4000:64000:8000:4000:80"
 )
 
 REPS=(1)

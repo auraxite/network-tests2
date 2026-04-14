@@ -505,8 +505,8 @@ def draw_heatmap(
 
 	annotate_cells(ax, im, matrix, metric)
 	for pos in node_bounds:
-		ax.axvline(pos, color="#111111", linewidth=1.4, alpha=0.55)
-		ax.axhline(pos, color="#111111", linewidth=1.4, alpha=0.55)
+		ax.axvline(pos, color="#000000", linewidth=0.8, alpha=1.0)
+		ax.axhline(pos, color="#000000", linewidth=0.8, alpha=1.0)
 
 	cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 	cbar.set_label(METRIC_CBAR_LABEL.get(metric, "мкс"), rotation=0, labelpad=12)
@@ -540,8 +540,8 @@ def render_one_text(
 
 	mats = fill_matrices(n, pairs)
 	rank_hosts = rank_hosts_from_meta(meta, n)
-	# Метки на осях: gpu0 … gpu{n-1} (матрица по рангам; границы узлов сохраняем по hostname).
-	tick_labels = [f"gpu{i}" for i in range(n)]
+	# Метки на осях: номер_узла.номер_гпу (если есть host map), иначе gpu0..gpuN.
+	tick_labels = axis_labels_by_node(rank_hosts) if rank_hosts else [f"gpu{i}" for i in range(n)]
 	if rank_hosts:
 		node_bounds = node_boundaries(rank_hosts)
 	else:

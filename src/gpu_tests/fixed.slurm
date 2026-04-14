@@ -4,9 +4,9 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=clustbench-%j.out
 #SBATCH --error=clustbench-%j.err
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --ntasks=8
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=1
 
@@ -59,7 +59,7 @@ CASES=(
 )
 REPS=(1)
 MODES=(
-	auto
+	# auto
 	host
 )
 SCHEMES=(

@@ -1,9 +1,11 @@
 #include "netcdf_writer.h"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <iostream>
 #include <mpi.h>
+#include <netcdf.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +26,28 @@ int clamp_size_to_int_or_abort(size_t v, const char *name) {
 			  << " does not fit into int: " << v << "\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return 0;
+}
+
+void set_units_us_or_abort(int file_id, int data_id, const char *label) {
+	const char *units_text = u8"мкс";
+	int rc = nc_redef(file_id);
+	if (rc != NC_NOERR) {
+		std::cerr << "gpu: failed to enter redefine mode for " << label
+				  << ", rc=" << rc << " (" << nc_strerror(rc) << ")\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+	rc = nc_put_att_text(file_id, data_id, "units", std::strlen(units_text), units_text);
+	if (rc != NC_NOERR) {
+		std::cerr << "gpu: failed to set units attribute for " << label
+				  << ", rc=" << rc << " (" << nc_strerror(rc) << ")\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+	rc = nc_enddef(file_id);
+	if (rc != NC_NOERR) {
+		std::cerr << "gpu: failed to leave redefine mode for " << label
+				  << ", rc=" << rc << " (" << nc_strerror(rc) << ")\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
 }
 
 /* Значения data_type внутри NetCDF для gpu (суффиксы файлов — отдельно). */
@@ -85,6 +109,7 @@ NetcdfBundle netcdf_open_bundle(const std::string &out_path, size_t nbytes,
 					  << " with prefix '" << prefix << "', rc=" << rc << "\n";
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
+		set_units_us_or_abort(file_id, data_id, label);
 	};
 	create_one(GPU_NC_AVG, nc.avg_file_id, nc.avg_data_id, "avg", "avg");
 	create_one(GPU_NC_VAR, nc.var_file_id, nc.var_data_id, "var", "var");
