@@ -53,13 +53,13 @@ ldd "$OMPI_PREFIX/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 echo "======================"
 
 CASES=(
-	"500000:12800:128"
-	"4000000:6400:64"
-	"32000000:1600:16"
+	"500000:6400:64"
+	"4000000:1600:16"
+	"32000000:400:4"
 )
 REPS=(1)
 MODES=(
-	# auto
+	auto
 	host
 )
 SCHEMES=(

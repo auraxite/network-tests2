@@ -53,33 +53,57 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost");
 	debug_log(args.debug, rank, "one_to_one ALLOC_DONE");
 
+	int current_iter = -1;
+	const char *current_phase = "none";
 	auto do_one = [&]() {
 		if (is_sender) {
 			if (check_host) {
-				debug_log(args.debug, rank, "one_to_one D2H_BEGIN");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one D2H_BEGIN phase=" << current_phase
+						<< " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 				cuda_ok(cudaMemcpy(h_buf, d_send, count, cudaMemcpyDeviceToHost), "D2H");
-				debug_log(args.debug, rank, "one_to_one D2H_DONE");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one D2H_DONE phase=" << current_phase
+						<< " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_SEND_BEGIN dst=" << t.dst_rank
 						<< " tag=" << kOneToOneDataTag << " bytes=" << count
-						<< " path=host";
+						<< " path=host"
+						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
 				mpi_ok(MPI_Send(h_buf, count, MPI_BYTE, t.dst_rank, kOneToOneDataTag, MPI_COMM_WORLD),
 					   "MPI_Send (host staging)");
-				debug_log(args.debug, rank, "one_to_one MPI_SEND_DONE path=host");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one MPI_SEND_DONE path=host"
+						<< " phase=" << current_phase << " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 			} else {
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_SEND_BEGIN dst=" << t.dst_rank
 						<< " tag=" << kOneToOneDataTag << " bytes=" << count
-						<< " path=device";
+						<< " path=device"
+						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
 				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, kOneToOneDataTag, MPI_COMM_WORLD),
 					   "MPI_Send (device buffer)");
-				debug_log(args.debug, rank, "one_to_one MPI_SEND_DONE path=device");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one MPI_SEND_DONE path=device"
+						<< " phase=" << current_phase << " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 			}
 		}
 		if (is_receiver) {
@@ -89,28 +113,50 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 					std::ostringstream oss;
 					oss << "one_to_one MPI_RECV_BEGIN src=" << t.src_rank
 						<< " tag=" << kOneToOneDataTag << " bytes=" << count
-						<< " path=host";
+						<< " path=host"
+						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
 				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, kOneToOneDataTag, MPI_COMM_WORLD,
 								&st),
 					   "MPI_Recv (host staging)");
-				debug_log(args.debug, rank, "one_to_one MPI_RECV_DONE path=host");
-				debug_log(args.debug, rank, "one_to_one H2D_BEGIN");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one MPI_RECV_DONE path=host"
+						<< " phase=" << current_phase << " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
+				{
+					std::ostringstream oss;
+					oss << "one_to_one H2D_BEGIN phase=" << current_phase
+						<< " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 				cuda_ok(cudaMemcpy(d_recv, h_buf, count, cudaMemcpyHostToDevice), "H2D");
-				debug_log(args.debug, rank, "one_to_one H2D_DONE");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one H2D_DONE phase=" << current_phase
+						<< " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 			} else {
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_RECV_BEGIN src=" << t.src_rank
 						<< " tag=" << kOneToOneDataTag << " bytes=" << count
-						<< " path=device";
+						<< " path=device"
+						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
 				mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, kOneToOneDataTag, MPI_COMM_WORLD,
 								&st),
 					   "MPI_Recv (device buffer)");
-				debug_log(args.debug, rank, "one_to_one MPI_RECV_DONE path=device");
+				{
+					std::ostringstream oss;
+					oss << "one_to_one MPI_RECV_DONE path=device"
+						<< " phase=" << current_phase << " idx=" << current_iter;
+					debug_log(args.debug, rank, oss.str());
+				}
 			}
 		}
 	};
@@ -130,12 +176,17 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	samples_gpu_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
 
 	debug_log(args.debug, rank, "one_to_one WARMUP_BEGIN");
-	for (int i = 0; i < args.warmup; ++i)
+	current_phase = "warmup";
+	for (int i = 0; i < args.warmup; ++i) {
+		current_iter = i;
 		do_one();
+	}
 	debug_log(args.debug, rank, "one_to_one WARMUP_DONE");
 	
 	debug_log(args.debug, rank, "one_to_one ITERS_BEGIN");
+	current_phase = "iters";
 	for (int i = 0; i < args.iters; ++i) {
+		current_iter = i;
 		{
 			std::ostringstream oss;
 			oss << "one_to_one ITER_BEGIN idx=" << i;

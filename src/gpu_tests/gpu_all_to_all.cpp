@@ -72,7 +72,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				std::ostringstream oss;
 				oss << "all_to_all IRECV_POST src=" << src_rank
 					<< " tag=" << alltoall_pair_tag(src_rank, rank, nproc)
-					<< " bytes=" << count;
+					<< " bytes=" << count << " idx=" << iter_idx;
 				debug_log(args.debug, rank, oss.str());
 			}
 			mpi_ok(MPI_Irecv(recv_buf, count, MPI_BYTE, src_rank,
@@ -98,37 +98,54 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			if (check_host) {
 				{
 					std::ostringstream oss;
-					oss << "all_to_all D2H_BEGIN dst=" << dst_rank << " bytes=" << args.nbytes;
+					oss << "all_to_all D2H_BEGIN dst=" << dst_rank
+						<< " bytes=" << args.nbytes << " idx=" << iter_idx;
 					debug_log(args.debug, rank, oss.str());
 				}
 				cuda_ok(cudaMemcpy(send_buf, d_send, args.nbytes, cudaMemcpyDeviceToHost),
 						"D2H(all_to_all)");
-				debug_log(args.debug, rank, "all_to_all D2H_DONE");
+				{
+					std::ostringstream oss;
+					oss << "all_to_all D2H_DONE dst=" << dst_rank << " idx=" << iter_idx;
+					debug_log(args.debug, rank, oss.str());
+				}
 				{
 					std::ostringstream oss;
 					oss << "all_to_all SEND_BEGIN dst=" << dst_rank
 						<< " tag=" << alltoall_pair_tag(rank, dst_rank, nproc)
-						<< " bytes=" << count << " path=host";
+						<< " bytes=" << count << " path=host"
+						<< " idx=" << iter_idx;
 					debug_log(args.debug, rank, oss.str());
 				}
 				mpi_ok(MPI_Send(send_buf, count, MPI_BYTE, dst_rank,
 								alltoall_pair_tag(rank, dst_rank, nproc),
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all host)");
-				debug_log(args.debug, rank, "all_to_all SEND_DONE path=host");
+				{
+					std::ostringstream oss;
+					oss << "all_to_all SEND_DONE path=host dst=" << dst_rank
+						<< " idx=" << iter_idx;
+					debug_log(args.debug, rank, oss.str());
+				}
 			} else {
 				{
 					std::ostringstream oss;
 					oss << "all_to_all SEND_BEGIN dst=" << dst_rank
 						<< " tag=" << alltoall_pair_tag(rank, dst_rank, nproc)
-						<< " bytes=" << count << " path=device";
+						<< " bytes=" << count << " path=device"
+						<< " idx=" << iter_idx;
 					debug_log(args.debug, rank, oss.str());
 				}
 				mpi_ok(MPI_Send(send_buf, count, MPI_BYTE, dst_rank,
 								alltoall_pair_tag(rank, dst_rank, nproc),
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all dev)");
-				debug_log(args.debug, rank, "all_to_all SEND_DONE path=device");
+				{
+					std::ostringstream oss;
+					oss << "all_to_all SEND_DONE path=device dst=" << dst_rank
+						<< " idx=" << iter_idx;
+					debug_log(args.debug, rank, oss.str());
+				}
 			}
 
 			cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
@@ -157,22 +174,34 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			{
 				std::ostringstream oss;
 				oss << "all_to_all WAIT_RECV_BEGIN src=" << src_rank
-					<< " tag=" << alltoall_pair_tag(src_rank, rank, nproc);
+					<< " tag=" << alltoall_pair_tag(src_rank, rank, nproc)
+					<< " idx=" << iter_idx;
 				debug_log(args.debug, rank, oss.str());
 			}
 			mpi_ok(MPI_Wait(&recv_req[static_cast<size_t>(src_rank)], MPI_STATUS_IGNORE),
 				   "MPI_Wait(all_to_all recv)");
-			debug_log(args.debug, rank, "all_to_all WAIT_RECV_DONE");
+			{
+				std::ostringstream oss;
+				oss << "all_to_all WAIT_RECV_DONE src=" << src_rank
+					<< " idx=" << iter_idx;
+				debug_log(args.debug, rank, oss.str());
+			}
 			if (check_host) {
 				{
 					std::ostringstream oss;
-					oss << "all_to_all H2D_BEGIN src=" << src_rank << " bytes=" << args.nbytes;
+					oss << "all_to_all H2D_BEGIN src=" << src_rank
+						<< " bytes=" << args.nbytes << " idx=" << iter_idx;
 					debug_log(args.debug, rank, oss.str());
 				}
 				cuda_ok(cudaMemcpy(d_recv, recv_bufs[static_cast<size_t>(src_rank)], args.nbytes,
 								   cudaMemcpyHostToDevice),
 						"H2D(all_to_all)");
-				debug_log(args.debug, rank, "all_to_all H2D_DONE");
+				{
+					std::ostringstream oss;
+					oss << "all_to_all H2D_DONE src=" << src_rank
+						<< " idx=" << iter_idx;
+					debug_log(args.debug, rank, oss.str());
+				}
 			}
 		}
 		{
