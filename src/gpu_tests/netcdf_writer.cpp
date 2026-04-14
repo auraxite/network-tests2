@@ -29,7 +29,7 @@ int clamp_size_to_int_or_abort(size_t v, const char *name) {
 }
 
 void set_units_us_or_abort(int file_id, int data_id, const char *label) {
-	const char *units_text = u8"мкс";
+	const char *units_text = "us";
 	int rc = nc_redef(file_id);
 	if (rc != NC_NOERR) {
 		std::cerr << "gpu: failed to enter redefine mode for " << label
