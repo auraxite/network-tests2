@@ -27,10 +27,39 @@ OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
 NETCDF_PATH="${NETCDF_PATH:-$HOME/opt/netcdf-c-4.9.2}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
-TIMER="${TIMER:-cuda}"
-SIZES=(${SIZES:-sender receiver})
+TIMERS=(
+	all
+	mpi
+	cpu
+	cuda
+)
+SIDES=(
+	sender
+	receiver
+)
 
 set -euo pipefail
+
+# Запуск в одной Slurm-задаче:
+# - по всем таймерам/сторонам (по умолчанию),
+# - либо только по одному, если передать TIMER и/или SIDE через env.
+if [[ -n "${TIMER:-}" ]]; then
+	TIMERS=("${TIMER}")
+fi
+if [[ -n "${SIDE:-}" ]]; then
+	case "${SIDE}" in
+		both)
+			SIDES=(sender receiver)
+			;;
+		sender|receiver)
+			SIDES=("${SIDE}")
+			;;
+		*)
+			echo "error: SIDE must be sender|receiver|both, got '${SIDE}'" >&2
+			exit 1
+			;;
+	esac
+fi
 
 export PATH="$OMPI_PATH/bin:$NETCDF_PATH/bin:$PATH"
 _LDPATH="$OMPI_PATH/lib:$NETCDF_PATH/lib:${CUDA_PATH}/lib64"
@@ -70,28 +99,30 @@ echo "======================"
 for REP in "${REPS[@]}"; do
 	for ENV in "${ENVS[@]}"; do
 		for MODE in "${MODES[@]}"; do
-			for SIZE in "${SIZES[@]}"; do
-				for CASE in "${RANGES[@]}"; do
-				IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
+			for TIMER in "${TIMERS[@]}"; do
+				for SIDE in "${SIDES[@]}"; do
+					for CASE in "${RANGES[@]}"; do
+						IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
 
-				OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_size${SIZE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
-				echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIZE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
-				echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
+						OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_size${SIDE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
+						echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIDE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
+						echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 
-				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
-					--bytes-begin "${BYTES_BEGIN}" \
-					--bytes-end "${BYTES_END}" \
-					--bytes-step "${BYTES_STEP}" \
-					--warmup "${WARMUP}" \
-					--iters "${ITERS}" \
-					--env "${ENV}" \
-					--mode "${MODE}" \
-					--timer "${TIMER}" \
-					--side "${SIZE}" \
-					--out "${OUT_PREFIX}" \
-					-d
+						srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+							--bytes-begin "${BYTES_BEGIN}" \
+							--bytes-end "${BYTES_END}" \
+							--bytes-step "${BYTES_STEP}" \
+							--warmup "${WARMUP}" \
+							--iters "${ITERS}" \
+							--env "${ENV}" \
+							--mode "${MODE}" \
+							--timer "${TIMER}" \
+							--side "${SIDE}" \
+							--out "${OUT_PREFIX}" \
+							-d
 
-				echo "OK  rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIZE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
+						echo "OK  rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIDE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
+					done
 				done
 			done
 		done
