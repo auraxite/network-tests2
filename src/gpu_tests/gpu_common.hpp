@@ -50,6 +50,7 @@ enum class Mode {
 enum class Side {
 	Sender,
 	Receiver,
+	Both,
 };
 
 /* Полный набор статистик одной пары src->dst; используют оба режима. */
@@ -112,7 +113,7 @@ void fill_ack(const std::vector<double> &samples_mpi_us,
 /* Сохраняет raw samples одной пары src->dst; используют оба режима. */
 void append_raw_samples(const Args &args, int rank, const Task &t,
 						const std::vector<std::string> &rank_labels,
-						const std::vector<double> &samples_us);
+						const std::vector<double> &samples_us, Side measured_side);
 /* Печатает строку pair/pair_mpi/pair_cpu/pair_cuda; используют оба режима. */
 std::string print_pair_line(const char *line_name, const std::string &src_label,
 							const std::string &dst_label, double avg_us, double med_us,

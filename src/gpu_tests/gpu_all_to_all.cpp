@@ -248,15 +248,18 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		case Timer::All:
 		case Timer::Mpi:
 			append_raw_samples(args, rank, t, rank_labels,
-							   samples_mpi_us[static_cast<size_t>(dst_rank)]);
+							   samples_mpi_us[static_cast<size_t>(dst_rank)],
+							   Side::Sender);
 			break;
 		case Timer::Cpu:
 			append_raw_samples(args, rank, t, rank_labels,
-							   samples_cpu_us[static_cast<size_t>(dst_rank)]);
+							   samples_cpu_us[static_cast<size_t>(dst_rank)],
+							   Side::Sender);
 			break;
 		case Timer::Cuda:
 			append_raw_samples(args, rank, t, rank_labels,
-							   samples_gpu_us[static_cast<size_t>(dst_rank)]);
+							   samples_gpu_us[static_cast<size_t>(dst_rank)],
+							   Side::Sender);
 			break;
 		}
 	}

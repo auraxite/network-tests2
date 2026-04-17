@@ -92,7 +92,9 @@ REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(r"(?:^|_)(one_to_one|all_to_all)(?:_|$)", re.I)
 TIMER_TAG_RE = re.compile(r"(?:^|_)(?:timer|t)(mpi|cpu|cuda|all)(?:_|$)", re.I)
-SIDE_TAG_RE = re.compile(r"(?:^|_)(?:size|side)?(sender|receiver|snd|rcv)(?:_|$)", re.I)
+SIDE_TAG_RE = re.compile(
+	r"(?:^|_)(?:size|side)?(sender|receiver|both|snd|rcv)(?:_|$)", re.I
+)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
 ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
