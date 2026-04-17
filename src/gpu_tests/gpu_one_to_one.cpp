@@ -9,16 +9,17 @@
 
 namespace gpu_benchmark {
 
-namespace {
-constexpr bool CollectRawSamplesOnReceiver = true; // false for sender
-}
-
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 									 bool check_host,
 									 const std::vector<std::string> &rank_labels) {
 	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
+	const bool collect_raw_samples_here =
+		(OneToOneConfig.raw_samples_collector_role ==
+		 RawSamplesCollectorRole::Receiver)
+			? is_receiver
+			: is_sender;
 	if (!is_sender && !is_receiver)
 		return ack;
 	if (t.src_rank == t.dst_rank) {
@@ -166,8 +167,9 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	std::vector<double> samples_gpu_us;
 	cudaEvent_t ev_start = nullptr;
 	cudaEvent_t ev_stop = nullptr;
-	if (is_sender) {
-		cuda_ok(cudaSetDevice(t.src_gpu), "cudaSetDevice(src timing)");
+	if (collect_raw_samples_here) {
+		const int timing_gpu = is_sender ? t.src_gpu : t.dst_gpu;
+		cuda_ok(cudaSetDevice(timing_gpu), "cudaSetDevice(timing)");
 		cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
 		cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
 	}
@@ -194,10 +196,10 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		}
 		const double t0_mpi = MPI_Wtime();
 		const double t0_clk = clock_gettime_wrapper();
-		if (is_sender)
+		if (collect_raw_samples_here)
 			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 		do_one();
-		if (is_sender) {
+		if (collect_raw_samples_here) {
 			cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
 			cuda_ok(cudaEventSynchronize(ev_stop), "cudaEventSynchronize(stop)");
 			float elapsed_ms = 0.0f;
@@ -216,8 +218,6 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		}
 	}
 	debug_log(args.debug, rank, "one_to_one ITERS_DONE");
-	const bool collect_raw_samples_here =
-		CollectRawSamplesOnReceiver? is_receiver : is_sender;
 	if (collect_raw_samples_here) {
 		switch (args.timer) {
 		case Timer::All:

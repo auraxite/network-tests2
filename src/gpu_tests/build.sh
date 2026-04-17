@@ -78,7 +78,7 @@ fi
 	-o "$REPO_GPU_TESTS/gpu" \
 	$RPATH \
 	-Wl,--no-as-needed \
-	-L"$OMPI_PATH/lib" -lmpi -lopen-rte -lopen-pal \
+	-L"$OMPI_PATH/lib" -lmpi -lopen-pal \
 	-Wl,--as-needed \
 	-L"$NETCDF_PATH/lib" -lnetcdf \
 	-L"$CUDA_PATH/lib64" -lcudart

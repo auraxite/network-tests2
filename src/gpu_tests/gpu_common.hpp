@@ -46,6 +46,19 @@ enum class Mode {
 	AllToAll,
 };
 
+/* Где собирать raw samples в one-to-one: на sender или receiver. */
+enum class RawSamplesCollectorRole {
+	Sender,
+	Receiver,
+};
+
+struct OneToOneConfig {
+	RawSamplesCollectorRole raw_samples_collector_role =
+		RawSamplesCollectorRole::Receiver;
+};
+
+inline constexpr OneToOneConfig OneToOneConfig{};
+
 /* Полный набор статистик одной пары src->dst; используют оба режима. */
 constexpr int ACK_FIELDS = 25;
 
