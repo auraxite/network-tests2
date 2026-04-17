@@ -23,10 +23,11 @@ from typing import Any
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import Colormap, LinearSegmentedColormap
+from matplotlib.colors import Colormap, LinearSegmentedColormap, ListedColormap
 
 
 PAIR_TIMER_SOURCES = ("mpi", "cpu", "cuda")
+RENDER_STYLES = ("heatmap", "plain")
 
 _PAIR_HEAD = (
 	r"^pair(?:_(mpi|cpu|cuda|gpu))? (\S+) -> (\S+) "
@@ -84,9 +85,14 @@ WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
 ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
 TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
 TIMER_LINE_RE = re.compile(r"^Timer:\s*(\S+)\s*$")
+SIZE_LINE_RE = re.compile(r"^Size:\s*(\S+)\s*$")
+SIDE_LINE_RE = re.compile(r"^Side:\s*(\S+)\s*$")
+MEASURE_SIDE_LINE_RE = re.compile(r"^MeasureSide:\s*(\S+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(r"(?:^|_)(one_to_one|all_to_all)(?:_|$)", re.I)
+TIMER_TAG_RE = re.compile(r"(?:^|_)(?:timer|t)(mpi|cpu|cuda|all)(?:_|$)", re.I)
+SIDE_TAG_RE = re.compile(r"(?:^|_)(?:size|side)?(sender|receiver|snd|rcv)(?:_|$)", re.I)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
 ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
@@ -258,8 +264,13 @@ def parse_gpu_one_to_one_text(
 		elif (m := TOTAL_TIME_LINE_RE.match(line)):
 			meta["total_elapsed_s"] = float(m.group(1))
 		elif (m := TIMER_LINE_RE.match(line)):
-			ts = m.group(1).lower()
-			meta["timer"] = "cuda" if ts == "gpu" else ts
+			meta["timer"] = normalize_timer_token(m.group(1))
+		elif (m := SIZE_LINE_RE.match(line)):
+			meta["size"] = normalize_size_token(m.group(1))
+		elif (m := SIDE_LINE_RE.match(line)):
+			meta["size"] = normalize_size_token(m.group(1))
+		elif (m := MEASURE_SIDE_LINE_RE.match(line)):
+			meta["size"] = normalize_size_token(m.group(1))
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m and pair_source_allowed(m, timer_source, meta):
@@ -387,11 +398,29 @@ def format_size_mb_decimal(b: int) -> str:
 	return f"size: {text} MB"
 
 
-def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
+def normalize_timer_token(value: str) -> str:
+	v = value.strip().lower()
+	if v == "gpu":
+		return "cuda"
+	return v
+
+
+def normalize_size_token(value: str) -> str:
+	v = value.strip().lower()
+	if v in ("sender", "snd"):
+		return "snd"
+	if v in ("receiver", "rcv"):
+		return "rcv"
+	return v
+
+
+def run_tags(source_path: Path | None, meta: dict[str, Any], timer_source: str) -> dict[str, str]:
 	stem = source_path.stem if source_path is not None else ""
 	env_meta = str(meta.get("env", "unknown")).lower()
 	env_default = "host" if env_meta == "host" else ("auto" if env_meta == "gpudirect" else env_meta)
 	mode_default = str(meta.get("mode", "unknown")).lower()
+	timer_default = normalize_timer_token(str(meta.get("timer", timer_source)))
+	size_default = normalize_size_token(str(meta.get("size", "na")))
 
 	def pick(pattern: re.Pattern[str], fallback: str) -> str:
 		m = pattern.search(stem)
@@ -401,6 +430,8 @@ def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 		"rep": pick(REP_TAG_RE, "na"),
 		"env": pick(ENV_TAG_RE, env_default),
 		"mode": pick(MODE_TAG_RE, mode_default),
+		"timer": normalize_timer_token(pick(TIMER_TAG_RE, timer_default)),
+		"size": normalize_size_token(pick(SIDE_TAG_RE, size_default)),
 		"b": pick(BYTES_TAG_RE, str(meta.get("bytes", "na"))),
 		"w": pick(WARMUP_TAG_RE, str(meta.get("warmup", "na"))),
 		"i": pick(ITERS_TAG_RE, str(meta.get("iters", "na"))),
@@ -430,6 +461,7 @@ def param_block(
 	meta: dict[str, Any], tags: dict[str, str], total_time: str, creation_time: str
 ) -> str:
 	lines: list[str] = []
+	lines.append(f"timer: {tags['timer']}  size: {tags['size']}")
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
 	lines.append(f"b: {tags['b']} байт")
 	lines.append(f"сгенерировано: {creation_time}")
@@ -450,7 +482,9 @@ def format_cell_value(metric: str, v: float) -> str:
 	return f"{v:.3f}"
 
 
-def annotate_cells(ax: Any, im: Any, matrix: np.ndarray, metric: str) -> None:
+def annotate_cells(
+	ax: Any, matrix: np.ndarray, metric: str, *, text_color: str = "white"
+) -> None:
 	n = matrix.shape[0]
 	fontsize = max(5, min(9, int(90 / max(1, n))))
 	for i in range(matrix.shape[0]):
@@ -465,7 +499,7 @@ def annotate_cells(ax: Any, im: Any, matrix: np.ndarray, metric: str) -> None:
 				ha="center",
 				va="center",
 				fontsize=fontsize,
-				color="white",
+				color=text_color,
 			)
 
 
@@ -481,6 +515,7 @@ def draw_heatmap(
 	dpi: int,
 	tick_labels: list[str],
 	node_bounds: list[float],
+	render_style: str,
 ) -> None:
 	labels = tick_labels
 	axis_fs = 9
@@ -490,9 +525,23 @@ def draw_heatmap(
 
 	masked = np.ma.masked_invalid(matrix)
 	# origin="lower": ряд/ранг 0 внизу, ось ординат растёт снизу вверх (как привычные координаты).
-	im = ax.imshow(
-		masked, cmap=cmap, aspect="equal", interpolation="nearest", origin="lower"
-	)
+	if render_style == "plain":
+		white_bg = np.zeros(matrix.shape, dtype=float)
+		im = ax.imshow(
+			white_bg,
+			cmap=ListedColormap(["#ffffff"]),
+			vmin=0.0,
+			vmax=1.0,
+			aspect="equal",
+			interpolation="nearest",
+			origin="lower",
+		)
+		text_color = "black"
+	else:
+		im = ax.imshow(
+			masked, cmap=cmap, aspect="equal", interpolation="nearest", origin="lower"
+		)
+		text_color = "white"
 
 	ax.set_xticks(range(len(labels)))
 	ax.set_yticks(range(len(labels)))
@@ -508,13 +557,37 @@ def draw_heatmap(
 
 	ax.set_title(title_block, fontsize=9)
 
-	annotate_cells(ax, im, matrix, metric)
-	for pos in node_bounds:
-		ax.axvline(pos, color="#000000", linewidth=0.8, alpha=1.0)
-		ax.axhline(pos, color="#000000", linewidth=0.8, alpha=1.0)
+	annotate_cells(ax, matrix, metric, text_color=text_color)
+	if render_style == "plain":
+		# Рисуем сетку ячеек, чтобы картинка выглядела как таблица.
+		ax.set_xticks(np.arange(-0.5, matrix.shape[1], 1), minor=True)
+		ax.set_yticks(np.arange(-0.5, matrix.shape[0], 1), minor=True)
+		ax.grid(which="minor", color="#000000", linewidth=0.6, alpha=1.0)
+		ax.tick_params(which="minor", bottom=False, left=False)
 
-	cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-	cbar.set_label(METRIC_CBAR_LABEL.get(metric, "мкс"), rotation=0, labelpad=12)
+	for pos in node_bounds:
+		ax.axvline(
+			pos,
+			color="#000000",
+			linewidth=1.0,
+			alpha=1.0,
+			antialiased=False,
+			snap=True,
+			solid_capstyle="butt",
+		)
+		ax.axhline(
+			pos,
+			color="#000000",
+			linewidth=1.0,
+			alpha=1.0,
+			antialiased=False,
+			snap=True,
+			solid_capstyle="butt",
+		)
+
+	if render_style != "plain":
+		cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+		cbar.set_label(METRIC_CBAR_LABEL.get(metric, "мкс"), rotation=0, labelpad=12)
 
 	fig.tight_layout()
 
@@ -529,6 +602,7 @@ def render_one_text(
 	label: str,
 	source_path: Path | None = None,
 	timer_source: str = "mpi",
+	render_style: str = "heatmap",
 ) -> int:
 	meta, pairs = parse_gpu_one_to_one_text(text, timer_source)
 	if not pairs:
@@ -557,7 +631,7 @@ def render_one_text(
 	hostname = host_stem_for_output(meta, rank_hosts)
 
 	out_dir.mkdir(parents=True, exist_ok=True)
-	tags = run_tags(source_path, meta)
+	tags = run_tags(source_path, meta, timer_source)
 	total_time = total_time_line(meta)
 	creation_time = generation_timestamp()
 	params = param_block(meta, tags, total_time, creation_time)
@@ -571,7 +645,8 @@ def render_one_text(
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
 		out_file = out_dir / (
-			f"{hostname}_rep{tags['rep']}_env{tags['env']}_mode{tags['mode']}"
+			f"{hostname}_rep{tags['rep']}"
+			f"_size{tags['size']}_timer{timer_source}"
 			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
 		)
 		draw_heatmap(
@@ -584,6 +659,7 @@ def render_one_text(
 			dpi=150,
 			tick_labels=tick_labels,
 			node_bounds=node_bounds,
+			render_style=render_style,
 		)
 		print(out_file)
 		written += 1
@@ -687,6 +763,12 @@ def main() -> int:
 		default="none",
 		help="Создать output/raw и отсортировать задержки через sort_raw_samples.py",
 	)
+	p.add_argument(
+		"--style",
+		choices=RENDER_STYLES,
+		default="heatmap",
+		help="Стиль рендера: heatmap (цвета + colorbar) | plain (белый фон, без colorbar)",
+	)
 	args = p.parse_args()
 
 	in_path = args.input
@@ -701,6 +783,7 @@ def main() -> int:
 			label="stdin",
 			source_path=None,
 			timer_source=args.timer_source,
+			render_style=args.style,
 		)
 
 	path = Path(in_path)
@@ -720,7 +803,12 @@ def main() -> int:
 			text = txt.read_text(encoding="utf-8", errors="replace")
 			sub = args.out_dir / txt.stem
 			r = render_one_text(
-				text, sub, label=str(txt), source_path=txt, timer_source=args.timer_source
+				text,
+				sub,
+				label=str(txt),
+				source_path=txt,
+				timer_source=args.timer_source,
+				render_style=args.style,
 			)
 			if r == 0 and args.sort_mode == "sorted":
 				rr = create_and_sort_raw_for_text(txt, sub, args.sort_mode)
@@ -738,6 +826,7 @@ def main() -> int:
 			label=str(path),
 			source_path=path,
 			timer_source=args.timer_source,
+			render_style=args.style,
 		)
 		if r != 0:
 			return r

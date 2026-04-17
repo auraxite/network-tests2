@@ -46,18 +46,11 @@ enum class Mode {
 	AllToAll,
 };
 
-/* Где собирать raw samples в one-to-one: на sender или receiver. */
-enum class RawSamplesCollectorRole {
+/* С какой стороны пары измерять и сохранять raw в one-to-one. */
+enum class Side {
 	Sender,
 	Receiver,
 };
-
-struct OneToOneConfig {
-	RawSamplesCollectorRole raw_samples_collector_role =
-		RawSamplesCollectorRole::Receiver;
-};
-
-inline constexpr OneToOneConfig OneToOneConfig{};
 
 /* Полный набор статистик одной пары src->dst; используют оба режима. */
 constexpr int ACK_FIELDS = 25;
@@ -72,6 +65,7 @@ struct Args {
 	int iters = 50;
 	Env env = Env::Auto;
 	Timer timer = Timer::Cuda;
+	Side side = Side::Receiver;
 	StatOut stat_out = StatOut::All;
 	Mode mode = Mode::OneToOne;
 	std::string out_path;
@@ -94,6 +88,9 @@ const char *mode_to_string(Mode mode);
 Env parse_env(const std::string &s, int rank);
 Timer parse_timer(const std::string &s, int rank);
 const char *timer_to_string(Timer t);
+Side parse_side(const std::string &s, int rank);
+const char *side_to_string(Side side);
+const char *side_to_short_tag(Side side);
 StatOut parse_stat_out(const std::string &s, int rank);
 Args parse_args(int argc, char **argv, int rank);
 bool check_host(Env env, bool cuda_aware);

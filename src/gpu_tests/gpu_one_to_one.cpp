@@ -15,11 +15,8 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
-	const bool collect_raw_samples_here =
-		(OneToOneConfig.raw_samples_collector_role ==
-		 RawSamplesCollectorRole::Receiver)
-			? is_receiver
-			: is_sender;
+	const bool collect_raw_samples_here = (args.side == Side::Receiver) ? is_receiver
+																	 : is_sender;
 	if (!is_sender && !is_receiver)
 		return ack;
 	if (t.src_rank == t.dst_rank) {
@@ -168,7 +165,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	cudaEvent_t ev_start = nullptr;
 	cudaEvent_t ev_stop = nullptr;
 	if (collect_raw_samples_here) {
-		const int timing_gpu = is_sender ? t.src_gpu : t.dst_gpu;
+		const int timing_gpu = (args.side == Side::Sender) ? t.src_gpu : t.dst_gpu;
 		cuda_ok(cudaSetDevice(timing_gpu), "cudaSetDevice(timing)");
 		cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
 		cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");

@@ -29,6 +29,8 @@ OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
 NETCDF_PATH="${NETCDF_PATH:-$HOME/opt/netcdf-c-4.9.2}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
+TIMER="${TIMER:-cuda}"
+SIZES=(${SIZES:-sender receiver})
 
 set -euo pipefail
 
@@ -43,7 +45,7 @@ export UCX_MEMTYPE_CACHE=n
 export OMPI_MCA_pml=ucx
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
-OUT_DIR="${GPU_TESTS}/grid_out"
+OUT_DIR="${GPU_TESTS}/fixed"
 mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu"
@@ -70,11 +72,12 @@ echo "======================"
 for REP in "${REPS[@]}"; do
 	for ENV in "${ENVS[@]}"; do
 		for MODE in "${MODES[@]}"; do
-			for CASE in "${CASES[@]}"; do
+			for SIZE in "${SIZES[@]}"; do
+				for CASE in "${CASES[@]}"; do
 				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_size${SIZE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+				echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIZE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 				echo "  -> ${OUT_TXT}"
 
 				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
@@ -83,10 +86,13 @@ for REP in "${REPS[@]}"; do
 					--iters "${ITERS}" \
 					--env "${ENV}" \
 					--mode "${MODE}" \
+					--timer "${TIMER}" \
+					--side "${SIZE}" \
 					--out "${OUT_TXT}" \
 					-d
 
-				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES}"
+				echo "OK  rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIZE} bytes=${BYTES}"
+				done
 			done
 		done
 	done
