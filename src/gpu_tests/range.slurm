@@ -11,7 +11,7 @@
 #SBATCH --cpus-per-task=1
 
 REPS=(1)
-ENVS=(
+ENVS=( # auto (CUDA-aware при поддержке MPI) или host (через host-staging).
 	auto
 	host
 )
@@ -19,10 +19,8 @@ MODES=(
 	one_to_one
 	all_to_all
 )
-CASES=( # "bytes:iters:warmup"
-	"500000:6400:64"
-	"4000000:1600:16"
-	"32000000:400:4"
+RANGES=( # "bytes_begin:bytes_end:bytes_step:iters:warmup"
+	"4000:64000:8000:4000:80"
 )
 
 OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
@@ -43,7 +41,7 @@ export UCX_MEMTYPE_CACHE=N
 export OMPI_MCA_pml=UCX
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
-OUT_DIR="${GPU_TESTS}/grid_out"
+OUT_DIR="${GPU_TESTS}/range_out"
 mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu"
@@ -70,23 +68,25 @@ echo "======================"
 for REP in "${REPS[@]}"; do
 	for ENV in "${ENVS[@]}"; do
 		for MODE in "${MODES[@]}"; do
-			for CASE in "${CASES[@]}"; do
-				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+			for CASE in "${RANGES[@]}"; do
+				IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
 
-				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-				echo "  -> ${OUT_TXT}"
+				OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
+				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
+				echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 
 				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
-					--bytes "${BYTES}" \
+					--bytes-begin "${BYTES_BEGIN}" \
+					--bytes-end "${BYTES_END}" \
+					--bytes-step "${BYTES_STEP}" \
 					--warmup "${WARMUP}" \
 					--iters "${ITERS}" \
 					--env "${ENV}" \
 					--mode "${MODE}" \
-					--out "${OUT_TXT}" \
+					--out "${OUT_PREFIX}" \
 					-d
 
-				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES}"
+				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP}"
 			done
 		done
 	done

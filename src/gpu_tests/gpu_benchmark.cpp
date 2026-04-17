@@ -20,7 +20,7 @@ int main(int argc, char **argv) {
 
 	const Args args = parse_args(argc, argv, rank);
 	const bool cuda_aware = mpi_cuda_aware();
-	const bool via_host = check_host(args.mode, cuda_aware);
+	const bool via_host = check_host(args.env, cuda_aware);
 	const std::vector<size_t> message_sizes = build_message_sizes(args, rank);
 
 	// В single-size режиме дублируем текстовый отчёт в stdout и (опционально) в --out.
@@ -107,12 +107,12 @@ int main(int argc, char **argv) {
 	if (rank == 0) {
 		{
 			std::ostringstream oss;
-			oss << "Mode: " << (via_host ? "host" : "auto") << "\n";
+			oss << "Env: " << (via_host ? "host" : "auto") << "\n";
 			mirror(oss.str());
 		}
 		{
 			std::ostringstream oss;
-			oss << "Scheme: " << scheme_to_string(args.scheme) << "\n";
+			oss << "Mode: " << mode_to_string(args.mode) << "\n";
 			mirror(oss.str());
 		}
 		{
@@ -169,11 +169,11 @@ int main(int argc, char **argv) {
 	for (size_t size_idx = 0; size_idx < message_sizes.size(); ++size_idx) {
 		Args run_args = args;
 		run_args.nbytes = message_sizes[size_idx];
-		if (args.scheme == Scheme::OneToOne)
+		if (args.mode == Mode::OneToOne)
 			schedule_one_to_one(rank, nproc, run_args, via_host, rank_labels, mirror,
 								rank == 0 && args.sweep_sizes ? &nc : nullptr,
 								static_cast<int>(size_idx));
-		else if (args.scheme == Scheme::AllToAll)
+		else if (args.mode == Mode::AllToAll)
 			schedule_all_to_all(rank, nproc, run_args, via_host, rank_labels, mirror,
 								rank == 0 && args.sweep_sizes ? &nc : nullptr,
 								static_cast<int>(size_idx));

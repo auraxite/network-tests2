@@ -10,7 +10,7 @@
 namespace gpu_benchmark {
 
 namespace {
-constexpr int kOneToOneDataTag = 0;
+constexpr bool CollectRawSamplesOnReceiver = true; // false for sender
 }
 
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
@@ -36,7 +36,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 			<< " dst=" << t.dst_rank << "." << t.dst_gpu << " bytes=" << args.nbytes
 			<< " role_sender=" << (is_sender ? 1 : 0)
 			<< " role_receiver=" << (is_receiver ? 1 : 0)
-			<< " mode_path=" << (check_host ? "mhost" : "mauto");
+			<< " env_path=" << (check_host ? "host" : "auto");
 		debug_log(args.debug, rank, oss.str());
 	}
 
@@ -74,12 +74,12 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_SEND_BEGIN dst=" << t.dst_rank
-						<< " tag=" << kOneToOneDataTag << " bytes=" << count
+						<< " tag=" << 0 << " bytes=" << count
 						<< " path=host"
 						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
-				mpi_ok(MPI_Send(h_buf, count, MPI_BYTE, t.dst_rank, kOneToOneDataTag, MPI_COMM_WORLD),
+				mpi_ok(MPI_Send(h_buf, count, MPI_BYTE, t.dst_rank, 0, MPI_COMM_WORLD),
 					   "MPI_Send (host staging)");
 				{
 					std::ostringstream oss;
@@ -91,12 +91,12 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_SEND_BEGIN dst=" << t.dst_rank
-						<< " tag=" << kOneToOneDataTag << " bytes=" << count
+						<< " tag=" << 0 << " bytes=" << count
 						<< " path=device"
 						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
-				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, kOneToOneDataTag, MPI_COMM_WORLD),
+				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, 0, MPI_COMM_WORLD),
 					   "MPI_Send (device buffer)");
 				{
 					std::ostringstream oss;
@@ -112,12 +112,12 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_RECV_BEGIN src=" << t.src_rank
-						<< " tag=" << kOneToOneDataTag << " bytes=" << count
+						<< " tag=" << 0 << " bytes=" << count
 						<< " path=host"
 						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
-				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, kOneToOneDataTag, MPI_COMM_WORLD,
+				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD,
 								&st),
 					   "MPI_Recv (host staging)");
 				{
@@ -143,12 +143,12 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 				{
 					std::ostringstream oss;
 					oss << "one_to_one MPI_RECV_BEGIN src=" << t.src_rank
-						<< " tag=" << kOneToOneDataTag << " bytes=" << count
+						<< " tag=" << 0 << " bytes=" << count
 						<< " path=device"
 						<< " phase=" << current_phase << " idx=" << current_iter;
 					debug_log(args.debug, rank, oss.str());
 				}
-				mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, kOneToOneDataTag, MPI_COMM_WORLD,
+				mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD,
 								&st),
 					   "MPI_Recv (device buffer)");
 				{
@@ -216,7 +216,9 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		}
 	}
 	debug_log(args.debug, rank, "one_to_one ITERS_DONE");
-	if (is_sender) {
+	const bool collect_raw_samples_here =
+		CollectRawSamplesOnReceiver? is_receiver : is_sender;
+	if (collect_raw_samples_here) {
 		switch (args.timer) {
 		case Timer::All:
 		case Timer::Mpi:

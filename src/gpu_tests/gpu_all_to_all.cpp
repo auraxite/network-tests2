@@ -27,7 +27,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	{
 		std::ostringstream oss;
 		oss << "all_to_all RUN_BEGIN local_gpu=" << local_gpu << " bytes=" << args.nbytes
-			<< " nproc=" << nproc << " mode_path=" << (check_host ? "mhost" : "mauto");
+			<< " nproc=" << nproc << " env_path=" << (check_host ? "host" : "auto");
 		debug_log(args.debug, rank, oss.str());
 	}
 

@@ -85,8 +85,8 @@ ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
 TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
 TIMER_LINE_RE = re.compile(r"^Timer:\s*(\S+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
-# Поддерживаем оба формата имен: ..._mauto_... и ..._auto_...
-MODE_TAG_RE = re.compile(r"(?:^|_)(?:m)?([A-Za-z0-9]+)(?:_|$)", re.I)
+ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
+MODE_TAG_RE = re.compile(r"(?:^|_)(one_to_one|all_to_all)(?:_|$)", re.I)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
 ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
@@ -237,7 +237,9 @@ def parse_gpu_one_to_one_text(
 
 	for raw in text.splitlines():
 		line = raw.strip()
-		if line.startswith("Mode:"):
+		if line.startswith("Env:"):
+			meta["env"] = line.split(":", 1)[1].strip()
+		elif line.startswith("Mode:"):
 			meta["mode"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Ranks:"):
 			m = RANKS_LINE_RE.match(line)
@@ -360,6 +362,7 @@ def title_block(
 	n: int,
 	rank_hosts: list[str] | None,
 ) -> str:
+	env = str(meta.get("env", "unknown"))
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
 	parts: list[str] = []
@@ -370,8 +373,8 @@ def title_block(
 	parts.extend(
 		[
 			title_line,
-			"Схема обмена: one-to-one",
-			f"Режим копирования: {mode}",
+			f"Режим запуска: {mode}",
+			f"Среда копирования: {env}",
 		]
 	)
 	return "\n".join(parts)
@@ -386,8 +389,9 @@ def format_size_mb_decimal(b: int) -> str:
 
 def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 	stem = source_path.stem if source_path is not None else ""
-	mode_meta = str(meta.get("mode", "unknown")).lower()
-	mode_default = "host" if mode_meta == "host" else ("auto" if mode_meta == "gpudirect" else mode_meta)
+	env_meta = str(meta.get("env", "unknown")).lower()
+	env_default = "host" if env_meta == "host" else ("auto" if env_meta == "gpudirect" else env_meta)
+	mode_default = str(meta.get("mode", "unknown")).lower()
 
 	def pick(pattern: re.Pattern[str], fallback: str) -> str:
 		m = pattern.search(stem)
@@ -395,6 +399,7 @@ def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 
 	return {
 		"rep": pick(REP_TAG_RE, "na"),
+		"env": pick(ENV_TAG_RE, env_default),
 		"mode": pick(MODE_TAG_RE, mode_default),
 		"b": pick(BYTES_TAG_RE, str(meta.get("bytes", "na"))),
 		"w": pick(WARMUP_TAG_RE, str(meta.get("warmup", "na"))),
@@ -566,7 +571,7 @@ def render_one_text(
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
 		out_file = out_dir / (
-			f"{hostname}_rep{tags['rep']}_m{tags['mode']}"
+			f"{hostname}_rep{tags['rep']}_env{tags['env']}_mode{tags['mode']}"
 			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
 		)
 		draw_heatmap(

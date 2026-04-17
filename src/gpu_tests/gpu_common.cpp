@@ -57,45 +57,45 @@ void help(int rank) {
 			  << "  --bytes-step N  message size step for NetCDF-only sweep\n"
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
-			  << "  --mode M        auto | host\n"
-			  << "  --scheme S      one_to_one | all_to_all (default one_to_one)\n"
+			  << "  --env E         auto | host\n"
+			  << "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
 			  << "  --timer T       all | mpi | cpu | cuda (default cuda)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
 			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n"
 			  << "  --debug, -d     verbose debug logs to stderr\n";
 }
 
-Scheme parse_scheme(const std::string &s, int rank) {
+Mode parse_mode(const std::string &s, int rank) {
 	if (s == "one_to_one" || s == "sequential" || s == "1to1")
-		return Scheme::OneToOne;
+		return Mode::OneToOne;
 	if (s == "all_to_all" || s == "alltoall" || s == "parallel")
-		return Scheme::AllToAll;
+		return Mode::AllToAll;
 	if (rank == 0)
-		std::cerr << "unknown --scheme: " << s
+		std::cerr << "unknown --mode: " << s
 				  << " (use one_to_one|all_to_all)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
-	return Scheme::OneToOne;
+	return Mode::OneToOne;
 }
 
-const char *scheme_to_string(Scheme sch) {
-	switch (sch) {
-	case Scheme::OneToOne:
+const char *mode_to_string(Mode mode) {
+	switch (mode) {
+	case Mode::OneToOne:
 		return "one_to_one";
-	case Scheme::AllToAll:
+	case Mode::AllToAll:
 		return "all_to_all";
 	}
 	return "one_to_one";
 }
 
-Mode parse_mode(const std::string &s, int rank) {
+Env parse_env(const std::string &s, int rank) {
 	if (s == "auto")
-		return Mode::Auto;
+		return Env::Auto;
 	if (s == "host")
-		return Mode::Host;
+		return Env::Host;
 	if (rank == 0)
-		std::cerr << "unknown --mode: " << s << " (use auto|host)\n";
+		std::cerr << "unknown --env: " << s << " (use auto|host)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
-	return Mode::Auto;
+	return Env::Auto;
 }
 
 Timer parse_timer(const std::string &s, int rank) {
@@ -189,12 +189,10 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.warmup = std::atoi(next("--warmup"));
 		else if (s == "--iters")
 			a.iters = std::atoi(next("--iters"));
+		else if (s == "--env")
+			a.env = parse_env(next("--env"), rank);
 		else if (s == "--mode")
 			a.mode = parse_mode(next("--mode"), rank);
-		else if (s == "--scheme" || s == "--schedule") {
-			const char *flag = (s == "--scheme") ? "--scheme" : "--schedule";
-			a.scheme = parse_scheme(next(flag), rank);
-		}
 		else if (s == "--timer")
 			a.timer = parse_timer(next("--timer"), rank);
 		else if (s == "--stat")
@@ -272,8 +270,8 @@ void debug_log(bool enabled, int rank, const std::string &msg) {
 	std::cerr << "[DBG r" << rank << "] " << msg << "\n";
 }
 
-bool check_host(Mode mode, bool cuda_aware) {
-	if (mode == Mode::Host)
+bool check_host(Env env, bool cuda_aware) {
+	if (env == Env::Host)
 		return true;
 	return !cuda_aware;
 }

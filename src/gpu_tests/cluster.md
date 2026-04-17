@@ -1,5 +1,3 @@
-# Локально компилировать в Докере (при разработке)
-
 cd ~/network-tests2/src/gpu_tests
 sh build.sh
 
