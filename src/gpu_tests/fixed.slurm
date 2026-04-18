@@ -87,7 +87,7 @@ for REP in "${REPS[@]}"; do
 				for CASE in "${CASES[@]}"; do
 					IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-					OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+					OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
 					echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 					echo "  -> ${OUT_TXT}"
 

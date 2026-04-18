@@ -3,8 +3,13 @@
  *
  * Назначение: разобрать, как именно можно мерить задержки в режиме all-to-all,
  * почему в этом режиме есть разница «измерять у отправителя / у получателя / по
- * двум часам», и показать три варианта реализации do_one() для одного и того же
- * протокола обмена сообщениями.
+ * двум часам», и показать пять вариантов реализации do_one() для одного и того
+ * же протокола обмена сообщениями:
+ *   A. sender-side                       — t0,t1 у отправителя
+ *   B. receiver-side                     — t0,t1 у получателя (рекомендуемый e2e)
+ *   C. псевдо-e2e (двое часов)           — t0 у src, t1 у dst (как network_test)
+ *   D. send + ack от получателя          — t0,t1 у отправителя, в сэмпл входит обратный ack
+ *   E. ping-pong (RTT/2)                 — t0,t1 у отправителя, в сэмпл — половина RTT
  *
  * Файл намеренно обёрнут в #if 0 ... #endif: он НЕ компилируется и НЕ участвует
  * в сборке через build.sh. Это документация уровня кода, чтобы можно было
@@ -320,15 +325,246 @@ static void do_one_pseudo_e2e(const IterCtx &ctx, int iter_idx, bool measure,
 }
 
 /* =========================================================================
+ * ВАРИАНТ D: «send + ack от получателя». Аппроксимация e2e через короткий
+ * подтверждающий ответ от получателя — оба замера у отправителя, на одних
+ * часах.
+ *
+ * Идея: отправитель шлёт данные dst и сразу выставляет MPI_Recv маленького
+ * ack от dst. Получатель, как только данные пришли (и при необходимости H2D
+ * выполнен), посылает обратно ack нулевой длины. Сэмпл = «от старта Send до
+ * прихода ack» у отправителя.
+ *
+ * Семантика: sample ≈ (отправка данных) + (сеть туда) + (Recv+H2D у dst) +
+ *                     (отправка ack у dst) + (сеть обратно для маленького ack).
+ *
+ * Плюсы:
+ *  + Без межузловой синхронизации часов — обе метки у отправителя.
+ *  + В отличие от варианта A, в сэмпл реально входит «доставлено и обработано
+ *    у получателя» (а не «локально отдано в MPI»).
+ *  + Естественно ложится в матрицу (src, dst): её формирует сам отправитель.
+ *
+ * Минусы:
+ *  - В сэмпл входит лишний путь обратного ack: для маленьких сообщений он может
+ *    быть сопоставим с самим измеряемым временем.
+ *  - Симметрия трафика «прямого» и «обратного» направления может различаться
+ *    (особенно при асимметричной маршрутизации) — сэмпл системно завышен на
+ *    время обратного пути.
+ *  - В режиме all-to-all требует, чтобы получатель планомерно слал ack по
+ *    всем входящим — это удваивает количество MPI-сообщений на итерацию.
+ * ========================================================================= */
+
+static void do_one_send_plus_ack(const IterCtx &ctx, int iter_idx, bool measure,
+								  std::vector<std::vector<double>> *samples_us) {
+	(void)iter_idx;
+
+	/* Тег ack-сообщения должен не пересекаться с тегом данных. Здесь — простое
+	 * смещение; в реальном коде брали бы alltoall_ack_tag(src,dst,nproc). */
+	auto ack_tag = [&](int src, int dst) {
+		return alltoall_pair_tag(src, dst, ctx.nproc) + 200000;
+	};
+
+	/* Я как получатель данных: предварительно ставлю Irecv по данным от каждого
+	 * src и сразу планирую отправку ack — но ack отправляю только ПОСЛЕ того,
+	 * как данные реально пришли (в recv-фазе ниже). */
+	std::vector<MPI_Request> recv_data_req(ctx.nproc, MPI_REQUEST_NULL);
+	for (int src = 0; src < ctx.nproc; ++src) {
+		if (src == ctx.rank)
+			continue;
+		MPI_Irecv(ctx.recv_bufs[src], ctx.count, MPI_BYTE, src,
+				  alltoall_pair_tag(src, ctx.rank, ctx.nproc), MPI_COMM_WORLD,
+				  &recv_data_req[src]);
+	}
+
+	/* Я как отправитель: для каждого dst заранее ставлю Irecv маленького ack
+	 * от dst — чтобы потом «закрыть» его в момент прихода ответа. */
+	std::vector<MPI_Request> recv_ack_req(ctx.nproc, MPI_REQUEST_NULL);
+	std::vector<char> ack_dummy(ctx.nproc, 0);
+	for (int dst = 0; dst < ctx.nproc; ++dst) {
+		if (dst == ctx.rank)
+			continue;
+		MPI_Irecv(&ack_dummy[dst], 0, MPI_BYTE, dst, ack_tag(dst, ctx.rank),
+				  MPI_COMM_WORLD, &recv_ack_req[dst]);
+	}
+
+	/* Send-фаза: фиксируем t0 у отправителя ДО D2H, шлём данные. Ack ждём НЕ
+	 * сразу — даём всем dst шанс параллельно начать обработку. */
+	std::vector<double> t0_per_dst(ctx.nproc, 0.0);
+	for (int dst = 0; dst < ctx.nproc; ++dst) {
+		if (dst == ctx.rank)
+			continue;
+		if (measure)
+			t0_per_dst[dst] = MPI_Wtime();
+		if (ctx.check_host) {
+			cudaMemcpy(ctx.send_bufs[dst], ctx.d_send, ctx.count,
+					   cudaMemcpyDeviceToHost);
+		}
+		MPI_Send(ctx.send_bufs[dst], ctx.count, MPI_BYTE, dst,
+				 alltoall_pair_tag(ctx.rank, dst, ctx.nproc), MPI_COMM_WORLD);
+	}
+
+	/* Recv-фаза «как получатель»: для каждого пришедшего src делаем H2D и
+	 * сразу шлём ack обратно — это нужно, чтобы соответствующий отправитель
+	 * смог закрыть свой замер. */
+	for (int k = 0; k < ctx.nproc - 1; ++k) {
+		int idx = MPI_UNDEFINED;
+		MPI_Waitany(ctx.nproc, recv_data_req.data(), &idx, MPI_STATUS_IGNORE);
+		const int src = idx;
+		if (ctx.check_host) {
+			cudaMemcpy(ctx.d_recv, ctx.recv_bufs[src], ctx.count,
+					   cudaMemcpyHostToDevice);
+		}
+		MPI_Send(nullptr, 0, MPI_BYTE, src, ack_tag(ctx.rank, src),
+				 MPI_COMM_WORLD);
+	}
+
+	/* Закрываем «как отправитель»: ловим ack от каждого dst и пишем сэмпл
+	 * t1 - t0 в samples[dst]. */
+	for (int k = 0; k < ctx.nproc - 1; ++k) {
+		int idx = MPI_UNDEFINED;
+		MPI_Waitany(ctx.nproc, recv_ack_req.data(), &idx, MPI_STATUS_IGNORE);
+		const int dst = idx;
+		if (measure) {
+			const double t1 = MPI_Wtime();
+			(*samples_us)[dst].push_back((t1 - t0_per_dst[dst]) * 1e6);
+		}
+	}
+}
+
+/* =========================================================================
+ * ВАРИАНТ E: ping-pong (RTT/2). Прямая аппроксимация задержки одного
+ * направления как половины «полного оборота» — оба замера у отправителя, на
+ * одних часах.
+ *
+ * Идея: для каждой пары (rank → dst) отправитель шлёт сообщение тем же объёмом
+ * данных, получатель echo-шлёт его обратно. Сэмпл = (t1 - t0) / 2.
+ *
+ * Семантика в all-to-all: каждый ранг по очереди (или параллельно для разных
+ * dst) запускает свой ping-pong. Чтобы это оставалось «all-to-all», нужно либо
+ * проводить N-1 параллельных ping-pong'ов одновременно (как ниже), либо
+ * сделать N независимых раундов «один-к-одному», что уже не all-to-all.
+ *
+ * Плюсы:
+ *  + Без межузловой синхронизации часов.
+ *  + Хорошо работает для «голой» задержки маленького сообщения, когда обратный
+ *    путь по времени почти равен прямому.
+ *  + Стандартная схема в OSU/IMB — легко сравнивать с эталоном.
+ *
+ * Минусы:
+ *  - Завышает результат, когда сеть/обработка асимметричны (D2H+H2D у одной
+ *    стороны быстрее, у другой медленнее; обратный путь маршрутизируется иначе
+ *    и т.п.) — половина RTT не равна односторонней задержке.
+ *  - Удваивает трафик: каждое измеряемое сообщение фактически уходит дважды
+ *    (туда и обратно), что меняет нагрузку сети по сравнению с настоящим
+ *    one-way all-to-all.
+ *  - В режиме all-to-all каждый ранг одновременно и инициирует ping-pong'и для
+ *    своих dst, и обслуживает входящие ping'и от других src — код получается
+ *    более громоздким, чем в вариантах A/B.
+ * ========================================================================= */
+
+static void do_one_ping_pong(const IterCtx &ctx, int iter_idx, bool measure,
+							  std::vector<std::vector<double>> *samples_us) {
+	(void)iter_idx;
+
+	/* Echo-сообщение шлётся тем же размером, что и исходное, но с другим тегом,
+	 * чтобы не путать «ping» и «pong» на стороне инициатора. */
+	auto pong_tag = [&](int src, int dst) {
+		return alltoall_pair_tag(src, dst, ctx.nproc) + 300000;
+	};
+
+	/* Я как «эхо»: для каждого src заранее ставлю Irecv на ping-данные. Когда
+	 * ping придёт — сразу отправлю эти же байты обратно как pong. */
+	std::vector<MPI_Request> recv_ping_req(ctx.nproc, MPI_REQUEST_NULL);
+	for (int src = 0; src < ctx.nproc; ++src) {
+		if (src == ctx.rank)
+			continue;
+		MPI_Irecv(ctx.recv_bufs[src], ctx.count, MPI_BYTE, src,
+				  alltoall_pair_tag(src, ctx.rank, ctx.nproc), MPI_COMM_WORLD,
+				  &recv_ping_req[src]);
+	}
+
+	/* Я как инициатор: для каждого dst заранее ставлю Irecv на возврат pong. */
+	std::vector<MPI_Request> recv_pong_req(ctx.nproc, MPI_REQUEST_NULL);
+	std::vector<char *> pong_bufs(ctx.nproc, nullptr); /* в реальном коде —
+	                                                      отдельные буферы */
+	for (int dst = 0; dst < ctx.nproc; ++dst) {
+		if (dst == ctx.rank)
+			continue;
+		/* Для иллюстрации переиспользуем send_bufs[dst] под приём pong:
+		 * в реальном коде нужны независимые буферы. */
+		pong_bufs[dst] = ctx.send_bufs[dst];
+		MPI_Irecv(pong_bufs[dst], ctx.count, MPI_BYTE, dst,
+				  pong_tag(dst, ctx.rank), MPI_COMM_WORLD,
+				  &recv_pong_req[dst]);
+	}
+
+	/* Send-фаза «ping»: t0 у отправителя ДО D2H, отправка ping. Ack/pong ждём
+	 * отдельным проходом ниже. */
+	std::vector<double> t0_per_dst(ctx.nproc, 0.0);
+	for (int dst = 0; dst < ctx.nproc; ++dst) {
+		if (dst == ctx.rank)
+			continue;
+		if (measure)
+			t0_per_dst[dst] = MPI_Wtime();
+		if (ctx.check_host) {
+			cudaMemcpy(ctx.send_bufs[dst], ctx.d_send, ctx.count,
+					   cudaMemcpyDeviceToHost);
+		}
+		MPI_Send(ctx.send_bufs[dst], ctx.count, MPI_BYTE, dst,
+				 alltoall_pair_tag(ctx.rank, dst, ctx.nproc), MPI_COMM_WORLD);
+	}
+
+	/* Echo-фаза: для каждого пришедшего ping от src сразу делаем H2D (если
+	 * нужно для семантики «GPU→GPU») и отправляем pong тех же байтов обратно.
+	 * H2D у эха входит в RTT — для half-RTT приближения это корректно. */
+	for (int k = 0; k < ctx.nproc - 1; ++k) {
+		int idx = MPI_UNDEFINED;
+		MPI_Waitany(ctx.nproc, recv_ping_req.data(), &idx, MPI_STATUS_IGNORE);
+		const int src = idx;
+		if (ctx.check_host) {
+			cudaMemcpy(ctx.d_recv, ctx.recv_bufs[src], ctx.count,
+					   cudaMemcpyHostToDevice);
+			/* И обратно D2H в send-буфер для отправки pong. */
+			cudaMemcpy(ctx.recv_bufs[src], ctx.d_recv, ctx.count,
+					   cudaMemcpyDeviceToHost);
+		}
+		MPI_Send(ctx.recv_bufs[src], ctx.count, MPI_BYTE, src,
+				 pong_tag(ctx.rank, src), MPI_COMM_WORLD);
+	}
+
+	/* Закрываем замеры «как инициатор»: дожидаемся pong от каждого dst,
+	 * сэмпл = (t1 - t0) / 2 в samples[dst]. */
+	for (int k = 0; k < ctx.nproc - 1; ++k) {
+		int idx = MPI_UNDEFINED;
+		MPI_Waitany(ctx.nproc, recv_pong_req.data(), &idx, MPI_STATUS_IGNORE);
+		const int dst = idx;
+		if (ctx.check_host) {
+			cudaMemcpy(ctx.d_recv, pong_bufs[dst], ctx.count,
+					   cudaMemcpyHostToDevice);
+		}
+		if (measure) {
+			const double t1 = MPI_Wtime();
+			const double half_rtt_us = (t1 - t0_per_dst[dst]) * 1e6 * 0.5;
+			(*samples_us)[dst].push_back(half_rtt_us);
+		}
+	}
+}
+
+/* =========================================================================
  * Сводная таблица:
  *
- *   Вариант            | t0  | t1  | На каких часах | Что в сэмпле          | Куда матрица | Реализация
- *   -------------------+-----+-----+----------------+-----------------------+--------------+-----------
- *   A. sender-side     | src | src | одни (src)     | D2H + Send            | у src        | проще всего
- *   B. receiver-side   | dst | dst | одни (dst)     | wait + H2D            | у dst        | средне
- *   C. псевдо-e2e      | src | dst | разные         | весь путь (со смещ-м) | у dst        | сложнее,
- *                      |     |     |                |                       |              | результат
- *                      |     |     |                |                       |              | смещён
+ *   Вариант            | t0  | t1  | На каких часах | Что в сэмпле               | Куда матрица | Реализация
+ *   -------------------+-----+-----+----------------+----------------------------+--------------+-----------
+ *   A. sender-side     | src | src | одни (src)     | D2H + Send                 | у src        | проще всего
+ *   B. receiver-side   | dst | dst | одни (dst)     | wait + H2D                 | у dst        | средне
+ *   C. псевдо-e2e      | src | dst | разные         | весь путь (со смещ-м)      | у dst        | сложнее,
+ *                      |     |     |                |                            |              | результат
+ *                      |     |     |                |                            |              | смещён
+ *   D. send + ack      | src | src | одни (src)     | путь туда + обработка у dst| у src        | средне,
+ *                      |     |     |                | + короткий ack обратно     |              | завышено
+ *                      |     |     |                |                            |              | на ack
+ *   E. ping-pong RTT/2 | src | src | одни (src)     | (RTT туда+обратно)/2       | у src        | громоздко,
+ *                      |     |     |                |                            |              | завышено
+ *                      |     |     |                |                            |              | при асимм.
  *
  * Рекомендация для этой работы: вариант B (receiver-side). Это «честная»
  * сквозная задержка, которую можно получить БЕЗ синхронизации часов между
@@ -336,6 +572,9 @@ static void do_one_pseudo_e2e(const IterCtx &ctx, int iter_idx, bool measure,
  * меня на GPU». Вариант A удобен как референс пропускной способности.
  * Вариант C показан в работе как пример того, как делает network_test, и
  * почему его числа нельзя интерпретировать буквально на нашем стенде.
+ * Варианты D и E — типовые приёмы из мира MPI-бенчмарков (OSU/IMB), оба
+ * измеряют у отправителя и не требуют общих часов; D ближе по семантике к
+ * «доставлено и обработано», E — к «голой» задержке одного направления.
  * ========================================================================= */
 
 } /* namespace timing_variants */

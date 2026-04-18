@@ -85,7 +85,7 @@ for REP in "${REPS[@]}"; do
 				for CASE in "${RANGES[@]}"; do
 					IFS=":" read -r BYTES_BEGIN BYTES_END BYTES_STEP ITERS WARMUP <<<"${CASE}"
 
-					OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
+					OUT_PREFIX="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_bb${BYTES_BEGIN}_be${BYTES_END}_bs${BYTES_STEP}_w${WARMUP}_i${ITERS}"
 					echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} bytes_begin=${BYTES_BEGIN} bytes_end=${BYTES_END} bytes_step=${BYTES_STEP} warmup=${WARMUP} iters=${ITERS}"
 					echo "  -> ${OUT_PREFIX}_{avg,med,min,max,var,std}.nc"
 

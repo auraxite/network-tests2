@@ -7,7 +7,7 @@ from __future__ import annotations
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
   -o, --out-dir    output directory for PNG files
-  -t, --timer      choose timer source: mpi | cpu | cuda (default: cuda)
+  -t, --timer      choose timer source: mpi | cpu | cuda (default: mpi)
   --sort, --sorted enable raw sorting pipeline (default: none)
 """
 
@@ -625,7 +625,6 @@ def render_one_text(
 		stem = METRIC_FILE_STEM.get(key, key)
 		out_file = out_dir / (
 			f"{hostname}_rep{tags['rep']}"
-			f"_timer{timer_source}"
 			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
 		)
 		draw_heatmap(
@@ -730,7 +729,7 @@ def main() -> int:
 		"--timer",
 		dest="timer_source",
 		choices=PAIR_TIMER_SOURCES,
-		default="cuda",
+		default="mpi",
 		help="Источник времени в txt: mpi | cpu | cuda",
 	)
 	p.add_argument(

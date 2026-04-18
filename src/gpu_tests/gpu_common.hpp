@@ -58,7 +58,7 @@ struct Args {
 	int warmup = 10;
 	int iters = 50;
 	Env env = Env::Auto;
-	Timer timer = Timer::Cuda;
+	Timer timer = Timer::Mpi;
 	StatOut stat_out = StatOut::All;
 	Mode mode = Mode::OneToOne;
 	std::string out_path;

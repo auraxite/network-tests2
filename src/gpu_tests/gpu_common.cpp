@@ -59,7 +59,7 @@ void help(int rank) {
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --env E         auto | host\n"
 			  << "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
-			  << "  --timer T       all | mpi | cpu | cuda (default cuda)\n"
+			  << "  --timer T       all | mpi | cpu | cuda (default mpi)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
 			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n"
 			  << "  --debug, -d     verbose debug logs to stderr\n";
