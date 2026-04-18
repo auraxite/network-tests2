@@ -15,10 +15,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
-	const bool collect_raw_samples_here =
-		(args.side == Side::Both) ? (is_sender || is_receiver)
-								  : ((args.side == Side::Receiver) ? is_receiver : is_sender);
-	const Side local_measured_side = is_sender ? Side::Sender : Side::Receiver;
+	const bool collect_raw_samples_here = is_sender;
 	if (!is_sender && !is_receiver)
 		return ack;
 	if (t.src_rank == t.dst_rank) {
@@ -167,8 +164,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	cudaEvent_t ev_start = nullptr;
 	cudaEvent_t ev_stop = nullptr;
 	if (collect_raw_samples_here) {
-		const int timing_gpu = (local_measured_side == Side::Sender) ? t.src_gpu : t.dst_gpu;
-		cuda_ok(cudaSetDevice(timing_gpu), "cudaSetDevice(timing)");
+		cuda_ok(cudaSetDevice(t.src_gpu), "cudaSetDevice(timing)");
 		cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
 		cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
 	}
@@ -221,16 +217,13 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		switch (args.timer) {
 		case Timer::All:
 		case Timer::Mpi:
-			append_raw_samples(args, rank, t, rank_labels, samples_mpi_us,
-							   local_measured_side);
+			append_raw_samples(args, rank, t, rank_labels, samples_mpi_us);
 			break;
 		case Timer::Cpu:
-			append_raw_samples(args, rank, t, rank_labels, samples_cpu_us,
-							   local_measured_side);
+			append_raw_samples(args, rank, t, rank_labels, samples_cpu_us);
 			break;
 		case Timer::Cuda:
-			append_raw_samples(args, rank, t, rank_labels, samples_gpu_us,
-							   local_measured_side);
+			append_raw_samples(args, rank, t, rank_labels, samples_gpu_us);
 			break;
 		}
 	}

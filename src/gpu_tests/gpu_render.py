@@ -85,16 +85,10 @@ WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
 ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
 TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
 TIMER_LINE_RE = re.compile(r"^Timer:\s*(\S+)\s*$")
-SIZE_LINE_RE = re.compile(r"^Size:\s*(\S+)\s*$")
-SIDE_LINE_RE = re.compile(r"^Side:\s*(\S+)\s*$")
-MEASURE_SIDE_LINE_RE = re.compile(r"^MeasureSide:\s*(\S+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(r"(?:^|_)(one_to_one|all_to_all)(?:_|$)", re.I)
 TIMER_TAG_RE = re.compile(r"(?:^|_)(?:timer|t)(mpi|cpu|cuda|all)(?:_|$)", re.I)
-SIDE_TAG_RE = re.compile(
-	r"(?:^|_)(?:size|side)?(sender|receiver|both|snd|rcv)(?:_|$)", re.I
-)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
 ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
@@ -267,12 +261,6 @@ def parse_gpu_one_to_one_text(
 			meta["total_elapsed_s"] = float(m.group(1))
 		elif (m := TIMER_LINE_RE.match(line)):
 			meta["timer"] = normalize_timer_token(m.group(1))
-		elif (m := SIZE_LINE_RE.match(line)):
-			meta["size"] = normalize_size_token(m.group(1))
-		elif (m := SIDE_LINE_RE.match(line)):
-			meta["size"] = normalize_size_token(m.group(1))
-		elif (m := MEASURE_SIDE_LINE_RE.match(line)):
-			meta["size"] = normalize_size_token(m.group(1))
 		else:
 			m = PAIR_LINE_RE.match(line)
 			if m and pair_source_allowed(m, timer_source, meta):
@@ -407,22 +395,12 @@ def normalize_timer_token(value: str) -> str:
 	return v
 
 
-def normalize_size_token(value: str) -> str:
-	v = value.strip().lower()
-	if v in ("sender", "snd"):
-		return "snd"
-	if v in ("receiver", "rcv"):
-		return "rcv"
-	return v
-
-
 def run_tags(source_path: Path | None, meta: dict[str, Any], timer_source: str) -> dict[str, str]:
 	stem = source_path.stem if source_path is not None else ""
 	env_meta = str(meta.get("env", "unknown")).lower()
 	env_default = "host" if env_meta == "host" else ("auto" if env_meta == "gpudirect" else env_meta)
 	mode_default = str(meta.get("mode", "unknown")).lower()
 	timer_default = normalize_timer_token(str(meta.get("timer", timer_source)))
-	size_default = normalize_size_token(str(meta.get("size", "na")))
 
 	def pick(pattern: re.Pattern[str], fallback: str) -> str:
 		m = pattern.search(stem)
@@ -433,7 +411,6 @@ def run_tags(source_path: Path | None, meta: dict[str, Any], timer_source: str) 
 		"env": pick(ENV_TAG_RE, env_default),
 		"mode": pick(MODE_TAG_RE, mode_default),
 		"timer": normalize_timer_token(pick(TIMER_TAG_RE, timer_default)),
-		"size": normalize_size_token(pick(SIDE_TAG_RE, size_default)),
 		"b": pick(BYTES_TAG_RE, str(meta.get("bytes", "na"))),
 		"w": pick(WARMUP_TAG_RE, str(meta.get("warmup", "na"))),
 		"i": pick(ITERS_TAG_RE, str(meta.get("iters", "na"))),
@@ -463,7 +440,7 @@ def param_block(
 	meta: dict[str, Any], tags: dict[str, str], total_time: str, creation_time: str
 ) -> str:
 	lines: list[str] = []
-	lines.append(f"timer: {tags['timer']}  size: {tags['size']}")
+	lines.append(f"timer: {tags['timer']}")
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
 	lines.append(f"b: {tags['b']} байт")
 	lines.append(f"сгенерировано: {creation_time}")
@@ -648,7 +625,7 @@ def render_one_text(
 		stem = METRIC_FILE_STEM.get(key, key)
 		out_file = out_dir / (
 			f"{hostname}_rep{tags['rep']}"
-			f"_size{tags['size']}_timer{timer_source}"
+			f"_timer{timer_source}"
 			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
 		)
 		draw_heatmap(

@@ -122,11 +122,6 @@ int main(int argc, char **argv) {
 		}
 		{
 			std::ostringstream oss;
-			oss << "Size: " << side_to_string(args.side) << "\n";
-			mirror(oss.str());
-		}
-		{
-			std::ostringstream oss;
 			if (message_sizes.size() == 1) {
 				oss << "Bytes: " << message_sizes.front() << "\n";
 			} else {

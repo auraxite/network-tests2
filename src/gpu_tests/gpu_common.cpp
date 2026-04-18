@@ -60,7 +60,6 @@ void help(int rank) {
 			  << "  --env E         auto | host\n"
 			  << "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
 			  << "  --timer T       all | mpi | cpu | cuda (default cuda)\n"
-			  << "  --side R        sender | receiver | both (default receiver)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
 			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n"
 			  << "  --debug, -d     verbose debug logs to stderr\n";
@@ -126,44 +125,6 @@ const char *timer_to_string(Timer t) {
 		return "cuda";
 	}
 	return "all";
-}
-
-Side parse_side(const std::string &s, int rank) {
-	if (s == "sender" || s == "snd")
-		return Side::Sender;
-	if (s == "receiver" || s == "rcv")
-		return Side::Receiver;
-	if (s == "both")
-		return Side::Both;
-	if (rank == 0)
-		std::cerr << "unknown --side: " << s
-				  << " (use sender|receiver|both|snd|rcv)\n";
-	MPI_Abort(MPI_COMM_WORLD, 1);
-	return Side::Receiver;
-}
-
-const char *side_to_string(Side side) {
-	switch (side) {
-	case Side::Sender:
-		return "sender";
-	case Side::Receiver:
-		return "receiver";
-	case Side::Both:
-		return "both";
-	}
-	return "receiver";
-}
-
-const char *side_to_short_tag(Side side) {
-	switch (side) {
-	case Side::Sender:
-		return "snd";
-	case Side::Receiver:
-		return "rcv";
-	case Side::Both:
-		return "both";
-	}
-	return "rcv";
 }
 
 StatOut parse_stat_out(const std::string &s, int rank) {
@@ -234,10 +195,6 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.mode = parse_mode(next("--mode"), rank);
 		else if (s == "--timer")
 			a.timer = parse_timer(next("--timer"), rank);
-		else if (s == "--side")
-			a.side = parse_side(next("--side"), rank);
-		else if (s == "--measure-side")
-			a.side = parse_side(next("--measure-side"), rank);
 		else if (s == "--stat")
 			a.stat_out = parse_stat_out(next("--stat"), rank);
 		else if (s == "--out" || s == "-o")
@@ -496,7 +453,7 @@ std::string print_pair_line(const char *line_name,
 
 void append_raw_samples(const Args &args, int rank, const Task &t,
 						const std::vector<std::string> &rank_labels,
-						const std::vector<double> &samples_us, Side measured_side) {
+						const std::vector<double> &samples_us) {
 	const auto sanitize_label_for_raw_path = [](const std::string &lab) {
 		std::string out;
 		out.reserve(lab.size());
@@ -538,13 +495,12 @@ void append_raw_samples(const Args &args, int rank, const Task &t,
 		return;
 	std::ostringstream path;
 	path << raw_dir << "/" << base << "_src" << src_tok << "_dst" << dst_tok
-		 << "_" << side_to_short_tag(measured_side) << ".raw";
+		 << ".raw";
 	std::ofstream out(path.str(), std::ios::app);
 	if (!out.is_open())
 		return;
 	out << "# src=" << rank_labels[static_cast<size_t>(t.src_rank)] << " dst="
-		<< rank_labels[static_cast<size_t>(t.dst_rank)] << " side="
-		<< side_to_string(measured_side) << "\n";
+		<< rank_labels[static_cast<size_t>(t.dst_rank)] << "\n";
 	for (size_t i = 0; i < samples_us.size(); ++i) {
 		out << std::fixed << std::setprecision(REPORT_DIGITS) << samples_us[i]
 			<< "\n";

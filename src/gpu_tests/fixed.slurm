@@ -10,29 +10,25 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=1
 
-REPS=(1)
-ENVS=(
+REPS=(1) # задать число
+ENVS=( # закомментировать лишнее
 	auto
 	host
 )
-MODES=(
+MODES=( # закомментировать лишнее
 	one_to_one
 	# all_to_all
 )
-CASES=( # "bytes:iters:warmup"
-	"500000:6400:64"
-	# "4000000:1600:16"
+CASES=( # "bytes:iters:warmup", закомментировать лишнее
+	"500000:3200:16"
+	# "4000000:1600:8"
 	# "32000000:400:4"
 )
-TIMERS=(
+TIMERS=( # не удалять лишнее
 	all
 	mpi
 	cpu
 	cuda
-)
-SIDES=(
-	sender
-	receiver
 )
 
 OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
@@ -43,24 +39,10 @@ CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
 set -euo pipefail
 
 # Запуск в одной Slurm-задаче:
-# - по всем таймерам/сторонам (по умолчанию),
-# - либо только по одному, если передать TIMER и/или SIDE через env.
+# - по всем таймерам (по умолчанию),
+# - либо только по одному, если передать TIMER через env.
 if [[ -n "${TIMER:-}" ]]; then
 	TIMERS=("${TIMER}")
-fi
-if [[ -n "${SIDE:-}" ]]; then
-	case "${SIDE}" in
-		both)
-			SIDES=(sender receiver)
-			;;
-		sender|receiver)
-			SIDES=("${SIDE}")
-			;;
-		*)
-			echo "error: SIDE must be sender|receiver|both, got '${SIDE}'" >&2
-			exit 1
-			;;
-	esac
 fi
 
 export PATH="$OMPI_PATH/bin:$NETCDF_PATH/bin:$PATH"
@@ -102,27 +84,24 @@ for REP in "${REPS[@]}"; do
 	for ENV in "${ENVS[@]}"; do
 		for MODE in "${MODES[@]}"; do
 			for TIMER in "${TIMERS[@]}"; do
-				for SIDE in "${SIDES[@]}"; do
-					for CASE in "${CASES[@]}"; do
-						IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+				for CASE in "${CASES[@]}"; do
+					IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-						OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_size${SIDE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-						echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIDE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-						echo "  -> ${OUT_TXT}"
+					OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_t${TIMER}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+					echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+					echo "  -> ${OUT_TXT}"
 
-						srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
-							--bytes "${BYTES}" \
-							--warmup "${WARMUP}" \
-							--iters "${ITERS}" \
-							--env "${ENV}" \
-							--mode "${MODE}" \
-							--timer "${TIMER}" \
-							--side "${SIDE}" \
-							--out "${OUT_TXT}" \
-							-d
+					srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+						--bytes "${BYTES}" \
+						--warmup "${WARMUP}" \
+						--iters "${ITERS}" \
+						--env "${ENV}" \
+						--mode "${MODE}" \
+						--timer "${TIMER}" \
+						--out "${OUT_TXT}" \
+						-d
 
-						echo "OK  rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} size=${SIDE} bytes=${BYTES}"
-					done
+					echo "OK  rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} bytes=${BYTES}"
 				done
 			done
 		done

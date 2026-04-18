@@ -46,13 +46,6 @@ enum class Mode {
 	AllToAll,
 };
 
-/* С какой стороны пары измерять и сохранять raw в one-to-one. */
-enum class Side {
-	Sender,
-	Receiver,
-	Both,
-};
-
 /* Полный набор статистик одной пары src->dst; используют оба режима. */
 constexpr int ACK_FIELDS = 25;
 
@@ -66,7 +59,6 @@ struct Args {
 	int iters = 50;
 	Env env = Env::Auto;
 	Timer timer = Timer::Cuda;
-	Side side = Side::Receiver;
 	StatOut stat_out = StatOut::All;
 	Mode mode = Mode::OneToOne;
 	std::string out_path;
@@ -89,9 +81,6 @@ const char *mode_to_string(Mode mode);
 Env parse_env(const std::string &s, int rank);
 Timer parse_timer(const std::string &s, int rank);
 const char *timer_to_string(Timer t);
-Side parse_side(const std::string &s, int rank);
-const char *side_to_string(Side side);
-const char *side_to_short_tag(Side side);
 StatOut parse_stat_out(const std::string &s, int rank);
 Args parse_args(int argc, char **argv, int rank);
 bool check_host(Env env, bool cuda_aware);
@@ -113,7 +102,7 @@ void fill_ack(const std::vector<double> &samples_mpi_us,
 /* Сохраняет raw samples одной пары src->dst; используют оба режима. */
 void append_raw_samples(const Args &args, int rank, const Task &t,
 						const std::vector<std::string> &rank_labels,
-						const std::vector<double> &samples_us, Side measured_side);
+						const std::vector<double> &samples_us);
 /* Печатает строку pair/pair_mpi/pair_cpu/pair_cuda; используют оба режима. */
 std::string print_pair_line(const char *line_name, const std::string &src_label,
 							const std::string &dst_label, double avg_us, double med_us,

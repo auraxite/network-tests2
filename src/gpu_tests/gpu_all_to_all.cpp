@@ -16,6 +16,14 @@ static int alltoall_pair_tag(int src_rank, int dst_rank, int nproc) {
 	return src_rank * nproc + dst_rank;
 }
 
+/* Тег для парного MPI-сообщения с парой (t0_mpi, t0_clk) — отдельно от тега
+   данных, чтобы их Irecv/Send не пересекались. Сдвиг 2*nproc*nproc оставляет
+   диапазон [nproc*nproc .. 2*nproc*nproc) свободным под ack-сообщения в
+   schedule_all_to_all. */
+static int alltoall_ts_tag(int src_rank, int dst_rank, int nproc) {
+	return 2 * nproc * nproc + src_rank * nproc + dst_rank;
+}
+
 std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 								   bool check_host, int local_gpu,
 								   const std::vector<std::string> &rank_labels) {
@@ -63,7 +71,31 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				<< " measure=" << (measure ? 1 : 0);
 			debug_log(args.debug, rank, oss.str());
 		}
-		std::vector<MPI_Request> recv_req(static_cast<size_t>(nproc), MPI_REQUEST_NULL);
+
+		/* Pseudo-e2e (вариант C, как в network_test у Бегаева).
+		   Семантика: t0 ставится у ОТПРАВИТЕЛЯ перед D2H, t1 — у ПОЛУЧАТЕЛЯ
+		   после MPI_Wait + H2D. В сэмпл идёт t1 - t0_received, где t0_received
+		   пришёл по отдельному маленькому MPI-сообщению. Сэмпл лежит в
+		   samples[src] на стороне получателя.
+		   ВНИМАНИЕ: t0 и t1 — это значения часов РАЗНЫХ процессов на разных
+		   узлах. Реальная величина измерения = (истинная e2e) + (offset_dst -
+		   offset_src). Без NTP/PTP-синхронизации часов между узлами числа
+		   систематически смещены и могут быть отрицательными — это известное
+		   свойство данной схемы. Для CUDA-таймера межузлового аналога нет:
+		   сэмпл считается receiver-side от старта recv-фазы до конца H2D. */
+
+		struct PseudoE2eHeader {
+			double t0_mpi_s;   /* MPI_Wtime() отправителя, секунды */
+			double t0_clk_us;  /* clock_gettime_wrapper() отправителя, мкс */
+		};
+
+		std::vector<MPI_Request> recv_data_req(static_cast<size_t>(nproc),
+											   MPI_REQUEST_NULL);
+		std::vector<MPI_Request> recv_ts_req(static_cast<size_t>(nproc),
+											 MPI_REQUEST_NULL);
+		std::vector<PseudoE2eHeader> recv_ts(
+			static_cast<size_t>(nproc), PseudoE2eHeader{0.0, 0.0});
+
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 			if (src_rank == rank)
 				continue;
@@ -77,124 +109,84 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			}
 			mpi_ok(MPI_Irecv(recv_buf, count, MPI_BYTE, src_rank,
 							 alltoall_pair_tag(src_rank, rank, nproc),
-							 MPI_COMM_WORLD, &recv_req[static_cast<size_t>(src_rank)]),
-				   "MPI_Irecv(all_to_all)");
+							 MPI_COMM_WORLD,
+							 &recv_data_req[static_cast<size_t>(src_rank)]),
+				   "MPI_Irecv(all_to_all data)");
+			mpi_ok(MPI_Irecv(&recv_ts[static_cast<size_t>(src_rank)],
+							 sizeof(PseudoE2eHeader), MPI_BYTE, src_rank,
+							 alltoall_ts_tag(src_rank, rank, nproc),
+							 MPI_COMM_WORLD,
+							 &recv_ts_req[static_cast<size_t>(src_rank)]),
+				   "MPI_Irecv(all_to_all ts)");
 		}
 
+		/* CUDA-таймер: receiver-side fallback (cross-node CUDA-pseudo-e2e не
+		   определён). Старт — после выставления Irecv, до прихода данных. */
 		cudaEvent_t ev_start = nullptr;
 		cudaEvent_t ev_stop = nullptr;
-		cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
-		cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
+		if (measure) {
+			cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
+			cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
+			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
+		}
 
+		debug_log(args.debug, rank, "all_to_all SEND_PHASE_BEGIN");
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			if (dst_rank == rank)
 				continue;
-
 			char *send_buf = send_bufs[static_cast<size_t>(dst_rank)];
-			const double t0_mpi = MPI_Wtime();
-			const double t0_clk = clock_gettime_wrapper();
-			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
+
+			/* t0 на стороне отправителя: ДО D2H. Это и есть «начало» pseudo-e2e
+			   для пары (rank → dst_rank). */
+			PseudoE2eHeader hdr{};
+			hdr.t0_mpi_s = MPI_Wtime();
+			hdr.t0_clk_us = clock_gettime_wrapper();
 
 			if (check_host) {
-				{
-					std::ostringstream oss;
-					oss << "all_to_all D2H_BEGIN dst=" << dst_rank
-						<< " bytes=" << args.nbytes << " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
-				cuda_ok(cudaMemcpy(send_buf, d_send, args.nbytes, cudaMemcpyDeviceToHost),
+				cuda_ok(cudaMemcpy(send_buf, d_send, args.nbytes,
+								   cudaMemcpyDeviceToHost),
 						"D2H(all_to_all)");
-				{
-					std::ostringstream oss;
-					oss << "all_to_all D2H_DONE dst=" << dst_rank << " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
-				{
-					std::ostringstream oss;
-					oss << "all_to_all SEND_BEGIN dst=" << dst_rank
-						<< " tag=" << alltoall_pair_tag(rank, dst_rank, nproc)
-						<< " bytes=" << count << " path=host"
-						<< " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
 				mpi_ok(MPI_Send(send_buf, count, MPI_BYTE, dst_rank,
 								alltoall_pair_tag(rank, dst_rank, nproc),
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all host)");
-				{
-					std::ostringstream oss;
-					oss << "all_to_all SEND_DONE path=host dst=" << dst_rank
-						<< " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
 			} else {
-				{
-					std::ostringstream oss;
-					oss << "all_to_all SEND_BEGIN dst=" << dst_rank
-						<< " tag=" << alltoall_pair_tag(rank, dst_rank, nproc)
-						<< " bytes=" << count << " path=device"
-						<< " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
 				mpi_ok(MPI_Send(send_buf, count, MPI_BYTE, dst_rank,
 								alltoall_pair_tag(rank, dst_rank, nproc),
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all dev)");
-				{
-					std::ostringstream oss;
-					oss << "all_to_all SEND_DONE path=device dst=" << dst_rank
-						<< " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
 			}
-
-			cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
-			cuda_ok(cudaEventSynchronize(ev_stop), "cudaEventSynchronize(stop)");
-
-			if (measure) {
-				float elapsed_ms = 0.0f;
-				cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop),
-						"cudaEventElapsedTime");
-				const double t1_mpi = MPI_Wtime();
-				const double t1_clk = clock_gettime_wrapper();
-				(*samples_mpi_us)[static_cast<size_t>(dst_rank)].push_back(
-					(t1_mpi - t0_mpi) * 1e6);
-				(*samples_cpu_us)[static_cast<size_t>(dst_rank)].push_back(t1_clk - t0_clk);
-				(*samples_gpu_us)[static_cast<size_t>(dst_rank)].push_back(
-					static_cast<double>(elapsed_ms) * 1e3);
-			}
+			mpi_ok(MPI_Send(&hdr, sizeof(PseudoE2eHeader), MPI_BYTE, dst_rank,
+							alltoall_ts_tag(rank, dst_rank, nproc),
+							MPI_COMM_WORLD),
+				   "MPI_Send(all_to_all ts)");
 		}
+		debug_log(args.debug, rank, "all_to_all SEND_PHASE_DONE");
 
-		cudaEventDestroy(ev_start);
-		cudaEventDestroy(ev_stop);
-
-		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-			if (src_rank == rank)
-				continue;
-			{
-				std::ostringstream oss;
-				oss << "all_to_all WAIT_RECV_BEGIN src=" << src_rank
-					<< " tag=" << alltoall_pair_tag(src_rank, rank, nproc)
-					<< " idx=" << iter_idx;
-				debug_log(args.debug, rank, oss.str());
-			}
-			mpi_ok(MPI_Wait(&recv_req[static_cast<size_t>(src_rank)], MPI_STATUS_IGNORE),
-				   "MPI_Wait(all_to_all recv)");
+		debug_log(args.debug, rank, "all_to_all RECV_PHASE_BEGIN");
+		const int n_peers = nproc - 1;
+		for (int k = 0; k < n_peers; ++k) {
+			int idx = MPI_UNDEFINED;
+			mpi_ok(MPI_Waitany(nproc, recv_data_req.data(), &idx,
+							   MPI_STATUS_IGNORE),
+				   "MPI_Waitany(all_to_all data)");
+			if (idx == MPI_UNDEFINED)
+				break;
+			const int src_rank = idx;
 			{
 				std::ostringstream oss;
 				oss << "all_to_all WAIT_RECV_DONE src=" << src_rank
 					<< " idx=" << iter_idx;
 				debug_log(args.debug, rank, oss.str());
 			}
+			/* Дожидаемся парного timestamp-сообщения от того же src. */
+			mpi_ok(MPI_Wait(&recv_ts_req[static_cast<size_t>(src_rank)],
+							MPI_STATUS_IGNORE),
+				   "MPI_Wait(all_to_all ts)");
 			if (check_host) {
-				{
-					std::ostringstream oss;
-					oss << "all_to_all H2D_BEGIN src=" << src_rank
-						<< " bytes=" << args.nbytes << " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
-				cuda_ok(cudaMemcpy(d_recv, recv_bufs[static_cast<size_t>(src_rank)], args.nbytes,
-								   cudaMemcpyHostToDevice),
+				cuda_ok(cudaMemcpy(d_recv,
+								   recv_bufs[static_cast<size_t>(src_rank)],
+								   args.nbytes, cudaMemcpyHostToDevice),
 						"H2D(all_to_all)");
 				{
 					std::ostringstream oss;
@@ -203,6 +195,33 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					debug_log(args.debug, rank, oss.str());
 				}
 			}
+			if (measure) {
+				/* t1 на стороне получателя: ПОСЛЕ H2D. */
+				const double t1_mpi_s = MPI_Wtime();
+				const double t1_clk_us = clock_gettime_wrapper();
+				const PseudoE2eHeader hdr =
+					recv_ts[static_cast<size_t>(src_rank)];
+				const double mpi_sample_us = (t1_mpi_s - hdr.t0_mpi_s) * 1e6;
+				const double cpu_sample_us = t1_clk_us - hdr.t0_clk_us;
+				(*samples_mpi_us)[static_cast<size_t>(src_rank)].push_back(
+					mpi_sample_us);
+				(*samples_cpu_us)[static_cast<size_t>(src_rank)].push_back(
+					cpu_sample_us);
+				cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
+				cuda_ok(cudaEventSynchronize(ev_stop),
+						"cudaEventSynchronize(stop)");
+				float elapsed_ms = 0.0f;
+				cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop),
+						"cudaEventElapsedTime");
+				(*samples_gpu_us)[static_cast<size_t>(src_rank)].push_back(
+					static_cast<double>(elapsed_ms) * 1e3);
+			}
+		}
+		debug_log(args.debug, rank, "all_to_all RECV_PHASE_DONE");
+
+		if (measure) {
+			cuda_ok(cudaEventDestroy(ev_start), "cudaEventDestroy(start)");
+			cuda_ok(cudaEventDestroy(ev_stop), "cudaEventDestroy(stop)");
 		}
 		{
 			std::ostringstream oss;
@@ -212,17 +231,21 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		}
 	};
 
+	/* Сэмплы лежат по «источнику» src: для каждого src != rank копится N сэмплов
+	   (по числу итераций) — это pseudo-e2e задержка ребра (src → этот ранг),
+	   полученная как t1(этот ранг) - t0(src), где t0 пришёл по MPI отдельным
+	   сообщением. Числа смещены на разницу часов узлов src и текущего ранга. */
 	std::vector<std::vector<double>> samples_mpi_us(static_cast<size_t>(nproc));
 	std::vector<std::vector<double>> samples_cpu_us(static_cast<size_t>(nproc));
 	std::vector<std::vector<double>> samples_gpu_us(static_cast<size_t>(nproc));
-	for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
-		if (dst_rank == rank)
+	for (int src_rank = 0; src_rank < nproc; ++src_rank) {
+		if (src_rank == rank)
 			continue;
-		samples_mpi_us[static_cast<size_t>(dst_rank)].reserve(
+		samples_mpi_us[static_cast<size_t>(src_rank)].reserve(
 			static_cast<size_t>(std::max(1, args.iters)));
-		samples_cpu_us[static_cast<size_t>(dst_rank)].reserve(
+		samples_cpu_us[static_cast<size_t>(src_rank)].reserve(
 			static_cast<size_t>(std::max(1, args.iters)));
-		samples_gpu_us[static_cast<size_t>(dst_rank)].reserve(
+		samples_gpu_us[static_cast<size_t>(src_rank)].reserve(
 			static_cast<size_t>(std::max(1, args.iters)));
 	}
 
@@ -236,30 +259,29 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		do_one(i, true, &samples_mpi_us, &samples_cpu_us, &samples_gpu_us);
 	debug_log(args.debug, rank, "all_to_all ITERS_DONE");
 
-	for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
-		if (dst_rank == rank)
+	/* Этот ранг — получатель пары (src → rank). Сохраняем его сэмплы как
+	   raw-файл для каждой такой пары. */
+	for (int src_rank = 0; src_rank < nproc; ++src_rank) {
+		if (src_rank == rank)
 			continue;
 		Task t{};
-		t.src_rank = rank;
+		t.src_rank = src_rank;
 		t.src_gpu = local_gpu;
-		t.dst_rank = dst_rank;
+		t.dst_rank = rank;
 		t.dst_gpu = local_gpu;
 		switch (args.timer) {
 		case Timer::All:
 		case Timer::Mpi:
 			append_raw_samples(args, rank, t, rank_labels,
-							   samples_mpi_us[static_cast<size_t>(dst_rank)],
-							   Side::Sender);
+							   samples_mpi_us[static_cast<size_t>(src_rank)]);
 			break;
 		case Timer::Cpu:
 			append_raw_samples(args, rank, t, rank_labels,
-							   samples_cpu_us[static_cast<size_t>(dst_rank)],
-							   Side::Sender);
+							   samples_cpu_us[static_cast<size_t>(src_rank)]);
 			break;
 		case Timer::Cuda:
 			append_raw_samples(args, rank, t, rank_labels,
-							   samples_gpu_us[static_cast<size_t>(dst_rank)],
-							   Side::Sender);
+							   samples_gpu_us[static_cast<size_t>(src_rank)]);
 			break;
 		}
 	}
@@ -278,6 +300,9 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				   static_cast<size_t>(ACK_FIELDS);
 	};
 
+	/* Для pseudo-e2e ячейку (src, dst) формирует получатель (rank == dst):
+	   у него лежат сэмплы samples_*[src] для пары src → dst. Ранг 0 собирает
+	   итоговые ack от всех получателей в общую матрицу results. */
 	for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			if (src_rank == dst_rank) {
@@ -286,11 +311,11 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				continue;
 			}
 
-			if (rank == src_rank) {
-				fill_ack(samples_mpi_us[static_cast<size_t>(dst_rank)],
-											 samples_cpu_us[static_cast<size_t>(dst_rank)],
-											 samples_gpu_us[static_cast<size_t>(dst_rank)], args,
-											 ack.data());
+			if (rank == dst_rank) {
+				fill_ack(samples_mpi_us[static_cast<size_t>(src_rank)],
+						 samples_cpu_us[static_cast<size_t>(src_rank)],
+						 samples_gpu_us[static_cast<size_t>(src_rank)], args,
+						 ack.data());
 				if (rank == 0) {
 					std::copy(ack.begin(), ack.end(), result_ptr(src_rank, dst_rank));
 				} else {
@@ -306,7 +331,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				}
 			} else if (rank == 0) {
 				mpi_ok(MPI_Recv(result_ptr(src_rank, dst_rank), ACK_FIELDS, MPI_DOUBLE,
-								src_rank,
+								dst_rank,
 								nproc * nproc + alltoall_pair_tag(src_rank, dst_rank, nproc),
 								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 					   "MPI_Recv ack(all_to_all)");
