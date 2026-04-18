@@ -16,14 +16,6 @@ static int alltoall_pair_tag(int src_rank, int dst_rank, int nproc) {
 	return src_rank * nproc + dst_rank;
 }
 
-/* Тег для парного MPI-сообщения с парой (t0_mpi, t0_clk) — отдельно от тега
-   данных, чтобы их Irecv/Send не пересекались. Сдвиг 2*nproc*nproc оставляет
-   диапазон [nproc*nproc .. 2*nproc*nproc) свободным под ack-сообщения в
-   schedule_all_to_all. */
-static int alltoall_ts_tag(int src_rank, int dst_rank, int nproc) {
-	return 2 * nproc * nproc + src_rank * nproc + dst_rank;
-}
-
 std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 								   bool check_host, int local_gpu,
 								   const std::vector<std::string> &rank_labels) {
@@ -72,29 +64,25 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			debug_log(args.debug, rank, oss.str());
 		}
 
-		/* Pseudo-e2e (вариант C, как в network_test у Бегаева).
-		   Семантика: t0 ставится у ОТПРАВИТЕЛЯ перед D2H, t1 — у ПОЛУЧАТЕЛЯ
-		   после MPI_Wait + H2D. В сэмпл идёт t1 - t0_received, где t0_received
-		   пришёл по отдельному маленькому MPI-сообщению. Сэмпл лежит в
-		   samples[src] на стороне получателя.
-		   ВНИМАНИЕ: t0 и t1 — это значения часов РАЗНЫХ процессов на разных
-		   узлах. Реальная величина измерения = (истинная e2e) + (offset_dst -
-		   offset_src). Без NTP/PTP-синхронизации часов между узлами числа
-		   систематически смещены и могут быть отрицательными — это известное
-		   свойство данной схемы. Для CUDA-таймера межузлового аналога нет:
-		   сэмпл считается receiver-side от старта recv-фазы до конца H2D. */
+		/* Receiver-side e2e (вариант B). Семантика: t0 берётся у ПОЛУЧАТЕЛЯ
+		   один раз на итерацию — сразу после выставления всех MPI_Irecv (это
+		   «старт раунда» с точки зрения этого ранга). t1 берётся у того же
+		   получателя для каждого пришедшего src — после MPI_Waitany и H2D.
+		   Сэмпл = t1 - t0 хранится в samples[src] и описывает «сколько мне
+		   пришлось ждать и получить данные от конкретного src в условиях
+		   текущего all-to-all раунда».
 
-		struct PseudoE2eHeader {
-			double t0_mpi_s;   /* MPI_Wtime() отправителя, секунды */
-			double t0_clk_us;  /* clock_gettime_wrapper() отправителя, мкс */
-		};
+		   Все метки времени снимаются на ОДНОМ процессе и одних часах, поэтому
+		   отрицательных значений быть не может; межузловой синхронизации часов
+		   не требуется. В сэмпл попадает: ожидание сети + Recv + (если host) H2D.
+		   D2H/Send отправителя физически выполняются параллельно ВНУТРИ интервала
+		   [t0, t1] (отправитель тоже только что начал свой раунд), поэтому
+		   реальная дорога «GPU отправителя → GPU получателя» в основном входит
+		   в замер; недоучёт ограничен только зазором «вход в send-фазу» у
+		   отправителя — единицы микросекунд. */
 
 		std::vector<MPI_Request> recv_data_req(static_cast<size_t>(nproc),
 											   MPI_REQUEST_NULL);
-		std::vector<MPI_Request> recv_ts_req(static_cast<size_t>(nproc),
-											 MPI_REQUEST_NULL);
-		std::vector<PseudoE2eHeader> recv_ts(
-			static_cast<size_t>(nproc), PseudoE2eHeader{0.0, 0.0});
 
 		for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 			if (src_rank == rank)
@@ -112,21 +100,17 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 							 MPI_COMM_WORLD,
 							 &recv_data_req[static_cast<size_t>(src_rank)]),
 				   "MPI_Irecv(all_to_all data)");
-			mpi_ok(MPI_Irecv(&recv_ts[static_cast<size_t>(src_rank)],
-							 sizeof(PseudoE2eHeader), MPI_BYTE, src_rank,
-							 alltoall_ts_tag(src_rank, rank, nproc),
-							 MPI_COMM_WORLD,
-							 &recv_ts_req[static_cast<size_t>(src_rank)]),
-				   "MPI_Irecv(all_to_all ts)");
 		}
 
-		/* CUDA-таймер: receiver-side fallback (cross-node CUDA-pseudo-e2e не
-		   определён). Старт — после выставления Irecv, до прихода данных. */
+		/* Единая стартовая метка раунда у получателя — после Irecv, до send-фазы. */
+		double t0_mpi_s = 0.0;
+		double t0_clk_us = 0.0;
 		cudaEvent_t ev_start = nullptr;
-		cudaEvent_t ev_stop = nullptr;
+		std::vector<cudaEvent_t> ev_stop(static_cast<size_t>(nproc), nullptr);
 		if (measure) {
 			cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
-			cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
+			t0_mpi_s = MPI_Wtime();
+			t0_clk_us = clock_gettime_wrapper();
 			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 		}
 
@@ -135,12 +119,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			if (dst_rank == rank)
 				continue;
 			char *send_buf = send_bufs[static_cast<size_t>(dst_rank)];
-
-			/* t0 на стороне отправителя: ДО D2H. Это и есть «начало» pseudo-e2e
-			   для пары (rank → dst_rank). */
-			PseudoE2eHeader hdr{};
-			hdr.t0_mpi_s = MPI_Wtime();
-			hdr.t0_clk_us = clock_gettime_wrapper();
 
 			if (check_host) {
 				cuda_ok(cudaMemcpy(send_buf, d_send, args.nbytes,
@@ -156,10 +134,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 								MPI_COMM_WORLD),
 					   "MPI_Send(all_to_all dev)");
 			}
-			mpi_ok(MPI_Send(&hdr, sizeof(PseudoE2eHeader), MPI_BYTE, dst_rank,
-							alltoall_ts_tag(rank, dst_rank, nproc),
-							MPI_COMM_WORLD),
-				   "MPI_Send(all_to_all ts)");
 		}
 		debug_log(args.debug, rank, "all_to_all SEND_PHASE_DONE");
 
@@ -179,10 +153,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					<< " idx=" << iter_idx;
 				debug_log(args.debug, rank, oss.str());
 			}
-			/* Дожидаемся парного timestamp-сообщения от того же src. */
-			mpi_ok(MPI_Wait(&recv_ts_req[static_cast<size_t>(src_rank)],
-							MPI_STATUS_IGNORE),
-				   "MPI_Wait(all_to_all ts)");
 			if (check_host) {
 				cuda_ok(cudaMemcpy(d_recv,
 								   recv_bufs[static_cast<size_t>(src_rank)],
@@ -196,22 +166,27 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				}
 			}
 			if (measure) {
-				/* t1 на стороне получателя: ПОСЛЕ H2D. */
+				/* t1 у получателя: ПОСЛЕ H2D. Сэмпл = t1 - t0 на одних часах. */
 				const double t1_mpi_s = MPI_Wtime();
 				const double t1_clk_us = clock_gettime_wrapper();
-				const PseudoE2eHeader hdr =
-					recv_ts[static_cast<size_t>(src_rank)];
-				const double mpi_sample_us = (t1_mpi_s - hdr.t0_mpi_s) * 1e6;
-				const double cpu_sample_us = t1_clk_us - hdr.t0_clk_us;
+				const double mpi_sample_us = (t1_mpi_s - t0_mpi_s) * 1e6;
+				const double cpu_sample_us = t1_clk_us - t0_clk_us;
 				(*samples_mpi_us)[static_cast<size_t>(src_rank)].push_back(
 					mpi_sample_us);
 				(*samples_cpu_us)[static_cast<size_t>(src_rank)].push_back(
 					cpu_sample_us);
-				cuda_ok(cudaEventRecord(ev_stop), "cudaEventRecord(stop)");
-				cuda_ok(cudaEventSynchronize(ev_stop),
-						"cudaEventSynchronize(stop)");
+				/* Свой ev_stop на каждый src, чтобы CUDA-сэмпл считался от
+				   общего ev_start до момента завершения H2D для этого src,
+				   а не перетирался следующей итерацией Waitany. */
+				cudaEvent_t &ev_stop_src = ev_stop[static_cast<size_t>(src_rank)];
+				cuda_ok(cudaEventCreate(&ev_stop_src),
+						"cudaEventCreate(stop[src])");
+				cuda_ok(cudaEventRecord(ev_stop_src),
+						"cudaEventRecord(stop[src])");
+				cuda_ok(cudaEventSynchronize(ev_stop_src),
+						"cudaEventSynchronize(stop[src])");
 				float elapsed_ms = 0.0f;
-				cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop),
+				cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop_src),
 						"cudaEventElapsedTime");
 				(*samples_gpu_us)[static_cast<size_t>(src_rank)].push_back(
 					static_cast<double>(elapsed_ms) * 1e3);
@@ -220,8 +195,14 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		debug_log(args.debug, rank, "all_to_all RECV_PHASE_DONE");
 
 		if (measure) {
-			cuda_ok(cudaEventDestroy(ev_start), "cudaEventDestroy(start)");
-			cuda_ok(cudaEventDestroy(ev_stop), "cudaEventDestroy(stop)");
+			if (ev_start)
+				cuda_ok(cudaEventDestroy(ev_start), "cudaEventDestroy(start)");
+			for (int src_rank = 0; src_rank < nproc; ++src_rank) {
+				if (ev_stop[static_cast<size_t>(src_rank)])
+					cuda_ok(cudaEventDestroy(
+								ev_stop[static_cast<size_t>(src_rank)]),
+							"cudaEventDestroy(stop[src])");
+			}
 		}
 		{
 			std::ostringstream oss;
@@ -232,9 +213,10 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	};
 
 	/* Сэмплы лежат по «источнику» src: для каждого src != rank копится N сэмплов
-	   (по числу итераций) — это pseudo-e2e задержка ребра (src → этот ранг),
-	   полученная как t1(этот ранг) - t0(src), где t0 пришёл по MPI отдельным
-	   сообщением. Числа смещены на разницу часов узлов src и текущего ранга. */
+	   (по числу итераций) — это receiver-side e2e задержка ребра (src → этот
+	   ранг), измеренная на часах ПОЛУЧАТЕЛЯ как t1 - t0, где t0 — общая для
+	   итерации стартовая метка раунда у этого ранга, а t1 — момент завершения
+	   H2D от данного src. */
 	std::vector<std::vector<double>> samples_mpi_us(static_cast<size_t>(nproc));
 	std::vector<std::vector<double>> samples_cpu_us(static_cast<size_t>(nproc));
 	std::vector<std::vector<double>> samples_gpu_us(static_cast<size_t>(nproc));
@@ -300,7 +282,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				   static_cast<size_t>(ACK_FIELDS);
 	};
 
-	/* Для pseudo-e2e ячейку (src, dst) формирует получатель (rank == dst):
+	/* Для receiver-side e2e ячейку (src, dst) формирует получатель (rank == dst):
 	   у него лежат сэмплы samples_*[src] для пары src → dst. Ранг 0 собирает
 	   итоговые ack от всех получателей в общую матрицу results. */
 	for (int src_rank = 0; src_rank < nproc; ++src_rank) {

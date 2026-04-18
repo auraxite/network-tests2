@@ -15,7 +15,10 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
 	const bool is_receiver = (rank == t.dst_rank);
-	const bool collect_raw_samples_here = is_sender;
+	/* Таймер закреплён за получателем: сэмпл = MPI_Recv (ожидание сети + сам Recv)
+	   плюс H2D у получателя. На одних часах, без межузловой синхронизации.
+	   Близко по смыслу к «когда у получателя данные оказались на GPU». */
+	const bool collect_raw_samples_here = is_receiver;
 	if (!is_sender && !is_receiver)
 		return ack;
 	if (t.src_rank == t.dst_rank) {
@@ -164,7 +167,7 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	cudaEvent_t ev_start = nullptr;
 	cudaEvent_t ev_stop = nullptr;
 	if (collect_raw_samples_here) {
-		cuda_ok(cudaSetDevice(t.src_gpu), "cudaSetDevice(timing)");
+		cuda_ok(cudaSetDevice(t.dst_gpu), "cudaSetDevice(timing)");
 		cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
 		cuda_ok(cudaEventCreate(&ev_stop), "cudaEventCreate(stop)");
 	}

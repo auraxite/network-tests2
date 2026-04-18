@@ -503,7 +503,7 @@ def draw_heatmap(
 	fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
 	masked = np.ma.masked_invalid(matrix)
-	# origin="lower": ряд/ранг 0 внизу, ось ординат растёт снизу вверх (как привычные координаты).
+	# origin="upper": ряд/ранг 0 сверху, ось ординат растёт сверху вниз (как табличная нумерация).
 	if render_style == "plain":
 		white_bg = np.zeros(matrix.shape, dtype=float)
 		im = ax.imshow(
@@ -513,12 +513,12 @@ def draw_heatmap(
 			vmax=1.0,
 			aspect="equal",
 			interpolation="nearest",
-			origin="lower",
+			origin="upper",
 		)
 		text_color = "black"
 	else:
 		im = ax.imshow(
-			masked, cmap=cmap, aspect="equal", interpolation="nearest", origin="lower"
+			masked, cmap=cmap, aspect="equal", interpolation="nearest", origin="upper"
 		)
 		text_color = "white"
 
