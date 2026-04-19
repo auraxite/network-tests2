@@ -7,7 +7,6 @@ from __future__ import annotations
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
   -o, --out-dir    output directory for PNG files
-  -t, --timer      choose timer source: mpi | cpu | cuda (default: mpi)
   --sort, --sorted enable raw sorting pipeline (default: none)
 """
 
@@ -26,7 +25,6 @@ import numpy as np
 from matplotlib.colors import Colormap, LinearSegmentedColormap, ListedColormap
 
 
-PAIR_TIMER_SOURCES = ("mpi", "cpu", "cuda")
 RENDER_STYLES = ("heatmap", "plain")
 
 _PAIR_HEAD = (
@@ -84,11 +82,9 @@ DECIMAL_MB = 1_000_000
 WARMUP_LINE_RE = re.compile(r"^Warmup:\s*(\d+)\s*$")
 ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
 TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
-TIMER_LINE_RE = re.compile(r"^Timer:\s*(\S+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(r"(?:^|_)(one_to_one|all_to_all)(?:_|$)", re.I)
-TIMER_TAG_RE = re.compile(r"(?:^|_)(?:timer|t)(mpi|cpu|cuda|all)(?:_|$)", re.I)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
 ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
@@ -99,6 +95,8 @@ LATENCY_GR = LinearSegmentedColormap.from_list(
 	["#045a2d", "#16a34a", "#f97316", "#dc2626", "#7f1d1d"],
 	N=256,
 )
+
+TOTAL_TIME_DIGITS = 3
 
 def _short_host(hostname: str) -> str:
 	return hostname.split(".", 1)[0].strip() or hostname
@@ -188,18 +186,6 @@ def pair_label_to_rank(label: str, meta: dict[str, Any]) -> int | None:
 	v = mapping.get(label)
 	return v if isinstance(v, int) else None
 
-def pair_source_of_match(m: re.Match[str], meta: dict[str, Any]) -> str:
-	src = m.group(1)
-	if src is None:
-		src = str(meta.get("timer", "mpi"))
-	src = src.lower()
-	if src == "gpu":
-		return "cuda"
-	return src
-
-def pair_source_allowed(m: re.Match[str], timer_source: str, meta: dict[str, Any]) -> bool:
-	return pair_source_of_match(m, meta) == timer_source
-
 def host_stem_for_output(meta: dict[str, Any], rank_hosts: list[str] | None) -> str:
 	if rank_hosts:
 		short = [_short_host(h) for h in rank_hosts]
@@ -229,10 +215,16 @@ def resolve_colormap(name: str) -> Colormap:
 	cmap.set_bad(color="white", alpha=1.0)
 	return cmap
 
-"""Разбор текста лога в метаданные и список пар rank->rank."""
+"""Разбор текста лога в метаданные и список пар rank->rank.
+
+Принимаются строки вида `pair ...` и `pair_mpi/_cpu/_cuda/_gpu ...` без
+фильтрации по источнику таймера: считается, что в конкретном запуске C++
+бенчмарк пишет только один тип `pair_*` строк, либо пользователь сознательно
+запустил `--timer all` и хочет видеть последний попавшийся (last-wins по
+ячейке (src,dst)).
+"""
 def parse_gpu_one_to_one_text(
 	text: str,
-	timer_source: str,
 ) -> tuple[dict[str, Any], list[tuple[int, int, list[float]]]]:
 	meta: dict[str, Any] = {}
 	pairs: list[tuple[int, int, list[float]]] = []
@@ -259,11 +251,9 @@ def parse_gpu_one_to_one_text(
 			meta["iters"] = int(m.group(1))
 		elif (m := TOTAL_TIME_LINE_RE.match(line)):
 			meta["total_elapsed_s"] = float(m.group(1))
-		elif (m := TIMER_LINE_RE.match(line)):
-			meta["timer"] = normalize_timer_token(m.group(1))
 		else:
 			m = PAIR_LINE_RE.match(line)
-			if m and pair_source_allowed(m, timer_source, meta):
+			if m:
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -273,7 +263,7 @@ def parse_gpu_one_to_one_text(
 				pairs.append((src_r, dst_r, vals))
 				continue
 			nan6 = [math.nan, math.nan, math.nan, math.nan, math.nan, math.nan]
-			if (m := PAIR_AVG_ONLY.match(line)) and pair_source_allowed(m, timer_source, meta):
+			if (m := PAIR_AVG_ONLY.match(line)):
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -282,7 +272,7 @@ def parse_gpu_one_to_one_text(
 				vals = [v, nan6[1], nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			if (m := PAIR_MED_ONLY.match(line)) and pair_source_allowed(m, timer_source, meta):
+			if (m := PAIR_MED_ONLY.match(line)):
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -291,7 +281,7 @@ def parse_gpu_one_to_one_text(
 				vals = [nan6[0], v, nan6[2], nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			if (m := PAIR_MIN_ONLY.match(line)) and pair_source_allowed(m, timer_source, meta):
+			if (m := PAIR_MIN_ONLY.match(line)):
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -300,7 +290,7 @@ def parse_gpu_one_to_one_text(
 				vals = [nan6[0], nan6[1], v, nan6[3], nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			if (m := PAIR_MAX_ONLY.match(line)) and pair_source_allowed(m, timer_source, meta):
+			if (m := PAIR_MAX_ONLY.match(line)):
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -309,7 +299,7 @@ def parse_gpu_one_to_one_text(
 				vals = [nan6[0], nan6[1], nan6[2], v, nan6[4], nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			if (m := PAIR_VAR_ONLY.match(line)) and pair_source_allowed(m, timer_source, meta):
+			if (m := PAIR_VAR_ONLY.match(line)):
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -318,7 +308,7 @@ def parse_gpu_one_to_one_text(
 				vals = [nan6[0], nan6[1], nan6[2], nan6[3], v, nan6[5]]
 				pairs.append((src_r, dst_r, vals))
 				continue
-			if (m := PAIR_STD_ONLY.match(line)) and pair_source_allowed(m, timer_source, meta):
+			if (m := PAIR_STD_ONLY.match(line)):
 				src_r = pair_label_to_rank(m.group(2), meta)
 				dst_r = pair_label_to_rank(m.group(3), meta)
 				if src_r is None or dst_r is None:
@@ -355,17 +345,26 @@ def fill_matrices(
 	return mats
 
 
-"""Собирает многострочный заголовок графика."""
+"""Собирает многострочный заголовок графика.
+
+В стиле `plain` (без colorbar) единицу измерения дописываем прямо в заголовок
+метрики, например «Медиана задержек (мкс)». В стиле `heatmap` единица показана
+на подписи colorbar, поэтому в заголовке её не дублируем.
+"""
 def title_block(
 	meta: dict[str, Any],
 	metric: str,
 	*,
 	n: int,
 	rank_hosts: list[str] | None,
+	render_style: str = "heatmap",
 ) -> str:
 	env = str(meta.get("env", "unknown"))
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
+	if render_style == "plain":
+		unit = METRIC_CBAR_LABEL.get(metric, "мкс")
+		title_line = f"{title_line} ({unit})"
 	parts: list[str] = []
 	if rank_hosts:
 		parts.append(nodes_title(rank_hosts))
@@ -388,19 +387,11 @@ def format_size_mb_decimal(b: int) -> str:
 	return f"size: {text} MB"
 
 
-def normalize_timer_token(value: str) -> str:
-	v = value.strip().lower()
-	if v == "gpu":
-		return "cuda"
-	return v
-
-
-def run_tags(source_path: Path | None, meta: dict[str, Any], timer_source: str) -> dict[str, str]:
+def run_tags(source_path: Path | None, meta: dict[str, Any]) -> dict[str, str]:
 	stem = source_path.stem if source_path is not None else ""
 	env_meta = str(meta.get("env", "unknown")).lower()
 	env_default = "host" if env_meta == "host" else ("auto" if env_meta == "gpudirect" else env_meta)
 	mode_default = str(meta.get("mode", "unknown")).lower()
-	timer_default = normalize_timer_token(str(meta.get("timer", timer_source)))
 
 	def pick(pattern: re.Pattern[str], fallback: str) -> str:
 		m = pattern.search(stem)
@@ -410,7 +401,6 @@ def run_tags(source_path: Path | None, meta: dict[str, Any], timer_source: str) 
 		"rep": pick(REP_TAG_RE, "na"),
 		"env": pick(ENV_TAG_RE, env_default),
 		"mode": pick(MODE_TAG_RE, mode_default),
-		"timer": normalize_timer_token(pick(TIMER_TAG_RE, timer_default)),
 		"b": pick(BYTES_TAG_RE, str(meta.get("bytes", "na"))),
 		"w": pick(WARMUP_TAG_RE, str(meta.get("warmup", "na"))),
 		"i": pick(ITERS_TAG_RE, str(meta.get("iters", "na"))),
@@ -420,7 +410,7 @@ def run_tags(source_path: Path | None, meta: dict[str, Any], timer_source: str) 
 def total_time_line(meta: dict[str, Any]) -> str:
 	v = meta.get("total_elapsed_s")
 	if isinstance(v, (int, float)):
-		return f"затраченное время: {float(v):.6f} сек"
+		return f"затраченное время: {float(v):.{TOTAL_TIME_DIGITS}f} сек"
 	return "затраченное время: n/a"
 
 
@@ -440,7 +430,6 @@ def param_block(
 	meta: dict[str, Any], tags: dict[str, str], total_time: str, creation_time: str
 ) -> str:
 	lines: list[str] = []
-	lines.append(f"timer: {tags['timer']}")
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
 	lines.append(f"b: {tags['b']} байт")
 	lines.append(f"сгенерировано: {creation_time}")
@@ -580,13 +569,12 @@ def render_one_text(
 	*,
 	label: str,
 	source_path: Path | None = None,
-	timer_source: str = "mpi",
 	render_style: str = "heatmap",
 ) -> int:
-	meta, pairs = parse_gpu_one_to_one_text(text, timer_source)
+	meta, pairs = parse_gpu_one_to_one_text(text)
 	if not pairs:
 		print(
-			f"gpu_render: [{label}] no matching 'pair_{timer_source} ...' lines found.",
+			f"gpu_render: [{label}] no matching 'pair ...' lines found.",
 			file=sys.stderr,
 		)
 		return 1
@@ -610,7 +598,7 @@ def render_one_text(
 	hostname = host_stem_for_output(meta, rank_hosts)
 
 	out_dir.mkdir(parents=True, exist_ok=True)
-	tags = run_tags(source_path, meta, timer_source)
+	tags = run_tags(source_path, meta)
 	total_time = total_time_line(meta)
 	creation_time = generation_timestamp()
 	params = param_block(meta, tags, total_time, creation_time)
@@ -631,7 +619,9 @@ def render_one_text(
 			mats[key],
 			key,
 			out_file,
-			title_block=title_block(meta, key, n=n, rank_hosts=rank_hosts),
+			title_block=title_block(
+				meta, key, n=n, rank_hosts=rank_hosts, render_style=render_style
+			),
 			param_block=params,
 			cmap=cmap_resolved,
 			dpi=150,
@@ -706,7 +696,6 @@ def main() -> int:
 			"Arguments:\n"
 			"  input            .txt file, directory with .txt files, or '-' for stdin\n"
 			"  -o, --out-dir    output directory for PNG files\n"
-			"  -t, --timer      choose timer source: mpi | cpu | cuda\n"
 			"  --sort, --sorted enable raw sorting pipeline (default: none)\n\n"
 		),
 		formatter_class=argparse.RawTextHelpFormatter,
@@ -723,14 +712,6 @@ def main() -> int:
 		type=Path,
 		default=Path("."),
 		help="Каталог для PNG; для каждого входного .txt создаётся подкаталог по имени файла",
-	)
-	p.add_argument(
-		"-t",
-		"--timer",
-		dest="timer_source",
-		choices=PAIR_TIMER_SOURCES,
-		default="mpi",
-		help="Источник времени в txt: mpi | cpu | cuda",
 	)
 	p.add_argument(
 		"--sort",
@@ -760,7 +741,6 @@ def main() -> int:
 			args.out_dir,
 			label="stdin",
 			source_path=None,
-			timer_source=args.timer_source,
 			render_style=args.style,
 		)
 
@@ -785,7 +765,6 @@ def main() -> int:
 				sub,
 				label=str(txt),
 				source_path=txt,
-				timer_source=args.timer_source,
 				render_style=args.style,
 			)
 			if r == 0 and args.sort_mode == "sorted":
@@ -803,7 +782,6 @@ def main() -> int:
 			args.out_dir,
 			label=str(path),
 			source_path=path,
-			timer_source=args.timer_source,
 			render_style=args.style,
 		)
 		if r != 0:
