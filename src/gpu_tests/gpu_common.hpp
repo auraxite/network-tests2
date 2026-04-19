@@ -6,8 +6,6 @@
 #include <string>          // std::string в Args, метках рангов
 #include <vector>          // std::vector в интерфейсе
 
-#include "netcdf_writer.h" // NetcdfBundle, запись матриц метрик
-
 namespace gpu_benchmark {
 
 /** Знаков после запятой в pair_*, raw .raw, iostream перед бенчмарком. */
@@ -51,10 +49,6 @@ constexpr int ACK_FIELDS = 25;
 
 struct Args {
 	size_t nbytes = 4u * 1000u * 1000u;
-	size_t begin_nbytes = 4u * 1000u * 1000u;
-	size_t end_nbytes = 4u * 1000u * 1000u;
-	size_t step_nbytes = 1;
-	bool sweep_sizes = false;
 	int warmup = 10;
 	int iters = 50;
 	Env env = Env::Auto;
@@ -84,7 +78,6 @@ const char *timer_to_string(Timer t);
 StatOut parse_stat_out(const std::string &s, int rank);
 Args parse_args(int argc, char **argv, int rank);
 bool check_host(Env env, bool cuda_aware);
-std::vector<size_t> build_message_sizes(const Args &args, int rank);
 void debug_log(bool enabled, int rank, const std::string &msg);
 
 /* Обёртка над clock_gettime: возвращает время в микросекундах. */

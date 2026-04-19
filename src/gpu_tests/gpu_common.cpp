@@ -51,10 +51,7 @@ void help(int rank) {
 	if (rank != 0)
 		return;
 	std::cout << "gpu — GPU pair latency (one_to_one | all_to_all)\n"
-			  << "  --bytes N       single-size text benchmark (default 4 MB)\n"
-			  << "  --bytes-begin N first message size for NetCDF-only sweep\n"
-			  << "  --bytes-end N   last message size for NetCDF-only sweep\n"
-			  << "  --bytes-step N  message size step for NetCDF-only sweep\n"
+			  << "  --bytes N       message size in bytes (default 4 MB)\n"
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --env E         auto | host\n"
@@ -151,10 +148,6 @@ StatOut parse_stat_out(const std::string &s, int rank) {
 
 Args parse_args(int argc, char **argv, int rank) {
 	Args a;
-	bool bytes_was_set = false;
-	bool begin_was_set = false;
-	bool end_was_set = false;
-	bool step_was_set = false;
 	for (int i = 1; i < argc; ++i) {
 		const std::string s = argv[i];
 		auto next = [&](const char *name) -> const char * {
@@ -166,25 +159,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			return argv[++i];
 		};
 
-		if (s == "--bytes") {
+		if (s == "--bytes")
 			a.nbytes = static_cast<size_t>(std::strtoull(next("--bytes"), nullptr, 10));
-			bytes_was_set = true;
-		}
-		else if (s == "--bytes-begin") {
-			a.begin_nbytes =
-				static_cast<size_t>(std::strtoull(next("--bytes-begin"), nullptr, 10));
-			begin_was_set = true;
-		}
-		else if (s == "--bytes-end") {
-			a.end_nbytes =
-				static_cast<size_t>(std::strtoull(next("--bytes-end"), nullptr, 10));
-			end_was_set = true;
-		}
-		else if (s == "--bytes-step") {
-			a.step_nbytes =
-				static_cast<size_t>(std::strtoull(next("--bytes-step"), nullptr, 10));
-			step_was_set = true;
-		}
 		else if (s == "--warmup")
 			a.warmup = std::atoi(next("--warmup"));
 		else if (s == "--iters")
@@ -221,46 +197,11 @@ Args parse_args(int argc, char **argv, int rank) {
 			std::cerr << "--iters must be > 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
-	const bool any_range_flag = begin_was_set || end_was_set || step_was_set;
-	const bool all_range_flags = begin_was_set && end_was_set && step_was_set;
-	if (bytes_was_set && any_range_flag) {
-		if (rank == 0)
-			std::cerr << "use either --bytes or --bytes-begin/--bytes-end/--bytes-step\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
-	if (any_range_flag && !all_range_flags) {
-		if (rank == 0)
-			std::cerr << "NetCDF sweep requires all of --bytes-begin, --bytes-end, --bytes-step\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
-	a.sweep_sizes = all_range_flags;
-	if (a.sweep_sizes) {
-		if (a.out_path.empty()) {
-			if (rank == 0)
-				std::cerr << "NetCDF sweep requires --out prefix\n";
-			MPI_Abort(MPI_COMM_WORLD, 1);
-		}
-	} else {
-		a.begin_nbytes = a.nbytes;
-		a.end_nbytes = a.nbytes;
-		a.step_nbytes = 1;
-	}
-	if (!a.sweep_sizes && a.nbytes == 0) {
+	if (a.nbytes == 0) {
 		if (rank == 0)
 			std::cerr << "--bytes must be > 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
-	if (a.sweep_sizes && (a.begin_nbytes == 0 || a.end_nbytes == 0 || a.step_nbytes == 0)) {
-		if (rank == 0)
-			std::cerr << "--bytes-begin, --bytes-end and --bytes-step must be > 0\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
-	if (a.begin_nbytes > a.end_nbytes) {
-		if (rank == 0)
-			std::cerr << "--bytes-begin must be <= --bytes-end\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
-	a.nbytes = a.begin_nbytes;
 	return a;
 }
 
@@ -274,26 +215,6 @@ bool check_host(Env env, bool cuda_aware) {
 	if (env == Env::Host)
 		return true;
 	return !cuda_aware;
-}
-
-std::vector<size_t> build_message_sizes(const Args &args, int rank) {
-	std::vector<size_t> sizes;
-	if (!args.sweep_sizes) {
-		sizes.push_back(args.nbytes);
-		return sizes;
-	}
-	for (size_t nbytes = args.begin_nbytes; nbytes <= args.end_nbytes;
-		 nbytes += args.step_nbytes) {
-		sizes.push_back(nbytes);
-		if (args.end_nbytes - nbytes < args.step_nbytes)
-			break;
-	}
-	if (sizes.empty()) {
-		if (rank == 0)
-			std::cerr << "gpu: empty message size sweep\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
-	return sizes;
 }
 
 double clock_gettime_wrapper() {

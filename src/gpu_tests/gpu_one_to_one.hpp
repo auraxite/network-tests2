@@ -13,7 +13,6 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 
 void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 						 const std::vector<std::string> &rank_labels,
-						 const std::function<void(const std::string &)> &mirror,
-						 NetcdfBundle *nc, int matrix_idx);
+						 const std::function<void(const std::string &)> &mirror);
 
 } // namespace gpu_benchmark

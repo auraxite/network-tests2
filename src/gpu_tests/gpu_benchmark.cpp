@@ -21,11 +21,10 @@ int main(int argc, char **argv) {
 	const Args args = parse_args(argc, argv, rank);
 	const bool cuda_aware = mpi_cuda_aware();
 	const bool via_host = check_host(args.env, cuda_aware);
-	const std::vector<size_t> message_sizes = build_message_sizes(args, rank);
 
-	// В single-size режиме дублируем текстовый отчёт в stdout и (опционально) в --out.
+	// Текстовый отчёт дублируется в stdout и (опционально) в --out на rank 0.
 	std::unique_ptr<std::ofstream> out_file;
-	if (rank == 0 && !args.sweep_sizes && !args.out_path.empty()) {
+	if (rank == 0 && !args.out_path.empty()) {
 		out_file = std::make_unique<std::ofstream>(args.out_path);
 		if (!out_file->is_open()) {
 			std::cerr << "gpu: cannot open --out " << args.out_path << "\n";
@@ -35,8 +34,6 @@ int main(int argc, char **argv) {
 
 	auto mirror = [&](const std::string &s) {
 		if (rank != 0)
-			return;
-		if (args.sweep_sizes)
 			return;
 		std::cout << s;
 		if (out_file)
@@ -66,7 +63,6 @@ int main(int argc, char **argv) {
 
 	std::vector<char> hosts_recv;
 	std::vector<char> pci_recv;
-	// Нужно на root всегда: Gather host/pci и Bcast имён — и в режиме sweep (--sweep_sizes).
 	if (rank == 0) {
 		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
 		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
@@ -122,15 +118,8 @@ int main(int argc, char **argv) {
 		}
 		{
 			std::ostringstream oss;
-			if (message_sizes.size() == 1) {
-				oss << "Bytes: " << message_sizes.front() << "\n";
-			} else {
-				oss << "BytesBegin: " << args.begin_nbytes << "\n"
-					<< "BytesEnd: " << args.end_nbytes << "\n"
-					<< "BytesStep: " << args.step_nbytes << "\n"
-					<< "NumSizes: " << message_sizes.size() << "\n";
-			}
-			oss << "Warmup: " << args.warmup << "\n"
+			oss << "Bytes: " << args.nbytes << "\n"
+				<< "Warmup: " << args.warmup << "\n"
 				<< "Iters: " << args.iters << "\n";
 			mirror(oss.str());
 		}
@@ -159,29 +148,10 @@ int main(int argc, char **argv) {
 
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
 
-	
-	NetcdfBundle nc{};
-	if (rank == 0 && args.sweep_sizes) {
-		nc = netcdf_open_bundle(args.out_path, args.begin_nbytes, args.end_nbytes,
-								args.step_nbytes, args.iters, nproc);
-	}
-
-	for (size_t size_idx = 0; size_idx < message_sizes.size(); ++size_idx) {
-		Args run_args = args;
-		run_args.nbytes = message_sizes[size_idx];
-		if (args.mode == Mode::OneToOne)
-			schedule_one_to_one(rank, nproc, run_args, via_host, rank_labels, mirror,
-								rank == 0 && args.sweep_sizes ? &nc : nullptr,
-								static_cast<int>(size_idx));
-		else if (args.mode == Mode::AllToAll)
-			schedule_all_to_all(rank, nproc, run_args, via_host, rank_labels, mirror,
-								rank == 0 && args.sweep_sizes ? &nc : nullptr,
-								static_cast<int>(size_idx));
-		mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier between message sizes");
-	}
-
-	if (rank == 0 && args.sweep_sizes)
-		netcdf_flush_and_close(nc);
+	if (args.mode == Mode::OneToOne)
+		schedule_one_to_one(rank, nproc, args, via_host, rank_labels, mirror);
+	else if (args.mode == Mode::AllToAll)
+		schedule_all_to_all(rank, nproc, args, via_host, rank_labels, mirror);
 
 	mpi_ok(MPI_Finalize(), "MPI_Finalize");
 	return 0;

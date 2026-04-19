@@ -347,8 +347,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 void schedule_all_to_all(
 	int rank, int nproc, const Args &args, bool via_host,
 	const std::vector<std::string> &rank_labels,
-	const std::function<void(const std::string &)> &mirror, NetcdfBundle *nc,
-	int matrix_idx) {
+	const std::function<void(const std::string &)> &mirror) {
 	debug_log(args.debug, rank, "all_to_all SCHEDULE_BEGIN");
 	if (rank != 0) {
 		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
@@ -356,8 +355,6 @@ void schedule_all_to_all(
 		return;
 	}
 
-	if (nc != nullptr)
-		netcdf_reset_matrix(*nc);
 	const double test_t0 = MPI_Wtime();
 	std::vector<double> results =
 		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
@@ -378,8 +375,6 @@ void schedule_all_to_all(
 				oss << "all_to_all PAIR_MERGE src=" << src_rank << " dst=" << dst_rank;
 				debug_log(args.debug, rank, oss.str());
 			}
-			if (nc != nullptr)
-				netcdf_store_pair(*nc, src_rank, dst_rank, metric);
 			if (src_rank == dst_rank) {
 				if (args.timer == Timer::All) {
 					mirror(print_pair_line("pair_mpi",
@@ -436,8 +431,6 @@ void schedule_all_to_all(
 			<< std::setprecision(TOTAL_TIME_DIGITS) << total_elapsed_s << "\n";
 		mirror(oss.str());
 	}
-	if (nc != nullptr)
-		netcdf_write_matrix_slice(*nc, matrix_idx);
 	debug_log(args.debug, rank, "all_to_all SCHEDULE_DONE");
 }
 

@@ -17,36 +17,22 @@ ENVS=( # закомментировать лишнее
 )
 MODES=( # закомментировать лишнее
 	one_to_one
-	# all_to_all
+	all_to_all
 )
 CASES=( # "bytes:iters:warmup", закомментировать лишнее
-	"500000:1600:5"
-	"4000000:400:5"
+	"500000:1500:5"
+	"4000000:500:5"
 	"16000000:200:5"
-)
-TIMERS=( # не удалять лишнее
-	# all
-	mpi
-	# cpu
-	# cuda
 )
 
 OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
-NETCDF_PATH="${NETCDF_PATH:-$HOME/opt/netcdf-c-4.9.2}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
 
 set -euo pipefail
 
-# Запуск в одной Slurm-задаче:
-# - по всем таймерам (по умолчанию),
-# - либо только по одному, если передать TIMER через env.
-if [[ -n "${TIMER:-}" ]]; then
-	TIMERS=("${TIMER}")
-fi
-
-export PATH="$OMPI_PATH/bin:$NETCDF_PATH/bin:$PATH"
-_LDPATH="$OMPI_PATH/lib:$NETCDF_PATH/lib:${CUDA_PATH}/lib64"
+export PATH="$OMPI_PATH/bin:$PATH"
+_LDPATH="$OMPI_PATH/lib:${CUDA_PATH}/lib64"
 if [[ -d "$UCX_PATH/lib" ]]; then
 	_LDPATH="$UCX_PATH/lib:$_LDPATH"
 fi
@@ -76,33 +62,29 @@ command -v mpirun && mpirun --version | head -3
 "$OMPI_PATH/bin/ompi_info" --parsable --all 2>/dev/null | grep -E 'opal_built_with_cuda_support|opal_cuda_support' || true
 echo "BIN=$BIN"
 test -x "$BIN" || { echo "error: missing or not executable: $BIN"; exit 1; }
-ldd "$BIN" | grep -E 'libmpi|libcudart|libnetcdf|libucp|libuct' || true
+ldd "$BIN" | grep -E 'libmpi|libcudart|libucp|libuct' || true
 ldd "$OMPI_PATH/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 echo "======================"
 
 for REP in "${REPS[@]}"; do
 	for ENV in "${ENVS[@]}"; do
 		for MODE in "${MODES[@]}"; do
-			for TIMER in "${TIMERS[@]}"; do
-				for CASE in "${CASES[@]}"; do
-					IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+			for CASE in "${CASES[@]}"; do
+				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-					OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-					echo "RUN rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-					echo "  -> ${OUT_TXT}"
+				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+				echo "  -> ${OUT_TXT}"
 
-					srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
-						--bytes "${BYTES}" \
-						--warmup "${WARMUP}" \
-						--iters "${ITERS}" \
-						--env "${ENV}" \
-						--mode "${MODE}" \
-						--timer "${TIMER}" \
-						--out "${OUT_TXT}" \
-						-d
+				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+					--bytes "${BYTES}" \
+					--warmup "${WARMUP}" \
+					--iters "${ITERS}" \
+					--env "${ENV}" \
+					--mode "${MODE}" \
+					--out "${OUT_TXT}"
 
-					echo "OK  rep=${REP} env=${ENV} mode=${MODE} timer=${TIMER} bytes=${BYTES}"
-				done
+				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES}"
 			done
 		done
 	done
