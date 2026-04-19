@@ -50,8 +50,8 @@ if [[ -d "$UCX_PATH/lib" ]]; then
 fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
-export UCX_MEMTYPE_CACHE=N
-export OMPI_MCA_pml=UCX
+# export UCX_MEMTYPE_CACHE=n
+export OMPI_MCA_pml=ucx
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/sweep"
