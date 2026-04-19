@@ -41,6 +41,25 @@ export OMPI_MCA_opal_cuda_support=1
 # export UCX_MEMTYPE_CACHE=n
 export OMPI_MCA_pml=ucx
 
+# === Intra-node single-copy: убираем двойной копир через /dev/shm ===
+# По умолчанию intra-node обмен host-буферов идёт через /dev/shm-сегмент:
+#   sender->buf  -> [/dev/shm staging] -> receiver->buf   (две копии через DRAM)
+# CMA (Cross Memory Attach, ядро >=3.2) даёт одну копию напрямую между
+# адресными пространствами процессов через process_vm_readv/writev:
+#   sender->buf  -> receiver->buf                          (одна копия)
+# Главный канал у нас pml=ucx, поэтому ключевая переменная — UCX_TLS,
+# где явно перечислены допустимые транспорты с cma в списке. btl_vader_*
+# подстрахует на случай, если какие-то компоненты пойдут мимо UCX.
+# Требования: yama.ptrace_scope <= 1 (типично на HPC-узлах) и UCX,
+# собранный с поддержкой CMA (проверяется в diagnostics ниже).
+export UCX_TLS=cma,cuda_copy,cuda_ipc,rc_verbs,rc_mlx5,dc_mlx5,ud_verbs,ud_mlx5,sm,self
+export OMPI_MCA_btl_vader_single_copy_mechanism=cma
+
+# Диагностика выбранных транспортов UCX (раскомментировать при отладке;
+# даёт много вывода — по строке на каждое создание endpoint'а).
+# export UCX_LOG_LEVEL=info
+# export OMPI_MCA_btl_base_verbose=10
+
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/fixed"
 mkdir -p "${OUT_DIR}"
@@ -64,6 +83,21 @@ echo "BIN=$BIN"
 test -x "$BIN" || { echo "error: missing or not executable: $BIN"; exit 1; }
 ldd "$BIN" | grep -E 'libmpi|libcudart|libucp|libuct' || true
 ldd "$OMPI_PATH/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
+
+# --- Диагностика intra-node single-copy (CMA) ---
+# 1) CMA должен быть в списке UCX-транспортов (если нет — UCX собран без CMA).
+if command -v ucx_info >/dev/null 2>&1; then
+	echo "UCX transports with cma:"
+	ucx_info -d 2>/dev/null | grep -E '^# *Transport:' | grep -i cma || \
+		echo "  WARNING: cma не найден в ucx_info -d (UCX собран без CMA?)"
+else
+	echo "ucx_info: не в PATH (диагностику CMA пропускаем)"
+fi
+# 2) На каждом из выделенных узлов проверяем yama.ptrace_scope (нужно <= 1).
+echo "yama.ptrace_scope на узлах задания:"
+srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" \
+	bash -c 'echo "  $(hostname -s): $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo n/a)"' \
+	2>/dev/null || true
 echo "======================"
 
 for REP in "${REPS[@]}"; do
