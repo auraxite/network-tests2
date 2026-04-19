@@ -3,6 +3,7 @@
 #include <cstddef>       // std::size_t
 #include <cuda_runtime.h> // cudaError_t, cudaSetDevice, … (объявления в API)
 #include <mpi.h>           // MPI типы и коллективы
+#include <sstream>         // std::ostringstream — для макроса DBG_LOG
 #include <string>          // std::string в Args, метках рангов
 #include <vector>          // std::vector в интерфейсе
 
@@ -79,6 +80,22 @@ StatOut parse_stat_out(const std::string &s, int rank);
 Args parse_args(int argc, char **argv, int rank);
 bool check_host(Env env, bool cuda_aware);
 void debug_log(bool enabled, int rank, const std::string &msg);
+
+/* Дешёвый аналог debug_log для горячих путей: ничего не аллоцирует, если
+   args.debug == false. Раньше каждое сообщение собиралось через ostringstream
+   ВСЕГДА и только потом debug_log решал, печатать ли его — это давало
+   лишние мкс в каждой итерации measurement loop. Использовать так:
+       DBG_LOG(rank, args, "phase=" << current_phase << " idx=" << i);
+   Параметры намеренно копируются по значению/ссылке без захвата лямбдой,
+   чтобы макрос можно было раскрывать и в noexcept-контексте. */
+#define DBG_LOG(rank_, args_, expr_)                                            \
+	do {                                                                        \
+		if ((args_).debug) {                                                    \
+			std::ostringstream _dbg_oss;                                        \
+			_dbg_oss << expr_;                                                  \
+			::gpu_benchmark::debug_log(true, (rank_), _dbg_oss.str());          \
+		}                                                                       \
+	} while (0)
 
 /* Обёртка над clock_gettime: возвращает время в микросекундах. */
 double clock_gettime_wrapper();

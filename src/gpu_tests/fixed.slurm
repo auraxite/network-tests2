@@ -7,8 +7,16 @@
 #SBATCH --nodes=2
 #SBATCH --ntasks=8
 #SBATCH --ntasks-per-node=4
-#SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=1
+# Запрашиваем ВСЕ GPU узла как общий ресурс ноды, а не как «по одному на task».
+# При --gpus-per-task=1 Slurm создавал на каждый процесс отдельный cgroup, в
+# котором виден ровно один GPU. cuda_ipc между процессами одного узла из разных
+# cgroup-изолированных «обзоров» не работает (UCX не может разделить
+# IPC-handle), поэтому intra-node путь в env=auto уезжал на cuda_copy через
+# host staging — отсюда и плоские ~745 мкс на heatmap. С --gres=gpu:4 все 4
+# GPU видны всем процессам узла, а раздачу «кому какой device» делает уже сам
+# код (gpu_benchmark.cpp: cudaSetDevice(local_rank % gpu_count)).
+#SBATCH --gres=gpu:4
 
 REPS=(1) # задать число
 ENVS=( # закомментировать лишнее
@@ -110,7 +118,17 @@ for REP in "${REPS[@]}"; do
 				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 				echo "  -> ${OUT_TXT}"
 
-				srun --mpi=pmix -n"${NTASKS}" "${BIN}" \
+				# --cpu-bind=cores привязывает каждый ранг к своему ядру (а не
+				#   позволяет ОС шарить ядра между ранками). Без этого jitter
+				#   планировщика сильно «болтает» сэмплы.
+				# --gpu-bind=closest закрепляет ранг за тем GPU, который сидит
+				#   на ближайшем к его CPU PCIe-root-complex'е. Это ключ к
+				#   красивой картинке intra-node: cross-socket пары перестанут
+				#   гнать D2H/H2D через UPI и будут на ~200 мкс быстрее.
+				srun --mpi=pmix \
+					--cpu-bind=cores \
+					--gpu-bind=closest \
+					-n"${NTASKS}" "${BIN}" \
 					--bytes "${BYTES}" \
 					--warmup "${WARMUP}" \
 					--iters "${ITERS}" \

@@ -24,18 +24,15 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
 	const int count = static_cast<int>(args.nbytes);
-	{
-		std::ostringstream oss;
-		oss << "all_to_all RUN_BEGIN local_gpu=" << local_gpu << " bytes=" << args.nbytes
-			<< " nproc=" << nproc << " env_path=" << (check_host ? "host" : "auto");
-		debug_log(args.debug, rank, oss.str());
-	}
+	DBG_LOG(rank, args,
+			"all_to_all RUN_BEGIN local_gpu=" << local_gpu << " bytes=" << args.nbytes
+			<< " nproc=" << nproc << " env_path=" << (check_host ? "host" : "auto"));
 
 	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(all_to_all)");
 	cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(send)");
 	cuda_ok(cudaMemset(d_send, 0xAA, args.nbytes), "cudaMemset(send)");
 	cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(recv)");
-	debug_log(args.debug, rank, "all_to_all ALLOC_DONE");
+	DBG_LOG(rank, args, "all_to_all ALLOC_DONE");
 
 	std::vector<char *> send_bufs(static_cast<size_t>(nproc), nullptr);
 	std::vector<char *> recv_bufs(static_cast<size_t>(nproc), nullptr);
@@ -57,12 +54,9 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					  std::vector<std::vector<double>> *samples_mpi_us,
 					  std::vector<std::vector<double>> *samples_cpu_us,
 					  std::vector<std::vector<double>> *samples_gpu_us) {
-		{
-			std::ostringstream oss;
-			oss << "all_to_all ITER_BEGIN idx=" << iter_idx
-				<< " measure=" << (measure ? 1 : 0);
-			debug_log(args.debug, rank, oss.str());
-		}
+		DBG_LOG(rank, args,
+				"all_to_all ITER_BEGIN idx=" << iter_idx
+				<< " measure=" << (measure ? 1 : 0));
 
 		/* Receiver-side e2e (вариант B). Семантика: t0 берётся у ПОЛУЧАТЕЛЯ
 		   один раз на итерацию — сразу после выставления всех MPI_Irecv (это
@@ -88,13 +82,10 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			if (src_rank == rank)
 				continue;
 			char *recv_buf = recv_bufs[static_cast<size_t>(src_rank)];
-			{
-				std::ostringstream oss;
-				oss << "all_to_all IRECV_POST src=" << src_rank
+			DBG_LOG(rank, args,
+					"all_to_all IRECV_POST src=" << src_rank
 					<< " tag=" << alltoall_pair_tag(src_rank, rank, nproc)
-					<< " bytes=" << count << " idx=" << iter_idx;
-				debug_log(args.debug, rank, oss.str());
-			}
+					<< " bytes=" << count << " idx=" << iter_idx);
 			mpi_ok(MPI_Irecv(recv_buf, count, MPI_BYTE, src_rank,
 							 alltoall_pair_tag(src_rank, rank, nproc),
 							 MPI_COMM_WORLD,
@@ -102,19 +93,23 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 				   "MPI_Irecv(all_to_all data)");
 		}
 
-		/* Единая стартовая метка раунда у получателя — после Irecv, до send-фазы. */
+		/* Единая стартовая метка раунда у получателя — после Irecv, до send-фазы.
+		   cudaEventRecord(start) делается ДО взятия t0, чтобы его собственная
+		   стоимость (несколько мкс на вызов CUDA driver) не попадала в
+		   samples_mpi_us. Аналогично ev_stop[src] и cudaEventSynchronize ниже —
+		   ПОСЛЕ взятия t1. */
 		double t0_mpi_s = 0.0;
 		double t0_clk_us = 0.0;
 		cudaEvent_t ev_start = nullptr;
 		std::vector<cudaEvent_t> ev_stop(static_cast<size_t>(nproc), nullptr);
 		if (measure) {
 			cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
+			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 			t0_mpi_s = MPI_Wtime();
 			t0_clk_us = clock_gettime_wrapper();
-			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
 		}
 
-		debug_log(args.debug, rank, "all_to_all SEND_PHASE_BEGIN");
+		DBG_LOG(rank, args, "all_to_all SEND_PHASE_BEGIN");
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			if (dst_rank == rank)
 				continue;
@@ -135,9 +130,9 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					   "MPI_Send(all_to_all dev)");
 			}
 		}
-		debug_log(args.debug, rank, "all_to_all SEND_PHASE_DONE");
+		DBG_LOG(rank, args, "all_to_all SEND_PHASE_DONE");
 
-		debug_log(args.debug, rank, "all_to_all RECV_PHASE_BEGIN");
+		DBG_LOG(rank, args, "all_to_all RECV_PHASE_BEGIN");
 		const int n_peers = nproc - 1;
 		for (int k = 0; k < n_peers; ++k) {
 			int idx = MPI_UNDEFINED;
@@ -147,23 +142,17 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			if (idx == MPI_UNDEFINED)
 				break;
 			const int src_rank = idx;
-			{
-				std::ostringstream oss;
-				oss << "all_to_all WAIT_RECV_DONE src=" << src_rank
-					<< " idx=" << iter_idx;
-				debug_log(args.debug, rank, oss.str());
-			}
+			DBG_LOG(rank, args,
+					"all_to_all WAIT_RECV_DONE src=" << src_rank
+					<< " idx=" << iter_idx);
 			if (check_host) {
 				cuda_ok(cudaMemcpy(d_recv,
 								   recv_bufs[static_cast<size_t>(src_rank)],
 								   args.nbytes, cudaMemcpyHostToDevice),
 						"H2D(all_to_all)");
-				{
-					std::ostringstream oss;
-					oss << "all_to_all H2D_DONE src=" << src_rank
-						<< " idx=" << iter_idx;
-					debug_log(args.debug, rank, oss.str());
-				}
+				DBG_LOG(rank, args,
+						"all_to_all H2D_DONE src=" << src_rank
+						<< " idx=" << iter_idx);
 			}
 			if (measure) {
 				/* t1 у получателя: ПОСЛЕ H2D. Сэмпл = t1 - t0 на одних часах. */
@@ -175,9 +164,14 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					mpi_sample_us);
 				(*samples_cpu_us)[static_cast<size_t>(src_rank)].push_back(
 					cpu_sample_us);
-				/* Свой ev_stop на каждый src, чтобы CUDA-сэмпл считался от
-				   общего ev_start до момента завершения H2D для этого src,
-				   а не перетирался следующей итерацией Waitany. */
+				/* CUDA-event ПОСЛЕ взятия t1 — стоимость EventRecord/Sync/Elapsed
+				   не попадает в samples_mpi/cpu. Свой ev_stop на каждый src,
+				   чтобы CUDA-сэмпл считался от общего ev_start до момента
+				   завершения H2D для этого src, а не перетирался следующей
+				   итерацией Waitany. В env=auto default stream обычно пуст
+				   (UCX делает H2D в собственных потоках) — значит samples_gpu_us
+				   будет около нуля, это нормально и говорит «здесь GPU-таймер
+				   не информативен», а не о баге. */
 				cudaEvent_t &ev_stop_src = ev_stop[static_cast<size_t>(src_rank)];
 				cuda_ok(cudaEventCreate(&ev_stop_src),
 						"cudaEventCreate(stop[src])");
@@ -192,7 +186,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					static_cast<double>(elapsed_ms) * 1e3);
 			}
 		}
-		debug_log(args.debug, rank, "all_to_all RECV_PHASE_DONE");
+		DBG_LOG(rank, args, "all_to_all RECV_PHASE_DONE");
 
 		if (measure) {
 			if (ev_start)
@@ -204,12 +198,9 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 							"cudaEventDestroy(stop[src])");
 			}
 		}
-		{
-			std::ostringstream oss;
-			oss << "all_to_all ITER_DONE idx=" << iter_idx
-				<< " measure=" << (measure ? 1 : 0);
-			debug_log(args.debug, rank, oss.str());
-		}
+		DBG_LOG(rank, args,
+				"all_to_all ITER_DONE idx=" << iter_idx
+				<< " measure=" << (measure ? 1 : 0));
 	};
 
 	/* Сэмплы лежат по «источнику» src: для каждого src != rank копится N сэмплов
@@ -231,15 +222,22 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			static_cast<size_t>(std::max(1, args.iters)));
 	}
 
-	debug_log(args.debug, rank, "all_to_all WARMUP_BEGIN");
+	DBG_LOG(rank, args, "all_to_all WARMUP_BEGIN");
 	for (int i = 0; i < args.warmup; ++i)
 		do_one(i, false, nullptr, nullptr, nullptr);
-	debug_log(args.debug, rank, "all_to_all WARMUP_DONE");
+	DBG_LOG(rank, args, "all_to_all WARMUP_DONE");
 
-	debug_log(args.debug, rank, "all_to_all ITERS_BEGIN");
+	/* Между warmup и измерениями выровняем все ранги по входу в ITERS. Без
+	   этого медленные ранги могли внести в первую измеряемую итерацию
+	   «фоновый лаг» — он бы попал в samples_mpi_us. На каждой итерации внутри
+	   этого цикла ранги синхронизируются сами через rendezvous Send/Recv в
+	   send/recv-фазах, поэтому Barrier здесь нужен только один раз. */
+	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(all_to_all iters)");
+
+	DBG_LOG(rank, args, "all_to_all ITERS_BEGIN");
 	for (int i = 0; i < args.iters; ++i)
 		do_one(i, true, &samples_mpi_us, &samples_cpu_us, &samples_gpu_us);
-	debug_log(args.debug, rank, "all_to_all ITERS_DONE");
+	DBG_LOG(rank, args, "all_to_all ITERS_DONE");
 
 	/* Этот ранг — получатель пары (src → rank). Сохраняем его сэмплы как
 	   raw-файл для каждой такой пары. */
@@ -305,11 +303,8 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 									nproc * nproc + alltoall_pair_tag(src_rank, dst_rank, nproc),
 									MPI_COMM_WORLD),
 						   "MPI_Send ack(all_to_all)");
-					{
-						std::ostringstream oss;
-						oss << "all_to_all ACK_SENT src=" << src_rank << " dst=" << dst_rank;
-						debug_log(args.debug, rank, oss.str());
-					}
+					DBG_LOG(rank, args,
+							"all_to_all ACK_SENT src=" << src_rank << " dst=" << dst_rank);
 				}
 			} else if (rank == 0) {
 				mpi_ok(MPI_Recv(result_ptr(src_rank, dst_rank), ACK_FIELDS, MPI_DOUBLE,
@@ -317,11 +312,8 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 								nproc * nproc + alltoall_pair_tag(src_rank, dst_rank, nproc),
 								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
 					   "MPI_Recv ack(all_to_all)");
-				{
-					std::ostringstream oss;
-					oss << "all_to_all ACK_RECV src=" << src_rank << " dst=" << dst_rank;
-					debug_log(args.debug, rank, oss.str());
-				}
+				DBG_LOG(rank, args,
+						"all_to_all ACK_RECV src=" << src_rank << " dst=" << dst_rank);
 			}
 		}
 	}
@@ -340,24 +332,31 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 		cudaFree(d_send);
 	if (d_recv)
 		cudaFree(d_recv);
-	debug_log(args.debug, rank, "all_to_all RUN_DONE");
+	DBG_LOG(rank, args, "all_to_all RUN_DONE");
 	return results;
 }
 
 void schedule_all_to_all(
 	int rank, int nproc, const Args &args, bool via_host,
+	const std::vector<int> &rank_to_gpu,
 	const std::vector<std::string> &rank_labels,
 	const std::function<void(const std::string &)> &mirror) {
-	debug_log(args.debug, rank, "all_to_all SCHEDULE_BEGIN");
+	DBG_LOG(rank, args, "all_to_all SCHEDULE_BEGIN");
+	/* Раньше тут хардкоженно передавался local_gpu=0 для всех ранков; при
+	   --gres=gpu:N (когда у одного процесса видны все GPU узла) это означало,
+	   что 4 процесса узла стучатся в физический GPU 0, а GPU 1..3 простаивают.
+	   Теперь берём личный device из глобального справочника rank_to_gpu, который
+	   gpu_benchmark.cpp заполнил по локальному рангу процесса на узле. */
+	const int my_gpu = rank_to_gpu[static_cast<size_t>(rank)];
 	if (rank != 0) {
-		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
-		debug_log(args.debug, rank, "all_to_all SCHEDULE_DONE");
+		run_all_to_all(rank, nproc, args, via_host, my_gpu, rank_labels);
+		DBG_LOG(rank, args, "all_to_all SCHEDULE_DONE");
 		return;
 	}
 
 	const double test_t0 = MPI_Wtime();
 	std::vector<double> results =
-		run_all_to_all(rank, nproc, args, via_host, 0, rank_labels);
+		run_all_to_all(rank, nproc, args, via_host, my_gpu, rank_labels);
 
 	auto metric_ptr = [&](int src_rank, int dst_rank) -> const double * {
 		return results.data() +
@@ -370,11 +369,8 @@ void schedule_all_to_all(
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			std::vector<double> metric(metric_ptr(src_rank, dst_rank),
 									   metric_ptr(src_rank, dst_rank) + ACK_FIELDS);
-			{
-				std::ostringstream oss;
-				oss << "all_to_all PAIR_MERGE src=" << src_rank << " dst=" << dst_rank;
-				debug_log(args.debug, rank, oss.str());
-			}
+			DBG_LOG(rank, args,
+					"all_to_all PAIR_MERGE src=" << src_rank << " dst=" << dst_rank);
 			if (src_rank == dst_rank) {
 				if (args.timer == Timer::All) {
 					mirror(print_pair_line("pair_mpi",
@@ -426,12 +422,14 @@ void schedule_all_to_all(
 
 	const double total_elapsed_s = MPI_Wtime() - test_t0;
 	{
+		/* Этот ostringstream НЕ под if(args.debug): TotalTimeSec — обычная
+		   часть отчёта в --out, а не отладка. */
 		std::ostringstream oss;
 		oss << "TotalTimeSec: " << std::fixed
 			<< std::setprecision(TOTAL_TIME_DIGITS) << total_elapsed_s << "\n";
 		mirror(oss.str());
 	}
-	debug_log(args.debug, rank, "all_to_all SCHEDULE_DONE");
+	DBG_LOG(rank, args, "all_to_all SCHEDULE_DONE");
 }
 
 } // namespace gpu_benchmark

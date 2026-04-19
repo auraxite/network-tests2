@@ -40,6 +40,7 @@
 #include <mpi.h>
 
 #include <chrono>
+#include <cstring> /* std::memcpy для упаковки t0_src в начало payload в варианте C */
 #include <vector>
 
 #include "gpu_all_to_all.hpp"
@@ -253,9 +254,26 @@ static void do_one_receiver_side(const IterCtx &ctx, int iter_idx, bool measure,
  *    каждой пары перед замером, либо вычисление clock-skew по статистике —
  *    в обоих случаях это самостоятельная инфраструктура, влияющая на
  *    сам замер.
- *  - Технически нужно ПЕРЕДАВАТЬ t0 вместе с сообщением (отдельным MPI_Send
- *    или внутри пейлоада), чтобы получатель смог посчитать разность —
- *    лишний трафик и риск сбить сам замер на больших размерах.
+ *  - Нужно ПЕРЕДАВАТЬ t0 вместе с сообщением, чтобы получатель смог
+ *    посчитать разность. В наивной реализации это делают отдельным
+ *    MPI_Send — получается лишний обмен на каждую пару, удваивается
+ *    число сообщений и добавляется «дрожание» на очередях MPI.
+ *
+ * Оптимизация относительно наивной версии (один MPI-вызов на пару вместо
+ * двух): t0_src упаковывается в ПЕРВЫЕ sizeof(double) байт payload'а
+ * (служебный «заголовок»), дальше идут обычные данные. Тогда на пару
+ * нужен один MPI_Send/MPI_Irecv на count + sizeof(double) байт — никаких
+ * отдельных рукопожатий под метку времени.
+ *
+ * Контракт буферов в этом варианте: send_bufs[peer] и recv_bufs[peer]
+ * выделены размером count + sizeof(double), чтобы уместить заголовок.
+ *
+ * Плата за объединение:
+ *  - Сам замер чуть завышается на время передачи 8 лишних байт (на типовых
+ *    размерах сообщений — пренебрежимо).
+ *  - Внутри узла/кластера с одинаковым ABI это безопасно; при реальной
+ *    работе через гетерогенные архитектуры понадобился бы MPI_Type_create_struct
+ *    с {MPI_DOUBLE, MPI_BYTE} вместо MPI_BYTE-«сырой» упаковки.
  *
  * Ниже — упрощённый каркас. Реализация показывает, ЧТО именно нужно
  * передать, и почему практически это делать не стоит без синхронизации
@@ -266,57 +284,63 @@ static void do_one_pseudo_e2e(const IterCtx &ctx, int iter_idx, bool measure,
 							   std::vector<std::vector<double>> *samples_us) {
 	(void)iter_idx;
 
-	std::vector<MPI_Request> recv_req(ctx.nproc, MPI_REQUEST_NULL);
-	std::vector<double> recv_t0(ctx.nproc, 0.0); /* сюда придут t0 от src */
+	/* Заголовок payload'а под t0_src: первые HDR байт буфера. Контракт с
+	 * аллокатором — send_bufs/recv_bufs выделены на count + HDR байт. */
+	constexpr int HDR = static_cast<int>(sizeof(double));
 
-	/* Принимаем сразу два сообщения от каждого src: данные и метку времени t0.
-	 * В реальном коде t0 удобнее упаковывать в начало payload, чтобы избежать
-	 * двух отдельных рукопожатий — но для иллюстрации показано раздельно. */
+	std::vector<MPI_Request> recv_req(ctx.nproc, MPI_REQUEST_NULL);
+
+	/* Одно Irecv на пару: принимаем заголовок (t0_src) и данные одним
+	 * сообщением. Никаких отдельных meta-сообщений и, что важно, никаких
+	 * «подвешенных» MPI_Request_free, которым пользовалась наивная версия. */
 	for (int src = 0; src < ctx.nproc; ++src) {
 		if (src == ctx.rank)
 			continue;
-		MPI_Irecv(ctx.recv_bufs[src], ctx.count, MPI_BYTE, src,
+		MPI_Irecv(ctx.recv_bufs[src], ctx.count + HDR, MPI_BYTE, src,
 				  alltoall_pair_tag(src, ctx.rank, ctx.nproc), MPI_COMM_WORLD,
 				  &recv_req[src]);
-		MPI_Request t0_req = MPI_REQUEST_NULL;
-		MPI_Irecv(&recv_t0[src], 1, MPI_DOUBLE, src,
-				  alltoall_pair_tag(src, ctx.rank, ctx.nproc) + 100000,
-				  MPI_COMM_WORLD, &t0_req);
-		MPI_Request_free(&t0_req); /* условно: в реальной реализации Wait отдельно */
 	}
 
 	for (int dst = 0; dst < ctx.nproc; ++dst) {
 		if (dst == ctx.rank)
 			continue;
 
-		/* Сторона ОТПРАВИТЕЛЯ берёт собственное t0 непосредственно перед D2H. */
+		/* Сторона ОТПРАВИТЕЛЯ берёт собственное t0 непосредственно перед D2H:
+		 * важно, чтобы в интервал попало именно D2H + уход в сеть. */
 		const double t0_src = MPI_Wtime();
+
+		/* Кладём t0 в первые HDR байт send-буфера. Делаем это ДО D2H, чтобы
+		 * cudaMemcpy не затёр заголовок: данные кладутся со смещением HDR. */
+		std::memcpy(ctx.send_bufs[dst], &t0_src, HDR);
+
 		if (ctx.check_host) {
-			cudaMemcpy(ctx.send_bufs[dst], ctx.d_send, ctx.count,
+			cudaMemcpy(ctx.send_bufs[dst] + HDR, ctx.d_send, ctx.count,
 					   cudaMemcpyDeviceToHost);
 		}
-		/* Шлём данные и отдельным сообщением — собственное t0 для получателя. */
-		MPI_Send(ctx.send_bufs[dst], ctx.count, MPI_BYTE, dst,
+		/* Один MPI_Send на пару: заголовок и данные склеены. */
+		MPI_Send(ctx.send_bufs[dst], ctx.count + HDR, MPI_BYTE, dst,
 				 alltoall_pair_tag(ctx.rank, dst, ctx.nproc), MPI_COMM_WORLD);
-		MPI_Send(&t0_src, 1, MPI_DOUBLE, dst,
-				 alltoall_pair_tag(ctx.rank, dst, ctx.nproc) + 100000,
-				 MPI_COMM_WORLD);
 	}
 
-	/* На стороне получателя: дождались данных, сделали H2D, вычислили
-	 * sample = t1_dst − t0_src. Здесь и кроется проблема: t1_dst и t0_src —
-	 * с разных часов, поэтому реальная величина смещена на offset_dst − offset_src. */
+	/* На стороне получателя: дожидаемся единого сообщения, разбираем его на
+	 * (t0_src | данные). sample = t1_dst − t0_src. Проблема «двух часов»
+	 * никуда не делась: t1_dst и t0_src берутся на РАЗНЫХ процессах, просто
+	 * теперь нет накладных расходов на два отдельных MPI-обмена. */
 	for (int k = 0; k < ctx.nproc - 1; ++k) {
 		int idx = MPI_UNDEFINED;
 		MPI_Waitany(ctx.nproc, recv_req.data(), &idx, MPI_STATUS_IGNORE);
 		const int src = idx;
+
+		double t0_src = 0.0;
+		std::memcpy(&t0_src, ctx.recv_bufs[src], HDR);
+
 		if (ctx.check_host) {
-			cudaMemcpy(ctx.d_recv, ctx.recv_bufs[src], ctx.count,
+			cudaMemcpy(ctx.d_recv, ctx.recv_bufs[src] + HDR, ctx.count,
 					   cudaMemcpyHostToDevice);
 		}
 		if (measure) {
 			const double t1_dst = MPI_Wtime();
-			const double sample_us = (t1_dst - recv_t0[src]) * 1e6;
+			const double sample_us = (t1_dst - t0_src) * 1e6;
 			/* ВНИМАНИЕ: это не «реальные» микросекунды; это смещённая величина.
 			 * Без синхронизации часов её нельзя интерпретировать как e2e. */
 			(*samples_us)[src].push_back(sample_us);
