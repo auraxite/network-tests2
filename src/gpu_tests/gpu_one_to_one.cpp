@@ -9,12 +9,6 @@
 
 namespace gpu_benchmark {
 
-/* Тэги для pair-local rendezvous (синхронизация sender/receiver одной пары
-   ПЕРЕД началом измерительного цикла). 0 занят данными, 1 — Task, 2 — ack,
-   42/43 свободны и не пересекаются ни с одним протоколом. */
-static constexpr int RDV_TAG_FORWARD = 42;
-static constexpr int RDV_TAG_BACKWARD = 43;
-
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 								   bool check_host,
 								   char *d_send, char *d_recv, char *h_buf,
@@ -138,27 +132,6 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		do_one();
 	}
 	DBG_LOG(rank, args, "one_to_one WARMUP_DONE");
-
-	/* Pair-local rendezvous ровно ОДИН раз — между warmup и измерениями.
-	   Без него получатель брал t0_mpi на N мкс раньше, чем отправитель входил
-	   в свой MPI_Send, и эти N мкс «фонового лага» прибавлялись к каждому
-	   сэмплу. После warmup внутренний rendezvous MPI_Send/Recv сам синхронизирует
-	   оба ранка от итерации к итерации, так что барьеры на каждой итерации не
-	   нужны и только испортили бы замер. */
-	if (is_sender) {
-		char dummy = 0;
-		mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
-							&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
-							MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-			   "MPI_Sendrecv pair rendezvous (sender)");
-	} else {
-		char dummy = 0;
-		mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
-							&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
-							MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-			   "MPI_Sendrecv pair rendezvous (receiver)");
-	}
-	DBG_LOG(rank, args, "one_to_one PAIR_RDV_DONE");
 
 	DBG_LOG(rank, args, "one_to_one ITERS_BEGIN");
 	current_phase = "iters";

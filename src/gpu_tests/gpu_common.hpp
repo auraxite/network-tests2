@@ -42,6 +42,7 @@ enum class StatOut {
 
 enum class Mode {
 	OneToOne,
+	OneToOneNode,
 	AllToAll,
 };
 
@@ -102,6 +103,9 @@ double clock_gettime_wrapper();
 /* Общие подписи рангов для pair/raw в one-to-one и all-to-all. */
 std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 											 int nproc, int host_len);
+std::vector<std::string> build_global_gpu_labels(const std::vector<char> &hosts_recv,
+												 int nproc, int host_len,
+												 const std::vector<int> &gpu_counts);
 
 /* Заполняет ack по трем наборам samples; используют оба режима. */
 void fill_ack(const std::vector<double> &samples_mpi_us,
@@ -113,6 +117,9 @@ void fill_ack(const std::vector<double> &samples_mpi_us,
 void append_raw_samples(const Args &args, int rank, const Task &t,
 						const std::vector<std::string> &rank_labels,
 						const std::vector<double> &samples_us);
+void append_raw_samples_named(const Args &args, const std::string &src_label,
+							  const std::string &dst_label,
+							  const std::vector<double> &samples_us);
 /* Печатает строку pair/pair_mpi/pair_cpu/pair_cuda; используют оба режима. */
 std::string print_pair_line(const char *line_name, const std::string &src_label,
 							const std::string &dst_label, double avg_us, double med_us,

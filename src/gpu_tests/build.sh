@@ -56,6 +56,7 @@ fi
 	"$REPO_GPU_TESTS/gpu_benchmark.cpp" \
 	"$REPO_GPU_TESTS/gpu_common.cpp" \
 	"$REPO_GPU_TESTS/gpu_one_to_one.cpp" \
+	"$REPO_GPU_TESTS/gpu_one_to_one_node.cpp" \
 	"$REPO_GPU_TESTS/gpu_all_to_all.cpp" \
 	-o "$REPO_GPU_TESTS/gpu" \
 	$RPATH \

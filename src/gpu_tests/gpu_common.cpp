@@ -55,7 +55,8 @@ void help(int rank) {
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --env E         auto | host\n"
-			  << "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
+			  << "  --mode M        one_to_one | one_to_one_node | all_to_all"
+			  << " (default one_to_one)\n"
 			  << "  --timer T       all | mpi | cpu | cuda (default mpi)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
 			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n"
@@ -65,11 +66,13 @@ void help(int rank) {
 Mode parse_mode(const std::string &s, int rank) {
 	if (s == "one_to_one" || s == "sequential" || s == "1to1")
 		return Mode::OneToOne;
+	if (s == "one_to_one_node" || s == "node_one_to_one" || s == "1to1_node")
+		return Mode::OneToOneNode;
 	if (s == "all_to_all" || s == "alltoall" || s == "parallel")
 		return Mode::AllToAll;
 	if (rank == 0)
 		std::cerr << "unknown --mode: " << s
-				  << " (use one_to_one|all_to_all)\n";
+				  << " (use one_to_one|one_to_one_node|all_to_all)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Mode::OneToOne;
 }
@@ -78,6 +81,8 @@ const char *mode_to_string(Mode mode) {
 	switch (mode) {
 	case Mode::OneToOne:
 		return "one_to_one";
+	case Mode::OneToOneNode:
+		return "one_to_one_node";
 	case Mode::AllToAll:
 		return "all_to_all";
 	}
@@ -276,6 +281,50 @@ std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 	return labels;
 }
 
+std::vector<std::string> build_global_gpu_labels(const std::vector<char> &hosts_recv,
+												 int nproc, int host_len,
+												 const std::vector<int> &gpu_counts) {
+	const auto short_host = [](const std::string &host) {
+		const size_t dot = host.find('.');
+		if (dot == std::string::npos)
+			return host;
+		return host.substr(0, dot);
+	};
+	const auto host_node_token = [&](const std::string &host) {
+		const std::string sh = short_host(host);
+		size_t pos = sh.size();
+		while (pos > 0 && std::isdigit(static_cast<unsigned char>(sh[pos - 1])))
+			--pos;
+		if (pos < sh.size())
+			return sh.substr(pos);
+		return sh;
+	};
+
+	size_t total_gpu_count = 0;
+	for (int c : gpu_counts) {
+		if (c > 0)
+			total_gpu_count += static_cast<size_t>(c);
+	}
+
+	std::vector<std::string> labels;
+	labels.reserve(total_gpu_count);
+	for (int r = 0; r < nproc; ++r) {
+		const char *h =
+			hosts_recv.data() + static_cast<size_t>(r) * static_cast<size_t>(host_len);
+		const std::string token = host_node_token(std::string(h));
+		const int local_gpu_count =
+			(r < static_cast<int>(gpu_counts.size()) && gpu_counts[static_cast<size_t>(r)] > 0)
+				? gpu_counts[static_cast<size_t>(r)]
+				: 0;
+		for (int g = 0; g < local_gpu_count; ++g) {
+			std::ostringstream oss;
+			oss << token << "." << g;
+			labels.push_back(oss.str());
+		}
+	}
+	return labels;
+}
+
 void fill_ack(const std::vector<double> &samples_mpi_us,
 								  const std::vector<double> &samples_cpu_us,
 								  const std::vector<double> &samples_gpu_us,
@@ -372,9 +421,9 @@ std::string print_pair_line(const char *line_name,
 	return oss.str();
 }
 
-void append_raw_samples(const Args &args, int rank, const Task &t,
-						const std::vector<std::string> &rank_labels,
-						const std::vector<double> &samples_us) {
+void append_raw_samples_named(const Args &args, const std::string &src_label,
+							  const std::string &dst_label,
+							  const std::vector<double> &samples_us) {
 	const auto sanitize_label_for_raw_path = [](const std::string &lab) {
 		std::string out;
 		out.reserve(lab.size());
@@ -390,15 +439,8 @@ void append_raw_samples(const Args &args, int rank, const Task &t,
 
 	if (!args.save_raw_samples || args.out_path.empty() || samples_us.empty())
 		return;
-	(void)rank;
-	if (t.src_rank < 0 || t.dst_rank < 0 ||
-		static_cast<size_t>(t.src_rank) >= rank_labels.size() ||
-		static_cast<size_t>(t.dst_rank) >= rank_labels.size())
-		return;
-	const std::string src_tok =
-		sanitize_label_for_raw_path(rank_labels[static_cast<size_t>(t.src_rank)]);
-	const std::string dst_tok =
-		sanitize_label_for_raw_path(rank_labels[static_cast<size_t>(t.dst_rank)]);
+	const std::string src_tok = sanitize_label_for_raw_path(src_label);
+	const std::string dst_tok = sanitize_label_for_raw_path(dst_label);
 	std::string base = args.out_path;
 	std::string dir = ".";
 	const size_t slash = base.find_last_of('/');
@@ -420,12 +462,24 @@ void append_raw_samples(const Args &args, int rank, const Task &t,
 	std::ofstream out(path.str(), std::ios::app);
 	if (!out.is_open())
 		return;
-	out << "# src=" << rank_labels[static_cast<size_t>(t.src_rank)] << " dst="
-		<< rank_labels[static_cast<size_t>(t.dst_rank)] << "\n";
+	out << "# src=" << src_label << " dst=" << dst_label << "\n";
 	for (size_t i = 0; i < samples_us.size(); ++i) {
 		out << std::fixed << std::setprecision(REPORT_DIGITS) << samples_us[i]
 			<< "\n";
 	}
+}
+
+void append_raw_samples(const Args &args, int rank, const Task &t,
+						const std::vector<std::string> &rank_labels,
+						const std::vector<double> &samples_us) {
+	(void)rank;
+	if (t.src_rank < 0 || t.dst_rank < 0 ||
+		static_cast<size_t>(t.src_rank) >= rank_labels.size() ||
+		static_cast<size_t>(t.dst_rank) >= rank_labels.size())
+		return;
+	append_raw_samples_named(
+		args, rank_labels[static_cast<size_t>(t.src_rank)],
+		rank_labels[static_cast<size_t>(t.dst_rank)], samples_us);
 }
 
 } // namespace gpu_benchmark

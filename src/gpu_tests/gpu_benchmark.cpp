@@ -1,6 +1,7 @@
 #include "gpu_all_to_all.hpp"
 #include "gpu_common.hpp"
 #include "gpu_one_to_one.hpp"
+#include "gpu_one_to_one_node.hpp"
 
 #include <fstream>   // std::ofstream — запись текстового вывода в --out
 #include <iomanip>   // std::setprecision, std::fixed — формат чисел в выводе
@@ -101,10 +102,11 @@ int main(int argc, char **argv) {
 		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
 	}
 	std::vector<int> gpu_counts(nproc, 0);
-
 	mpi_ok(MPI_Gather(&local_gpu_count, 1, MPI_INT, gpu_counts.data(), 1, MPI_INT, 0,
 					  MPI_COMM_WORLD),
 		   "MPI_Gather gpu counts");
+	mpi_ok(MPI_Bcast(gpu_counts.data(), nproc, MPI_INT, 0, MPI_COMM_WORLD),
+		   "MPI_Bcast gpu counts");
 	mpi_ok(MPI_Gather(my_host, HOST_LEN, MPI_CHAR,
 					  rank == 0 ? hosts_recv.data() : nullptr, HOST_LEN, MPI_CHAR, 0,
 					  MPI_COMM_WORLD),
@@ -132,6 +134,8 @@ int main(int argc, char **argv) {
 		   "MPI_Bcast hostnames");
 
 	const std::vector<std::string> rank_labels = build_rank_labels(hosts_recv, nproc, HOST_LEN);
+	const std::vector<std::string> global_gpu_labels =
+		build_global_gpu_labels(hosts_recv, nproc, HOST_LEN, gpu_counts);
 
 	if (rank == 0) {
 		{
@@ -185,6 +189,9 @@ int main(int argc, char **argv) {
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host, rank_to_gpu,
 							rank_labels, mirror);
+	else if (args.mode == Mode::OneToOneNode)
+		schedule_one_to_one_node(rank, nproc, local_gpu_count, gpu_counts, args,
+								 via_host, global_gpu_labels, mirror);
 	else if (args.mode == Mode::AllToAll)
 		schedule_all_to_all(rank, nproc, args, via_host, rank_to_gpu,
 							rank_labels, mirror);
