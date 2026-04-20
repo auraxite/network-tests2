@@ -19,11 +19,14 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 								   const std::vector<std::string> &rank_labels);
 
 /* rank_to_gpu[r] — локальный (внутри узла процесса r) device id, выбранный в
-   gpu_benchmark.cpp по локальному рангу. Используется здесь для проставления
-   t.src_gpu / t.dst_gpu корректно, чтобы каждый процесс работал именно с тем
-   GPU, который ему выделил Slurm/CUDA, а не с GPU 0 у всех. */
+   gpu_benchmark.cpp по локальному рангу. node_comm / node_rank / on_my_node
+   тоже готовятся там один раз и передаются сюда, чтобы не делать повторный
+   MPI_Comm_split_type/MPI_Allgather внутри schedule_one_to_one. */
 void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 						 const std::vector<int> &rank_to_gpu,
+						 bool enable_local_shared_fallback,
+						 MPI_Comm node_comm, int node_rank,
+						 const std::vector<int> &on_my_node,
 						 const std::vector<std::string> &rank_labels,
 						 const std::function<void(const std::string &)> &mirror);
 

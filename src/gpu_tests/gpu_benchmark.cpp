@@ -39,7 +39,14 @@ int main(int argc, char **argv) {
 		   "MPI_Comm_split_type(node)");
 	int local_rank = 0;
 	mpi_ok(MPI_Comm_rank(node_comm, &local_rank), "MPI_Comm_rank(node)");
-	MPI_Comm_free(&node_comm);
+	int node_size = 1;
+	mpi_ok(MPI_Comm_size(node_comm, &node_size), "MPI_Comm_size(node)");
+	std::vector<int> node_ranks(static_cast<size_t>(node_size), 0);
+	mpi_ok(MPI_Allgather(&rank, 1, MPI_INT, node_ranks.data(), 1, MPI_INT, node_comm),
+		   "MPI_Allgather(node ranks)");
+	std::vector<int> on_my_node(static_cast<size_t>(nproc), 0);
+	for (int r : node_ranks)
+		on_my_node[static_cast<size_t>(r)] = 1;
 
 	int local_gpu_count = 0;
 	cudaGetDeviceCount(&local_gpu_count);
@@ -47,17 +54,15 @@ int main(int argc, char **argv) {
 		std::cerr << "rank " << rank << ": no visible CUDA devices\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
+	/* При env=auto и ровно одном видимом GPU на процесс часто работает схема
+	   с cgroup-изоляцией (--gpus-per-task=1): MPI может быть CUDA-aware, но
+	   локальный CUDA IPC между процессами узла недоступен и UCX тихо уходит в
+	   host staging. Для intra-node пар заранее включаем явный shared-host path,
+	   чтобы fallback был управляемым и одинаковым на sender/receiver. */
+	const bool enable_local_shared_fallback =
+		(args.env == Env::Auto) && cuda_aware && (local_gpu_count <= 1);
 	const int my_gpu = local_rank % local_gpu_count;
 	cuda_ok(cudaSetDevice(my_gpu), "cudaSetDevice(initial)");
-
-	/* Глобальный справочник «ранг → его локальный device id». Дальше
-	   schedule_one_to_one / schedule_all_to_all берут отсюда t.src_gpu /
-	   t.dst_gpu и сами выбирают свой буфер — больше нигде не нужно
-	   догадываться, какой GPU у соседнего ранга. */
-	std::vector<int> rank_to_gpu(static_cast<size_t>(nproc), 0);
-	mpi_ok(MPI_Allgather(&my_gpu, 1, MPI_INT, rank_to_gpu.data(), 1, MPI_INT,
-						 MPI_COMM_WORLD),
-		   "MPI_Allgather rank_to_gpu");
 
 	// Текстовый отчёт дублируется в stdout и (опционально) в --out на rank 0.
 	std::unique_ptr<std::ofstream> out_file;
@@ -95,26 +100,26 @@ int main(int argc, char **argv) {
 		std::snprintf(my_pci, sizeof(my_pci), "n/a");
 	}
 
-	std::vector<char> hosts_recv;
-	std::vector<char> pci_recv;
-	if (rank == 0) {
-		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
-		pci_recv.resize(static_cast<size_t>(nproc) * PCI_LEN);
-	}
+	std::vector<char> hosts_recv(static_cast<size_t>(nproc) * HOST_LEN);
+	std::vector<char> pci_recv(static_cast<size_t>(nproc) * PCI_LEN);
 	std::vector<int> gpu_counts(nproc, 0);
-	mpi_ok(MPI_Gather(&local_gpu_count, 1, MPI_INT, gpu_counts.data(), 1, MPI_INT, 0,
-					  MPI_COMM_WORLD),
-		   "MPI_Gather gpu counts");
-	mpi_ok(MPI_Bcast(gpu_counts.data(), nproc, MPI_INT, 0, MPI_COMM_WORLD),
-		   "MPI_Bcast gpu counts");
-	mpi_ok(MPI_Gather(my_host, HOST_LEN, MPI_CHAR,
-					  rank == 0 ? hosts_recv.data() : nullptr, HOST_LEN, MPI_CHAR, 0,
-					  MPI_COMM_WORLD),
-		   "MPI_Gather hostnames");
-	mpi_ok(MPI_Gather(my_pci, PCI_LEN, MPI_CHAR,
-					  rank == 0 ? pci_recv.data() : nullptr, PCI_LEN, MPI_CHAR, 0,
-					  MPI_COMM_WORLD),
-		   "MPI_Gather pci bus ids");
+	mpi_ok(MPI_Allgather(my_host, HOST_LEN, MPI_CHAR, hosts_recv.data(), HOST_LEN,
+						 MPI_CHAR, MPI_COMM_WORLD),
+		   "MPI_Allgather hostnames");
+	mpi_ok(MPI_Allgather(&local_gpu_count, 1, MPI_INT, gpu_counts.data(), 1, MPI_INT,
+						 MPI_COMM_WORLD),
+		   "MPI_Allgather gpu counts");
+	/* Глобальный справочник «ранг → его локальный device id». Дальше
+	   schedule_one_to_one / schedule_all_to_all берут отсюда t.src_gpu /
+	   t.dst_gpu и сами выбирают свой буфер — больше нигде не нужно
+	   догадываться, какой GPU у соседнего ранга. */
+	std::vector<int> rank_to_gpu(static_cast<size_t>(nproc), 0);
+	mpi_ok(MPI_Allgather(&my_gpu, 1, MPI_INT, rank_to_gpu.data(), 1, MPI_INT,
+						 MPI_COMM_WORLD),
+		   "MPI_Allgather rank_to_gpu");
+	mpi_ok(MPI_Allgather(my_pci, PCI_LEN, MPI_CHAR, pci_recv.data(), PCI_LEN,
+						 MPI_CHAR, MPI_COMM_WORLD),
+		   "MPI_Allgather pci bus ids");
 
 	if (rank == 0) {
 		for (int r = 0; r < nproc; ++r) {
@@ -127,11 +132,6 @@ int main(int argc, char **argv) {
 			}
 		}
 	}
-
-	if (rank != 0)
-		hosts_recv.resize(static_cast<size_t>(nproc) * HOST_LEN);
-	mpi_ok(MPI_Bcast(hosts_recv.data(), nproc * HOST_LEN, MPI_CHAR, 0, MPI_COMM_WORLD),
-		   "MPI_Bcast hostnames");
 
 	const std::vector<std::string> rank_labels = build_rank_labels(hosts_recv, nproc, HOST_LEN);
 	const std::vector<std::string> global_gpu_labels =
@@ -188,6 +188,8 @@ int main(int argc, char **argv) {
 
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host, rank_to_gpu,
+							enable_local_shared_fallback,
+							node_comm, local_rank, on_my_node,
 							rank_labels, mirror);
 	else if (args.mode == Mode::OneToOneNode)
 		schedule_one_to_one_node(rank, nproc, local_gpu_count, gpu_counts, args,
@@ -195,6 +197,8 @@ int main(int argc, char **argv) {
 	else if (args.mode == Mode::AllToAll)
 		schedule_all_to_all(rank, nproc, args, via_host, rank_to_gpu,
 							rank_labels, mirror);
+
+	mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free(node)");
 
 	mpi_ok(MPI_Finalize(), "MPI_Finalize");
 	return 0;

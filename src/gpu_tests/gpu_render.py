@@ -6,7 +6,7 @@ from __future__ import annotations
 
 Arguments:
   input            .txt file, directory with .txt files, or '-' (stdin)
-  -o, --out-dir    output directory for PNG files
+  -o, --out        output directory for PNG files
   --sort, --sorted enable raw sorting pipeline (default: none)
 """
 
@@ -695,7 +695,7 @@ def main() -> int:
 		epilog=(
 			"Arguments:\n"
 			"  input            .txt file, directory with .txt files, or '-' for stdin\n"
-			"  -o, --out-dir    output directory for PNG files\n"
+			"  -o, --out        output directory for PNG files\n"
 			"  --sort, --sorted enable raw sorting pipeline (default: none)\n\n"
 		),
 		formatter_class=argparse.RawTextHelpFormatter,
@@ -708,7 +708,7 @@ def main() -> int:
 	)
 	p.add_argument(
 		"-o",
-		"--out-dir",
+		"--out",
 		type=Path,
 		default=Path("."),
 		help="Каталог для PNG; для каждого входного .txt создаётся подкаталог по имени файла",
