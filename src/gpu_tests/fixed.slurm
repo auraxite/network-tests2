@@ -25,6 +25,7 @@ ENVS=( # закомментировать лишнее
 )
 MODES=( # закомментировать лишнее
 	one_to_one
+	# one_to_one_node
 	all_to_all
 )
 CASES=( # "bytes:iters:warmup", закомментировать лишнее
@@ -118,23 +119,40 @@ for REP in "${REPS[@]}"; do
 				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 				echo "  -> ${OUT_TXT}"
 
-				# --cpu-bind=cores привязывает каждый ранг к своему ядру (а не
-				#   позволяет ОС шарить ядра между ранками). Без этого jitter
-				#   планировщика сильно «болтает» сэмплы.
-				# --gpu-bind=closest закрепляет ранг за тем GPU, который сидит
-				#   на ближайшем к его CPU PCIe-root-complex'е. Это ключ к
-				#   красивой картинке intra-node: cross-socket пары перестанут
-				#   гнать D2H/H2D через UPI и будут на ~200 мкс быстрее.
-				srun --mpi=pmix \
-					--cpu-bind=cores \
-					--gpu-bind=closest \
-					-n"${NTASKS}" "${BIN}" \
-					--bytes "${BYTES}" \
-					--warmup "${WARMUP}" \
-					--iters "${ITERS}" \
-					--env "${ENV}" \
-					--mode "${MODE}" \
-					--out "${OUT_TXT}"
+				if [[ "${MODE}" == "one_to_one_node" ]]; then
+					# Новый режим: 1 MPI-процесс на узел, внутри процесса доступны
+					# все GPU узла. Локальные пары идут без MPI через cudaMemcpyPeer
+					# (auto) или D2H->H2D (host).
+					RUN_NTASKS="${SLURM_JOB_NUM_NODES:-2}"
+					RUN_TPN=1
+					echo "  launch: node-mode (${RUN_NTASKS} MPI rank(s), 1 per node)"
+					srun --mpi=pmix \
+						--cpu-bind=cores \
+						--ntasks="${RUN_NTASKS}" \
+						--ntasks-per-node="${RUN_TPN}" \
+						"${BIN}" \
+						--bytes "${BYTES}" \
+						--warmup "${WARMUP}" \
+						--iters "${ITERS}" \
+						--env "${ENV}" \
+						--mode "${MODE}" \
+						--out "${OUT_TXT}"
+				else
+					# Старые режимы: 1 MPI-процесс на 1 GPU.
+					# --cpu-bind=cores привязывает каждый ранг к своему ядру.
+					# --gpu-bind=closest закрепляет ранг за ближайшим GPU.
+					echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s))"
+					srun --mpi=pmix \
+						--cpu-bind=cores \
+						--gpu-bind=closest \
+						-n"${NTASKS}" "${BIN}" \
+						--bytes "${BYTES}" \
+						--warmup "${WARMUP}" \
+						--iters "${ITERS}" \
+						--env "${ENV}" \
+						--mode "${MODE}" \
+						--out "${OUT_TXT}"
+				fi
 
 				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES}"
 			done

@@ -10,6 +10,9 @@ namespace gpu_benchmark {
 
 namespace {
 
+static constexpr int RDV_TAG_FORWARD = 142;
+static constexpr int RDV_TAG_BACKWARD = 143;
+
 int global_gpu_offset(const std::vector<int> &gpu_counts, int rank) {
 	int offset = 0;
 	for (int r = 0; r < rank; ++r) {
@@ -57,6 +60,9 @@ std::vector<double> run_one_to_one_node(
 	const bool is_receiver = (rank == t.dst_rank);
 	const bool is_local_pair = (t.src_rank == t.dst_rank);
 	const bool is_same_gpu = is_local_pair && (t.src_gpu == t.dst_gpu);
+	/* Таймер закреплён за получателем, как и в обычном one_to_one.
+	   Для межузловой пары старт итерации выравниваем pair-local rendezvous
+	   на КАЖДОЙ итерации, чтобы receiver-side окно лучше покрывало sender D2H. */
 	const bool collect_raw_samples_here = is_receiver;
 
 	if (!is_sender && !is_receiver)
@@ -185,6 +191,22 @@ std::vector<double> run_one_to_one_node(
 	current_phase = "iters";
 	for (int i = 0; i < args.iters; ++i) {
 		current_iter = i;
+
+		if (!is_local_pair) {
+			char dummy = 0;
+			if (is_sender) {
+				mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
+									&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
+									MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+					   "MPI_Sendrecv iter rendezvous (node sender)");
+			} else if (is_receiver) {
+				mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
+									&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
+									MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+					   "MPI_Sendrecv iter rendezvous (node receiver)");
+			}
+		}
+
 		if (collect_raw_samples_here) {
 			cuda_ok(cudaSetDevice(t.dst_gpu), "cudaSetDevice(timer start)");
 			cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");

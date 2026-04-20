@@ -9,9 +9,14 @@
 
 namespace gpu_benchmark {
 
+static constexpr int RDV_TAG_FORWARD = 42;
+static constexpr int RDV_TAG_BACKWARD = 43;
+
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 								   bool check_host,
+								   bool same_node_pair,
 								   char *d_send, char *d_recv, char *h_buf,
+								   char *shared_h_buf, MPI_Win shared_h_win,
 								   const std::vector<std::string> &rank_labels) {
 	std::vector<double> ack(ACK_FIELDS, 0.0);
 	const bool is_sender = (rank == t.src_rank);
@@ -47,6 +52,44 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 	int current_iter = -1;
 	const char *current_phase = "none";
 	auto do_one = [&]() {
+		if (same_node_pair && check_host) {
+			if (is_sender) {
+				DBG_LOG(rank, args,
+						"one_to_one LOCAL_D2H_BEGIN phase=" << current_phase
+						<< " idx=" << current_iter);
+				cuda_ok(cudaMemcpy(shared_h_buf, d_send, count, cudaMemcpyDeviceToHost),
+						"D2H(shared host)");
+				if (shared_h_win != MPI_WIN_NULL)
+					mpi_ok(MPI_Win_sync(shared_h_win), "MPI_Win_sync(shared host sender)");
+				DBG_LOG(rank, args,
+						"one_to_one LOCAL_D2H_DONE phase=" << current_phase
+						<< " idx=" << current_iter);
+				char dummy = 0;
+				mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
+									&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
+									MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+					   "MPI_Sendrecv local host ready (sender)");
+			}
+			if (is_receiver) {
+				char dummy = 0;
+				mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
+									&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
+									MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+					   "MPI_Sendrecv local host ready (receiver)");
+				if (shared_h_win != MPI_WIN_NULL)
+					mpi_ok(MPI_Win_sync(shared_h_win), "MPI_Win_sync(shared host receiver)");
+				DBG_LOG(rank, args,
+						"one_to_one LOCAL_H2D_BEGIN phase=" << current_phase
+						<< " idx=" << current_iter);
+				cuda_ok(cudaMemcpy(d_recv, shared_h_buf, count, cudaMemcpyHostToDevice),
+						"H2D(shared host)");
+				DBG_LOG(rank, args,
+						"one_to_one LOCAL_H2D_DONE phase=" << current_phase
+						<< " idx=" << current_iter);
+			}
+			return;
+		}
+
 		if (is_sender) {
 			if (check_host) {
 				DBG_LOG(rank, args,
@@ -139,6 +182,19 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		current_iter = i;
 		DBG_LOG(rank, args, "one_to_one ITER_BEGIN idx=" << i);
 
+		char dummy = 0;
+		if (is_sender) {
+			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
+								&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
+								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+				   "MPI_Sendrecv iter rendezvous (sender)");
+		} else {
+			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
+								&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
+								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+				   "MPI_Sendrecv iter rendezvous (receiver)");
+		}
+
 		/* CUDA-event start — ВНЕ интервала t0..t1: сам по себе cudaEventRecord
 		   стоит несколько мкс, и эти мкс не должны попадать в samples_mpi_us. */
 		if (collect_raw_samples_here)
@@ -212,13 +268,61 @@ void schedule_one_to_one(
 	   и при необходимости один h_buf. */
 	const int my_gpu = rank_to_gpu[static_cast<size_t>(rank)];
 	cuda_ok(cudaSetDevice(my_gpu), "cudaSetDevice(schedule_one_to_one)");
+	MPI_Comm node_comm = MPI_COMM_NULL;
+	mpi_ok(MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
+							   MPI_INFO_NULL, &node_comm),
+		   "MPI_Comm_split_type(one_to_one node)");
+	int node_rank = 0;
+	int node_size = 1;
+	mpi_ok(MPI_Comm_rank(node_comm, &node_rank), "MPI_Comm_rank(one_to_one node)");
+	mpi_ok(MPI_Comm_size(node_comm, &node_size), "MPI_Comm_size(one_to_one node)");
+	std::vector<int> node_ranks(static_cast<size_t>(node_size), 0);
+	mpi_ok(MPI_Allgather(&rank, 1, MPI_INT, node_ranks.data(), 1, MPI_INT, node_comm),
+		   "MPI_Allgather(one_to_one node ranks)");
+	std::vector<int> on_my_node(static_cast<size_t>(nproc), 0);
+	for (int r : node_ranks)
+		on_my_node[static_cast<size_t>(r)] = 1;
+
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
 	char *h_buf = nullptr;
+	char *shared_h_buf = nullptr;
+	MPI_Win shared_h_win = MPI_WIN_NULL;
+	bool shared_h_registered = false;
 	cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(d_send)");
 	cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(d_recv)");
 	if (via_host)
 		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost(h_buf)");
+	if (via_host) {
+		MPI_Aint shared_bytes = 0;
+		int disp_unit = 0;
+		void *shared_base = nullptr;
+		const MPI_Aint my_shared_bytes = (node_rank == 0)
+											 ? static_cast<MPI_Aint>(args.nbytes)
+											 : static_cast<MPI_Aint>(0);
+		mpi_ok(MPI_Win_allocate_shared(my_shared_bytes, sizeof(char), MPI_INFO_NULL,
+									   node_comm, &shared_base, &shared_h_win),
+			   "MPI_Win_allocate_shared(one_to_one host)");
+		mpi_ok(MPI_Win_shared_query(shared_h_win, 0, &shared_bytes, &disp_unit,
+									&shared_base),
+			   "MPI_Win_shared_query(one_to_one host)");
+		shared_h_buf = static_cast<char *>(shared_base);
+		if (shared_h_buf != nullptr && shared_bytes >= static_cast<MPI_Aint>(args.nbytes)) {
+			cudaError_t reg_err =
+				cudaHostRegister(shared_h_buf, args.nbytes, cudaHostRegisterPortable);
+			if (reg_err == cudaSuccess) {
+				shared_h_registered = true;
+			} else if (reg_err == cudaErrorHostMemoryAlreadyRegistered) {
+				cudaGetLastError();
+				shared_h_registered = true;
+			} else {
+				DBG_LOG(rank, args,
+						"one_to_one shared host register skipped: "
+						<< cudaGetErrorString(reg_err));
+				cudaGetLastError();
+			}
+		}
+	}
 
 	if (rank != 0) {
 		while (true) {
@@ -231,13 +335,24 @@ void schedule_one_to_one(
 					<< " dst=" << tw.dst_rank << "." << tw.dst_gpu << " stop=" << tw.stop);
 			if (tw.stop)
 				break;
+			const bool same_node_pair =
+				on_my_node[static_cast<size_t>(tw.src_rank)] != 0 &&
+				on_my_node[static_cast<size_t>(tw.dst_rank)] != 0;
 			auto ack = run_one_to_one(rank, tw, args, via_host,
-									  d_send, d_recv, h_buf, rank_labels);
+									  same_node_pair,
+									  d_send, d_recv, h_buf,
+									  shared_h_buf, shared_h_win, rank_labels);
 			mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
 				"MPI_Send ack (worker)");
 			DBG_LOG(rank, args, "one_to_one WORKER_ACK_SENT");
 		}
 		DBG_LOG(rank, args, "one_to_one WORKER_STOP");
+		if (shared_h_registered)
+			cuda_ok(cudaHostUnregister(shared_h_buf), "cudaHostUnregister(shared host)");
+		if (shared_h_win != MPI_WIN_NULL)
+			mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free(one_to_one host)");
+		if (node_comm != MPI_COMM_NULL)
+			mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free(one_to_one node)");
 		if (h_buf)
 			cudaFreeHost(h_buf);
 		cudaFree(d_send);
@@ -285,6 +400,10 @@ void schedule_one_to_one(
 				continue;
 			}
 
+			const bool same_node_pair =
+				on_my_node[static_cast<size_t>(src_rank)] != 0 &&
+				on_my_node[static_cast<size_t>(dst_rank)] != 0;
+
 			if (src_rank != 0)
 				mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src_rank, 1, MPI_COMM_WORLD),
 					"MPI_Send Task (src)");
@@ -296,7 +415,9 @@ void schedule_one_to_one(
 			std::vector<double> metric(ACK_FIELDS, 0.0);
 			if (src_rank == 0 || dst_rank == 0) {
 				auto ack0 = run_one_to_one(rank, t, args, via_host,
-										   d_send, d_recv, h_buf, rank_labels);
+										   same_node_pair,
+										   d_send, d_recv, h_buf,
+										   shared_h_buf, shared_h_win, rank_labels);
 				if (ack0[6] == 1.0)
 					metric = ack0;
 			}
@@ -360,6 +481,12 @@ void schedule_one_to_one(
 		mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, r, 1, MPI_COMM_WORLD),
 			"MPI_Send stop Task");
 
+	if (shared_h_registered)
+		cuda_ok(cudaHostUnregister(shared_h_buf), "cudaHostUnregister(shared host)");
+	if (shared_h_win != MPI_WIN_NULL)
+		mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free(one_to_one host)");
+	if (node_comm != MPI_COMM_NULL)
+		mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free(one_to_one node)");
 	if (h_buf)
 		cudaFreeHost(h_buf);
 	cudaFree(d_send);

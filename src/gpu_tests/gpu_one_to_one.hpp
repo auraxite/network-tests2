@@ -13,7 +13,9 @@ namespace gpu_benchmark {
    быть nullptr, если check_host == false. */
 std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 								   bool check_host,
+								   bool same_node_pair,
 								   char *d_send, char *d_recv, char *h_buf,
+								   char *shared_h_buf, MPI_Win shared_h_win,
 								   const std::vector<std::string> &rank_labels);
 
 /* rank_to_gpu[r] — локальный (внутри узла процесса r) device id, выбранный в
