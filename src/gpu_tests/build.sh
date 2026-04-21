@@ -10,8 +10,8 @@ OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
 
-case "${1:-}" in
-srun|remote)
+case "${1:-srun}" in
+srun)
 	SRUN_NODES="${SRUN_NODES:-1}"
 	SRUN_GPUS="${SRUN_GPUS:-1}"
 	SRUN_TIME="${SRUN_TIME:-00:01:00}"
@@ -24,6 +24,11 @@ srun|remote)
 	;;
 build)
 	shift
+	;;
+*)
+	echo "Usage: sh build.sh [build]" >&2
+	echo "  no args: submit build via srun" >&2
+	exit 1
 	;;
 esac
 
@@ -39,7 +44,7 @@ test -x "$MPICXX" || { echo "build.sh: not executable: $MPICXX" >&2; exit 1; }
 
 if ! test -f "$CUDA_PATH/include/cuda_runtime.h"; then
 	echo "build.sh: missing $CUDA_PATH/include/cuda_runtime.h" >&2
-	echo "  На login-узле часто нет CUDA headers — запусти: sh build.sh srun" >&2
+	echo "  На login-узле часто нет CUDA headers — запусти: sh build.sh" >&2
 	exit 1
 fi
 
