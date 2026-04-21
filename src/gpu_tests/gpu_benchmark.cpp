@@ -176,6 +176,7 @@ int main(int argc, char **argv) {
 							rank_labels, mirror);
 	else if (args.mode == Mode::AllToAll)
 		schedule_all_to_all(rank, nproc, args, via_host,
+							node_comm, local_rank, on_my_node, node_ranks,
 							rank_labels, mirror);
 
 	mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free(node)");

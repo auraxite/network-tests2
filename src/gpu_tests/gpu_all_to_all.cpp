@@ -19,19 +19,25 @@ static int alltoall_local_ready_tag(int src_rank, int dst_rank, int nproc) {
 
 void schedule_all_to_all(
 	int rank, int nproc, const Args &args, bool via_host,
+	MPI_Comm node_comm, int node_rank,
+	const std::vector<int> &on_my_node,
+	const std::vector<int> &node_ranks,
 	const std::vector<std::string> &rank_labels,
 	const std::function<void(const std::string &)> &mirror) {
 	DBG_LOG(rank, args, "all_to_all SCHEDULE_BEGIN");
 	const int local_gpu = 0;
+	(void)node_rank;
 	if (rank != 0) {
-		run_all_to_all(rank, nproc, args, via_host, local_gpu, rank_labels);
+		run_all_to_all(rank, nproc, args, via_host, local_gpu,
+					   node_comm, on_my_node, node_ranks, rank_labels);
 		DBG_LOG(rank, args, "all_to_all SCHEDULE_DONE");
 		return;
 	}
 
 	const double test_t0 = MPI_Wtime();
 	std::vector<double> results =
-		run_all_to_all(rank, nproc, args, via_host, local_gpu, rank_labels);
+		run_all_to_all(rank, nproc, args, via_host, local_gpu,
+					   node_comm, on_my_node, node_ranks, rank_labels);
 
 	auto metric_ptr = [&](int src_rank, int dst_rank) -> const double * {
 		return results.data() +
@@ -110,15 +116,16 @@ void schedule_all_to_all(
 
 std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
                                    bool check_host, int local_gpu,
+                                   MPI_Comm node_comm,
+                                   const std::vector<int> &on_my_node,
+                                   const std::vector<int> &node_ranks,
                                    const std::vector<std::string> &rank_labels) {
     std::vector<double> ack(ACK_FIELDS, 0.0);
     const int count = static_cast<int>(args.nbytes);
 
     char *d_send = nullptr;
     char *d_recv = nullptr;
-    MPI_Comm node_comm = MPI_COMM_NULL;
     MPI_Win shared_h_win = MPI_WIN_NULL;
-    std::vector<int> on_my_node(static_cast<size_t>(nproc), 0);
     std::vector<char *> shared_h_slots(static_cast<size_t>(nproc), nullptr);
     std::vector<char *> shared_h_registered;
     std::vector<char *> send_host(static_cast<size_t>(nproc), nullptr);
@@ -135,29 +142,13 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
     cuda_ok(cudaMemset(d_send, 0xAA, args.nbytes), "cudaMemset(d_send init)");
 
     if (check_host) {
-        int node_rank = 0;
-        int node_size = 1;
-        mpi_ok(MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
-                                   MPI_INFO_NULL, &node_comm),
-               "MPI_Comm_split_type(all_to_all node)");
-        mpi_ok(MPI_Comm_rank(node_comm, &node_rank),
-               "MPI_Comm_rank(all_to_all node)");
-        mpi_ok(MPI_Comm_size(node_comm, &node_size),
-               "MPI_Comm_size(all_to_all node)");
-
-        std::vector<int> node_ranks(static_cast<size_t>(node_size), 0);
-        mpi_ok(MPI_Allgather(&rank, 1, MPI_INT, node_ranks.data(), 1, MPI_INT,
-                             node_comm),
-               "MPI_Allgather(all_to_all node ranks)");
-        for (int r : node_ranks)
-            on_my_node[static_cast<size_t>(r)] = 1;
-
         void *shared_base = nullptr;
         mpi_ok(MPI_Win_allocate_shared(static_cast<MPI_Aint>(args.nbytes),
                                        sizeof(char), MPI_INFO_NULL, node_comm,
                                        &shared_base, &shared_h_win),
                "MPI_Win_allocate_shared(all_to_all host)");
 
+        const int node_size = static_cast<int>(node_ranks.size());
         shared_h_registered.reserve(static_cast<size_t>(node_size));
         for (int local_idx = 0; local_idx < node_size; ++local_idx) {
             MPI_Aint shared_bytes = 0;
@@ -248,20 +239,26 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
         for (int src_rank = 0; src_rank < nproc; ++src_rank) {
             if (src_rank == rank)
                 continue;
-            const bool same_node_host =
-                check_host && on_my_node[static_cast<size_t>(src_rank)] != 0 &&
-                shared_h_slots[static_cast<size_t>(src_rank)] != nullptr;
-            if (same_node_host) {
-                mpi_ok(MPI_Irecv(nullptr, 0, MPI_BYTE, src_rank,
-                                 alltoall_local_ready_tag(src_rank, rank, nproc),
+            if (check_host) {
+                const bool same_node_host =
+                    on_my_node[static_cast<size_t>(src_rank)] != 0 &&
+                    shared_h_slots[static_cast<size_t>(src_rank)] != nullptr;
+                if (same_node_host) {
+                    mpi_ok(MPI_Irecv(nullptr, 0, MPI_BYTE, src_rank,
+                                     alltoall_local_ready_tag(src_rank, rank, nproc),
+                                     MPI_COMM_WORLD,
+                                     &recv_req[static_cast<size_t>(nproc + src_rank)]),
+                           "MPI_Irecv(all_to_all local ready)");
+                    continue;
+                }
+                void *recv_ptr = static_cast<void *>(recv_host[static_cast<size_t>(src_rank)]);
+                mpi_ok(MPI_Irecv(recv_ptr, count, MPI_BYTE, src_rank,
+                                 alltoall_pair_tag(src_rank, rank, nproc),
                                  MPI_COMM_WORLD,
-                                 &recv_req[static_cast<size_t>(nproc + src_rank)]),
-                       "MPI_Irecv(all_to_all local ready)");
+                                 &recv_req[static_cast<size_t>(src_rank)]),
+                       "MPI_Irecv(all_to_all)");
             } else {
-                void *recv_ptr =
-                    check_host
-                        ? static_cast<void *>(recv_host[static_cast<size_t>(src_rank)])
-                        : static_cast<void *>(recv_dev[static_cast<size_t>(src_rank)]);
+                void *recv_ptr = static_cast<void *>(recv_dev[static_cast<size_t>(src_rank)]);
                 mpi_ok(MPI_Irecv(recv_ptr, count, MPI_BYTE, src_rank,
                                  alltoall_pair_tag(src_rank, rank, nproc),
                                  MPI_COMM_WORLD,
@@ -285,27 +282,28 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
         for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
             if (dst_rank == rank)
                 continue;
-            const bool same_node_host =
-                check_host && on_my_node[static_cast<size_t>(dst_rank)] != 0 &&
-                shared_h_slots[static_cast<size_t>(rank)] != nullptr;
-
-            if (same_node_host) {
-                if (!shared_local_copied) {
-                    cuda_ok(cudaMemcpy(shared_h_slots[static_cast<size_t>(rank)], d_send,
-                                       args.nbytes, cudaMemcpyDeviceToHost),
-                            "D2H(all_to_all shared host)");
-                    if (shared_h_win != MPI_WIN_NULL) {
-                        mpi_ok(MPI_Win_sync(shared_h_win),
-                               "MPI_Win_sync(all_to_all shared host sender)");
+            if (check_host) {
+                const bool same_node_host =
+                    on_my_node[static_cast<size_t>(dst_rank)] != 0 &&
+                    shared_h_slots[static_cast<size_t>(rank)] != nullptr;
+                if (same_node_host) {
+                    if (!shared_local_copied) {
+                        cuda_ok(cudaMemcpy(shared_h_slots[static_cast<size_t>(rank)], d_send,
+                                           args.nbytes, cudaMemcpyDeviceToHost),
+                                "D2H(all_to_all shared host)");
+                        if (shared_h_win != MPI_WIN_NULL) {
+                            mpi_ok(MPI_Win_sync(shared_h_win),
+                                   "MPI_Win_sync(all_to_all shared host sender)");
+                        }
+                        shared_local_copied = true;
                     }
-                    shared_local_copied = true;
+                    mpi_ok(MPI_Isend(nullptr, 0, MPI_BYTE, dst_rank,
+                                     alltoall_local_ready_tag(rank, dst_rank, nproc),
+                                     MPI_COMM_WORLD,
+                                     &send_req[static_cast<size_t>(dst_rank)]),
+                           "MPI_Isend(all_to_all local ready)");
+                    continue;
                 }
-                mpi_ok(MPI_Isend(nullptr, 0, MPI_BYTE, dst_rank,
-                                 alltoall_local_ready_tag(rank, dst_rank, nproc),
-                                 MPI_COMM_WORLD,
-                                 &send_req[static_cast<size_t>(dst_rank)]),
-                       "MPI_Isend(all_to_all local ready)");
-            } else if (check_host) {
                 char *send_ptr = send_host[static_cast<size_t>(dst_rank)];
                 cuda_ok(cudaMemcpy(send_ptr, d_send, args.nbytes, cudaMemcpyDeviceToHost),
                         "D2H(all_to_all)");
@@ -334,26 +332,28 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
             if (idx == MPI_UNDEFINED)
                 break;
 
-            const bool same_node_host = idx >= nproc;
-            const int src_rank = same_node_host ? (idx - nproc) : idx;
-            if (same_node_host) {
-                if (shared_h_win != MPI_WIN_NULL) {
-                    mpi_ok(MPI_Win_sync(shared_h_win),
-                           "MPI_Win_sync(all_to_all shared host receiver)");
+            int src_rank = idx;
+            if (check_host) {
+                const bool same_node_host = idx >= nproc;
+                src_rank = same_node_host ? (idx - nproc) : idx;
+                if (same_node_host) {
+                    if (shared_h_win != MPI_WIN_NULL) {
+                        mpi_ok(MPI_Win_sync(shared_h_win),
+                               "MPI_Win_sync(all_to_all shared host receiver)");
+                    }
+                    cuda_ok(cudaMemcpy(d_recv, shared_h_slots[static_cast<size_t>(src_rank)],
+                                       args.nbytes, cudaMemcpyHostToDevice),
+                            "H2D(all_to_all shared host)");
+                } else {
+                    cuda_ok(cudaMemcpy(d_recv, recv_host[static_cast<size_t>(src_rank)],
+                                       args.nbytes, cudaMemcpyHostToDevice),
+                            "H2D(all_to_all)");
                 }
-                cuda_ok(cudaMemcpy(d_recv, shared_h_slots[static_cast<size_t>(src_rank)],
-                                   args.nbytes, cudaMemcpyHostToDevice),
-                        "H2D(all_to_all shared host)");
-            } else if (check_host) {
-                cuda_ok(cudaMemcpy(d_recv, recv_host[static_cast<size_t>(src_rank)],
-                                   args.nbytes, cudaMemcpyHostToDevice),
-                        "H2D(all_to_all)");
             } else {
                 cuda_ok(cudaMemcpy(d_recv, recv_dev[static_cast<size_t>(src_rank)],
                                    args.nbytes, cudaMemcpyDeviceToDevice),
                         "D2D(all_to_all)");
             }
-
             if (measure) {
                 const double t1_mpi_s = MPI_Wtime();
                 const double t1_cpu_us = clock_gettime_wrapper();
@@ -499,8 +499,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
         cuda_ok(cudaHostUnregister(ptr), "cudaHostUnregister(all_to_all shared)");
     if (shared_h_win != MPI_WIN_NULL)
         mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free(all_to_all host)");
-    if (node_comm != MPI_COMM_NULL)
-        mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free(all_to_all node)");
     if (d_send)
         cudaFree(d_send);
     if (d_recv)
