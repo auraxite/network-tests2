@@ -403,19 +403,6 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		current_iter = i;
 		DBG_LOG(rank, args, "one_to_one ITER_BEGIN idx=" << i);
 
-		char dummy = 0;
-		if (is_sender) {
-			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
-								&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
-								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-				   "MPI_Sendrecv iter rendezvous (sender)");
-		} else {
-			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
-								&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
-								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-				   "MPI_Sendrecv iter rendezvous (receiver)");
-		}
-
 		/* CUDA-event start — ВНЕ интервала t0..t1: сам по себе cudaEventRecord
 		   стоит несколько мкс, и эти мкс не должны попадать в samples_mpi_us. */
 		if (collect_raw_samples_here)
@@ -442,6 +429,19 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 			cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop),
 					"cudaEventElapsedTime");
 			samples_gpu_us.push_back(static_cast<double>(elapsed_ms) * 1e3);
+		}
+
+		char dummy = 0;
+		if (is_sender) {
+			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
+								&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
+								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+				   "MPI_Sendrecv iter rendezvous (sender)");
+		} else {
+			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
+								&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
+								MPI_COMM_WORLD, MPI_STATUS_IGNORE),
+				   "MPI_Sendrecv iter rendezvous (receiver)");
 		}
 
 		DBG_LOG(rank, args, "one_to_one ITER_DONE idx=" << i);

@@ -230,10 +230,8 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 
         cudaEvent_t ev_start = nullptr;
         std::vector<cudaEvent_t> ev_stop(static_cast<size_t>(nproc), nullptr);
-        if (measure) {
+        if (measure)
             cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
-            cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
-        }
 
         DBG_LOG(rank, args, "all_to_all RECV_POST_BEGIN");
         for (int src_rank = 0; src_rank < nproc; ++src_rank) {
@@ -269,12 +267,17 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
         DBG_LOG(rank, args, "all_to_all RECV_POST_DONE");
 
         DBG_LOG(rank, args, "all_to_all SEND_PHASE_BEGIN");
+        bool gpu_start_recorded = false;
         for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
             if (dst_rank == rank)
                 continue;
             if (measure) {
                 t0_mpi_s[static_cast<size_t>(dst_rank)] = MPI_Wtime();
                 t0_cpu_us[static_cast<size_t>(dst_rank)] = clock_gettime_wrapper();
+                if (!gpu_start_recorded && ev_start != nullptr) {
+                    cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
+                    gpu_start_recorded = true;
+                }
             }
         }
 
