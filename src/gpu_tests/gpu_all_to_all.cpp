@@ -19,25 +19,19 @@ static int alltoall_local_ready_tag(int src_rank, int dst_rank, int nproc) {
 
 void schedule_all_to_all(
 	int rank, int nproc, const Args &args, bool via_host,
-	const std::vector<int> &rank_to_gpu,
 	const std::vector<std::string> &rank_labels,
 	const std::function<void(const std::string &)> &mirror) {
 	DBG_LOG(rank, args, "all_to_all SCHEDULE_BEGIN");
-	/* Раньше тут хардкоженно передавался local_gpu=0 для всех ранков; при
-	   --gres=gpu:N (когда у одного процесса видны все GPU узла) это означало,
-	   что 4 процесса узла стучатся в физический GPU 0, а GPU 1..3 простаивают.
-	   Теперь берём личный device из глобального справочника rank_to_gpu, который
-	   gpu_benchmark.cpp заполнил по локальному рангу процесса на узле. */
-	const int my_gpu = rank_to_gpu[static_cast<size_t>(rank)];
+	const int local_gpu = 0;
 	if (rank != 0) {
-		run_all_to_all(rank, nproc, args, via_host, my_gpu, rank_labels);
+		run_all_to_all(rank, nproc, args, via_host, local_gpu, rank_labels);
 		DBG_LOG(rank, args, "all_to_all SCHEDULE_DONE");
 		return;
 	}
 
 	const double test_t0 = MPI_Wtime();
 	std::vector<double> results =
-		run_all_to_all(rank, nproc, args, via_host, my_gpu, rank_labels);
+		run_all_to_all(rank, nproc, args, via_host, local_gpu, rank_labels);
 
 	auto metric_ptr = [&](int src_rank, int dst_rank) -> const double * {
 		return results.data() +

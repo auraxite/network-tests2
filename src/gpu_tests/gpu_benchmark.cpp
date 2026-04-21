@@ -1,7 +1,6 @@
 #include "gpu_all_to_all.hpp"
 #include "gpu_common.hpp"
 #include "gpu_one_to_one.hpp"
-#include "gpu_one_to_one_node.hpp"
 
 #include <fstream>   // std::ofstream — запись текстового вывода в --out
 #include <iomanip>   // std::setprecision, std::fixed — формат чисел в выводе
@@ -23,16 +22,10 @@ int main(int argc, char **argv) {
 	const bool cuda_aware = mpi_cuda_aware();
 	const bool via_host = check_host(args.env, cuda_aware);
 
-	/* === Подбор GPU по локальному рангу на узле ===
-	   Раньше каждый процесс делал cudaSetDevice(0). Это работало только при
-	   --gpus-per-task=1 (когда Slurm-cgroup делал каждому процессу видимым
-	   ровно один GPU как индекс 0). Но такая cgroup-изоляция выключает
-	   cuda_ipc между процессами одного узла — UCX не может разделить
-	   IPC-handle между двумя cgroup'ами. Это и давало плоские ~745 мкс
-	   в env=auto: UCX делал fallback на cuda_copy (host staging).
-	   При --gres=gpu:N все GPU узла видны всем процессам, и нам нужно
-	   самим раздать кому какой device. Базируемся на ранге внутри
-	   shared-memory-коммуникатора (MPI_COMM_TYPE_SHARED == «один узел»). */
+	/* === Узловой коммуникатор ===
+	   local_rank используется дальше для node-local логики (shared host fallback).
+	   В текущем режиме запуска (1 видимый GPU на MPI-процесс) CUDA device всегда
+	   выбирается как индекс 0 в видимом пространстве процесса. */
 	MPI_Comm node_comm = MPI_COMM_NULL;
 	mpi_ok(MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
 							   MPI_INFO_NULL, &node_comm),
@@ -61,8 +54,8 @@ int main(int argc, char **argv) {
 	   чтобы fallback был управляемым и одинаковым на sender/receiver. */
 	const bool enable_local_shared_fallback =
 		(args.env == Env::Auto) && cuda_aware && (local_gpu_count <= 1);
-	const int my_gpu = local_rank % local_gpu_count;
-	cuda_ok(cudaSetDevice(my_gpu), "cudaSetDevice(initial)");
+	const int local_gpu = 0;
+	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(initial)");
 
 	// Текстовый отчёт дублируется в stdout и (опционально) в --out на rank 0.
 	std::unique_ptr<std::ofstream> out_file;
@@ -93,10 +86,8 @@ int main(int argc, char **argv) {
 	constexpr int PCI_LEN = 32;
 	char my_pci[PCI_LEN];
 	std::snprintf(my_pci, sizeof(my_pci), "n/a");
-	/* PCI bus id берём для my_gpu (того, который выбрали по local_rank выше), а
-	   не для GPU 0 — иначе в Rank map все 4 ранга узла рапортуют один и тот же
-	   PCI и понять, кто на каком device, нельзя. */
-	if (cudaDeviceGetPCIBusId(my_pci, sizeof(my_pci), my_gpu) != cudaSuccess) {
+	/* В режиме 1 visible GPU per rank индекс устройства внутри процесса всегда 0. */
+	if (cudaDeviceGetPCIBusId(my_pci, sizeof(my_pci), local_gpu) != cudaSuccess) {
 		std::snprintf(my_pci, sizeof(my_pci), "n/a");
 	}
 
@@ -109,14 +100,6 @@ int main(int argc, char **argv) {
 	mpi_ok(MPI_Allgather(&local_gpu_count, 1, MPI_INT, gpu_counts.data(), 1, MPI_INT,
 						 MPI_COMM_WORLD),
 		   "MPI_Allgather gpu counts");
-	/* Глобальный справочник «ранг → его локальный device id». Дальше
-	   schedule_one_to_one / schedule_all_to_all берут отсюда t.src_gpu /
-	   t.dst_gpu и сами выбирают свой буфер — больше нигде не нужно
-	   догадываться, какой GPU у соседнего ранга. */
-	std::vector<int> rank_to_gpu(static_cast<size_t>(nproc), 0);
-	mpi_ok(MPI_Allgather(&my_gpu, 1, MPI_INT, rank_to_gpu.data(), 1, MPI_INT,
-						 MPI_COMM_WORLD),
-		   "MPI_Allgather rank_to_gpu");
 	mpi_ok(MPI_Allgather(my_pci, PCI_LEN, MPI_CHAR, pci_recv.data(), PCI_LEN,
 						 MPI_CHAR, MPI_COMM_WORLD),
 		   "MPI_Allgather pci bus ids");
@@ -174,7 +157,7 @@ int main(int argc, char **argv) {
 			const char *p = pci_recv.data() + static_cast<size_t>(r) * PCI_LEN;
 			std::ostringstream oss;
 			oss << "  r" << r << " hostname=" << h
-				<< " local_gpu=" << rank_to_gpu[static_cast<size_t>(r)]
+				<< " local_gpu=0"
 				<< " visible_gpus=" << gpu_counts[static_cast<size_t>(r)] << " pci=" << p
 				<< "\n";
 			mirror(oss.str());
@@ -187,15 +170,12 @@ int main(int argc, char **argv) {
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
 
 	if (args.mode == Mode::OneToOne)
-		schedule_one_to_one(rank, nproc, args, via_host, rank_to_gpu,
+		schedule_one_to_one(rank, nproc, args, via_host,
 							enable_local_shared_fallback,
 							node_comm, local_rank, on_my_node,
 							rank_labels, mirror);
-	else if (args.mode == Mode::OneToOneNode)
-		schedule_one_to_one_node(rank, nproc, local_gpu_count, gpu_counts, args,
-								 via_host, global_gpu_labels, mirror);
 	else if (args.mode == Mode::AllToAll)
-		schedule_all_to_all(rank, nproc, args, via_host, rank_to_gpu,
+		schedule_all_to_all(rank, nproc, args, via_host,
 							rank_labels, mirror);
 
 	mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free(node)");

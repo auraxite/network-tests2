@@ -709,6 +709,7 @@ def main() -> int:
 	p.add_argument(
 		"-o",
 		"--out",
+		dest="out_dir",
 		type=Path,
 		default=Path("."),
 		help="Каталог для PNG; для каждого входного .txt создаётся подкаталог по имени файла",

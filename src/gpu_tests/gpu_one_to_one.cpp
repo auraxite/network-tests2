@@ -21,21 +21,20 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 
 void schedule_one_to_one(
 	int rank, int nproc, const Args &args, bool via_host,
-	const std::vector<int> &rank_to_gpu,
 	bool enable_local_shared_fallback,
 	MPI_Comm node_comm, int node_rank,
 	const std::vector<int> &on_my_node,
 	const std::vector<std::string> &rank_labels,
 	const std::function<void(const std::string &)> &mirror) {
 
-	/* Один раз на весь прогон выделяем буферы текущего ранга на ЕГО GPU.
+	/* Один раз на весь прогон выделяем буферы текущего ранга на его GPU.
 	   Раньше cudaMalloc / cudaMallocHost / cudaFree делались на КАЖДОЙ паре
 	   (это nproc*(nproc-1) аллокаций), что давало большой накладной шум и
 	   удлиняло общий прогон в разы. cudaMallocHost особенно дорогой —
 	   pinning страниц через ядро. Теперь выделяем по одному d_send + d_recv
 	   и при необходимости один h_buf. */
-	const int my_gpu = rank_to_gpu[static_cast<size_t>(rank)];
-	cuda_ok(cudaSetDevice(my_gpu), "cudaSetDevice(schedule_one_to_one)");
+	const int local_gpu = 0;
+	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(schedule_one_to_one)");
 
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
@@ -120,14 +119,9 @@ void schedule_one_to_one(
 	for (int src_rank = 0; src_rank < nproc; ++src_rank) {
 		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
 			t.src_rank = src_rank;
-			/* src_gpu / dst_gpu теперь берутся из глобального справочника
-			   rank_to_gpu, заполненного в gpu_benchmark.cpp по локальному
-			   рангу процесса на узле. Раньше тут стояло 0 у всех, и при
-			   --gres=gpu:N (когда процессу видны все GPU узла) ВСЕ четыре
-			   процесса узла начали бы бегать по физическому GPU 0. */
-			t.src_gpu = rank_to_gpu[static_cast<size_t>(src_rank)];
+			t.src_gpu = 0;
 			t.dst_rank = dst_rank;
-			t.dst_gpu = rank_to_gpu[static_cast<size_t>(dst_rank)];
+			t.dst_gpu = 0;
 			t.stop = 0;
 			DBG_LOG(rank, args,
 					"one_to_one PAIR_BEGIN src=" << t.src_rank << "." << t.src_gpu

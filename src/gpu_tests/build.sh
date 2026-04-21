@@ -14,7 +14,7 @@ case "${1:-}" in
 srun|remote)
 	SRUN_NODES="${SRUN_NODES:-1}"
 	SRUN_GPUS="${SRUN_GPUS:-1}"
-	SRUN_TIME="${SRUN_TIME:-00:05:00}"
+	SRUN_TIME="${SRUN_TIME:-00:01:00}"
 	SRUN_PART=""
 	if [ -n "${SRUN_PARTITION:-}" ]; then
 		SRUN_PART="-p $SRUN_PARTITION"
@@ -56,7 +56,6 @@ fi
 	"$REPO_GPU_TESTS/gpu_benchmark.cpp" \
 	"$REPO_GPU_TESTS/gpu_common.cpp" \
 	"$REPO_GPU_TESTS/gpu_one_to_one.cpp" \
-	"$REPO_GPU_TESTS/gpu_one_to_one_node.cpp" \
 	"$REPO_GPU_TESTS/gpu_all_to_all.cpp" \
 	-o "$REPO_GPU_TESTS/gpu" \
 	$RPATH \
