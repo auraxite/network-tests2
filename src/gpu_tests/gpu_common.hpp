@@ -42,7 +42,6 @@ enum class StatOut {
 
 enum class Mode {
 	OneToOne,
-	OneToOneNode,
 	AllToAll,
 };
 

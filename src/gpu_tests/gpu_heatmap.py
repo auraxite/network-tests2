@@ -235,6 +235,8 @@ def parse_gpu_one_to_one_text(
 			meta["env"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Mode:"):
 			meta["mode"] = line.split(":", 1)[1].strip()
+		elif line.startswith("Timer:"):
+			meta["timer"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Ranks:"):
 			m = RANKS_LINE_RE.match(line)
 			if m:
@@ -562,7 +564,6 @@ def draw_heatmap(
 	fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
 	plt.close(fig)
 
-
 def render_one_text(
 	text: str,
 	out_dir: Path,
@@ -573,15 +574,12 @@ def render_one_text(
 ) -> int:
 	meta, pairs = parse_gpu_one_to_one_text(text)
 	if not pairs:
-		print(
-			f"gpu_render: [{label}] no matching 'pair ...' lines found.",
-			file=sys.stderr,
-		)
+		print(f"gpu_heatmap: [{label}] no matching 'pair ...' lines found.", file=sys.stderr)
 		return 1
 
 	n = matrix_size(meta, pairs)
 	if n <= 0:
-		print(f"gpu_render: [{label}] could not infer matrix size.", file=sys.stderr)
+		print(f"gpu_heatmap: [{label}] could not infer matrix size.", file=sys.stderr)
 		return 1
 
 	mats = fill_matrices(n, pairs)
@@ -633,7 +631,7 @@ def render_one_text(
 		written += 1
 
 	if written == 0:
-		print(f"gpu_render: [{label}] no non-empty metric matrices to plot.", file=sys.stderr)
+		print(f"gpu_heatmap: [{label}] no non-empty metric matrices to plot.", file=sys.stderr)
 		return 1
 
 	return 0
@@ -646,10 +644,10 @@ def _sort_raw_with_helper(raw_files: list[Path]) -> int:
 		try:
 			import sort_raw_samples as srs  # type: ignore[import-not-found]
 		except ImportError as e:
-			print(f"gpu_render: cannot import sort_raw.py / sort_raw_samples.py: {e}", file=sys.stderr)
+			print(f"gpu_heatmap: cannot import sort_raw.py / sort_raw_samples.py: {e}", file=sys.stderr)
 			return 1
 	except Exception as e:  # noqa: BLE001
-		print(f"gpu_render: cannot load raw sort helper: {e}", file=sys.stderr)
+		print(f"gpu_heatmap: cannot load raw sort helper: {e}", file=sys.stderr)
 		return 1
 
 	code = 0
@@ -669,7 +667,7 @@ def create_and_sort_raw_for_text(source_path: Path, out_dir: Path, sort_mode: st
 	src_raw_files = sorted(p for p in source_path.parent.glob(pattern) if p.is_file())
 	if not src_raw_files:
 		print(
-			f"gpu_render: [{source_path}] no matching raw files for pattern {pattern}",
+			f"gpu_heatmap: [{source_path}] no matching raw files for pattern {pattern}",
 			file=sys.stderr,
 		)
 		return 1
@@ -681,7 +679,7 @@ def create_and_sort_raw_for_text(source_path: Path, out_dir: Path, sort_mode: st
 		dst = raw_dir / src.name
 		shutil.copy2(src, dst)
 		copied_raw.append(dst)
-	print(f"gpu_render: copied {len(copied_raw)} raw files to {raw_dir}")
+	print(f"gpu_heatmap: copied {len(copied_raw)} raw files to {raw_dir}")
 
 	if sort_mode != "sorted":
 		return 0
@@ -735,7 +733,7 @@ def main() -> int:
 	if in_path == "-":
 		text = sys.stdin.read()
 		if args.sort_mode == "sorted":
-			print("gpu_render: stdin input cannot create raw files.", file=sys.stderr)
+			print("gpu_heatmap: stdin input cannot create raw files.", file=sys.stderr)
 			return 1
 		return render_one_text(
 			text,
@@ -748,14 +746,14 @@ def main() -> int:
 	path = Path(in_path)
 	if not path.exists():
 		print(
-			f"gpu_render: path not found: {path.resolve()}",
+			f"gpu_heatmap: path not found: {path.resolve()}",
 			file=sys.stderr,
 		)
 		return 1
 	if path.is_dir():
 		txts = sorted(path.glob("*.txt"))
 		if not txts:
-			print(f"gpu_render: no *.txt in {path}", file=sys.stderr)
+			print(f"gpu_heatmap: no *.txt in {path}", file=sys.stderr)
 			return 1
 		code = 0
 		for txt in txts:
@@ -791,7 +789,7 @@ def main() -> int:
 			return 0
 		return create_and_sort_raw_for_text(path, args.out_dir, args.sort_mode)
 
-	print(f"gpu_render: not a file or directory: {path}", file=sys.stderr)
+	print(f"gpu_heatmap: not a file or directory: {path}", file=sys.stderr)
 	return 1
 
 

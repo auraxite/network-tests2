@@ -55,7 +55,7 @@ void help(int rank) {
 			  << "  --warmup N      warmup iterations per pair\n"
 			  << "  --iters N       measured iterations per pair\n"
 			  << "  --env E         auto | host\n"
-			  << "  --mode M        one_to_one | one_to_one_node | all_to_all"
+			  << "  --mode M        one_to_one | all_to_all"
 			  << " (default one_to_one)\n"
 			  << "  --timer T       all | mpi | cpu | cuda (default mpi)\n"
 			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
@@ -66,13 +66,11 @@ void help(int rank) {
 Mode parse_mode(const std::string &s, int rank) {
 	if (s == "one_to_one" || s == "sequential" || s == "1to1")
 		return Mode::OneToOne;
-	if (s == "one_to_one_node" || s == "node_one_to_one" || s == "1to1_node")
-		return Mode::OneToOneNode;
 	if (s == "all_to_all" || s == "alltoall" || s == "parallel")
 		return Mode::AllToAll;
 	if (rank == 0)
 		std::cerr << "unknown --mode: " << s
-				  << " (use one_to_one|one_to_one_node|all_to_all)\n";
+				  << " (use one_to_one|all_to_all)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Mode::OneToOne;
 }
@@ -81,8 +79,6 @@ const char *mode_to_string(Mode mode) {
 	switch (mode) {
 	case Mode::OneToOne:
 		return "one_to_one";
-	case Mode::OneToOneNode:
-		return "one_to_one_node";
 	case Mode::AllToAll:
 		return "all_to_all";
 	}
