@@ -61,7 +61,7 @@ struct Args {
 	bool debug = false;
 };
 
-/* Описание одной пары src/dst; активно используется в one-to-one. */
+/* Описание одной пары src/dst; активно используется в one_to_one. */
 struct Task {
 	int src_rank = -1;
 	int src_gpu = -1;
@@ -99,7 +99,7 @@ void debug_log(bool enabled, int rank, const std::string &msg);
 
 /* Обёртка над clock_gettime: возвращает время в микросекундах. */
 double clock_gettime_wrapper();
-/* Общие подписи рангов для pair/raw в one-to-one и all-to-all. */
+/* Общие подписи рангов для pair/raw в one_to_one и all_to_all. */
 std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 											 int nproc, int host_len);
 std::vector<std::string> build_global_gpu_labels(const std::vector<char> &hosts_recv,

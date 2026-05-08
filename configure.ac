@@ -41,7 +41,7 @@ AX_ARG_ENABLE([clustering], [" clustering "], [""], [
 ])
 
 #Explicitly enables build for gpu_tests component.
-AX_ARG_ENABLE([gpu_tests], [" gpu_tests "], [" gpu_tests_benchmark "], [
+AX_ARG_ENABLE([gpu_tests], [" gpu_tests "], [" gpu_tests "], [
 	Enable testing (enabled by default)
 ])
 

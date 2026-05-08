@@ -118,7 +118,7 @@ def plot_series_label(meta: dict[str, Any]) -> str:
 
 
 def mode_title(mode: str) -> str:
-	return mode.replace("_", " ")
+	return mode.replace("-", "_")
 
 
 def sanitize_token(text: str) -> str:
@@ -307,7 +307,7 @@ def render_pair_plot_from_paths(
 			"\n".join(
 				[
 					f"{metric_title} для пары {src_label} -> {dst_label}",
-					f"Режим: {mode_title(mode)}; среда копирования: {env_text}",
+					f"Режим передачи: {mode_title(mode)}; режим копирования: {env_text}",
 				]
 			),
 			fontsize=11,
@@ -318,17 +318,8 @@ def render_pair_plot_from_paths(
 		xticks_sorted = sorted(x_ticks)
 		ax.set_xscale("log", base=2)
 		ax.set_xticks(xticks_sorted)
-		ax.set_xticklabels(
-			[format_bytes_human(x) for x in xticks_sorted], rotation=35, ha="right"
-		)
-		if series:
-			ax.legend(
-				loc="upper left",
-				bbox_to_anchor=(0.0, -0.18),
-				fontsize=9,
-				frameon=True,
-			)
-		fig.subplots_adjust(bottom=0.28)
+		ax.set_xticklabels([str(x) for x in xticks_sorted], rotation=35, ha="right")
+		fig.subplots_adjust(bottom=0.22)
 
 		base_name = (
 			f"pair_src{sanitize_token(src_label)}"

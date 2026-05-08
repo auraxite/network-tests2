@@ -51,12 +51,13 @@ There are some catalogues:
 1. ac-macros - macros for configure
 2. doc - supplementary documentation
 3. share - supplementary tools and scripts
-4. src/clustering - Clustering tools.
-5. src/core - source files requires for many components.
-6. src/network_test - benchmarking aplication
-7. src/network_viewer_qt_v2 - tool for drawing results of benchmarking
-   and it visual analyzis.
-8. java - deprecated java GUI for vizualizing results.
+4. utils - python scripts
+5. src/clustering - clustering tools
+6. src/core - source files requires for many components
+7. src/gpu_tests - GPU-aware MPI benchmark and plotting scripts
+8. src/network_test - benchmarking aplication
+9. src/network_viewer_qt_v2 - tool for drawing results of benchmarking
+   and it visual analyzis
 
 
 References on project

@@ -375,8 +375,8 @@ def title_block(
 	parts.extend(
 		[
 			title_line,
-			f"Режим запуска: {mode}",
-			f"Среда копирования: {env}",
+			f"Режим передачи: {mode}",
+			f"Режим копирования: {env}",
 		]
 	)
 	return "\n".join(parts)

@@ -29,6 +29,8 @@ CASES=( # "bytes:iters:warmup", закомментировать лишнее
 	"64000:2000:5"
 	"128000:2000:5"
 	"256000:2000:5"
+	"512000:2000:5"
+	"1024000:2000:5"
 	
 	# "500000:1500:5"
 	# "4000000:500:5"
@@ -39,7 +41,17 @@ OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
 
-set -euo pipefail
+set -eEuo pipefail
+
+on_error() {
+	local exit_code=$?
+	echo "FATAL: benchmark step failed (exit=${exit_code}). Stopping job immediately." >&2
+	if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+		scancel "${SLURM_JOB_ID}" >/dev/null 2>&1 || true
+	fi
+	exit "${exit_code}"
+}
+trap on_error ERR
 
 export PATH="$OMPI_PATH/bin:$PATH"
 _LDPATH="$OMPI_PATH/lib:${CUDA_PATH}/lib64"
@@ -103,6 +115,7 @@ for REP in "${REPS[@]}"; do
 
 				echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s))"
 				srun --mpi=pmix \
+					--kill-on-bad-exit=1 \
 					--cpu-bind=cores \
 					--gpu-bind=closest \
 					-n"${NTASKS}" "${BIN}" \
