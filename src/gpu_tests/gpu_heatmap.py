@@ -364,14 +364,18 @@ def title_block(
 	env = str(meta.get("env", "unknown"))
 	mode = str(meta.get("mode", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
+	node_scope = ""
+	if rank_hosts:
+		nodes = nodes_title(rank_hosts)
+		node_scope = nodes.split(": ", 1)[1] if ": " in nodes else nodes
+	elif n <= 1 and "hostname" in meta:
+		node_scope = _short_host(str(meta["hostname"]))
+	if node_scope:
+		title_line = f"{title_line} для {node_scope}"
 	if render_style == "plain":
 		unit = METRIC_CBAR_LABEL.get(metric, "мкс")
 		title_line = f"{title_line} ({unit})"
 	parts: list[str] = []
-	if rank_hosts:
-		parts.append(nodes_title(rank_hosts))
-	elif n <= 1 and "hostname" in meta:
-		parts.append(f"Узел: {_short_host(str(meta['hostname']))}")
 	parts.extend(
 		[
 			title_line,

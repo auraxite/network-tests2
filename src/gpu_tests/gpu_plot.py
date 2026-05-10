@@ -43,34 +43,6 @@ def format_bytes_human(nbytes: int) -> str:
 	return f"{nbytes} B"
 
 
-def detect_transitions(
-	xs: list[int], ys: list[float], *, rel_threshold: float = 0.15
-) -> list[dict[str, float]]:
-	"""Detect sharp adjacent changes (possible protocol switch points)."""
-	events: list[dict[str, float]] = []
-	for i in range(1, min(len(xs), len(ys))):
-		x_prev = xs[i - 1]
-		x_cur = xs[i]
-		y_prev = ys[i - 1]
-		y_cur = ys[i]
-		if not np.isfinite(y_prev) or not np.isfinite(y_cur) or y_prev == 0.0:
-			continue
-		rel = (y_cur - y_prev) / y_prev
-		if abs(rel) < rel_threshold:
-			continue
-		events.append(
-			{
-				"from_bytes": float(x_prev),
-				"to_bytes": float(x_cur),
-				"from_value": float(y_prev),
-				"to_value": float(y_cur),
-				"delta_value": float(y_cur - y_prev),
-				"rel_change_pct": float(rel * 100.0),
-			}
-		)
-	return events
-
-
 def pair_display_label(meta: dict[str, Any], rank: int) -> str:
 	n = meta.get("ranks")
 	if isinstance(n, int):
@@ -161,7 +133,6 @@ def render_pair_plot_from_paths(
 		return 1
 
 	grouped_series: dict[str, dict[str, dict[int, list[float]]]] = {}
-	group_envs: dict[str, set[str]] = {}
 	first_meta: dict[str, Any] | None = None
 	resolved_src_rank: int | None = None
 	resolved_dst_rank: int | None = None
@@ -207,7 +178,6 @@ def render_pair_plot_from_paths(
 		grouped_series.setdefault(mode, {}).setdefault(series_label, {}).setdefault(
 			nbytes, []
 		).append(value)
-		group_envs.setdefault(mode, set()).add(env)
 
 	if first_meta is None or resolved_src_rank is None or resolved_dst_rank is None:
 		print("gpu_plot: could not collect any data for the requested pair.", file=sys.stderr)
@@ -227,13 +197,11 @@ def render_pair_plot_from_paths(
 
 	for mode in sorted(grouped_series):
 		series = grouped_series[mode]
-		fig, ax = plt.subplots(figsize=(8.8, 5.6))
-		csv_rows: list[dict[str, Any]] = []
-		transitions_rows: list[dict[str, Any]] = []
-		x_ticks: set[int] = set()
-
 		for idx, series_label in enumerate(sorted(series)):
 			points = series[series_label]
+			fig, ax = plt.subplots(figsize=(8.8, 5.6))
+			csv_rows: list[dict[str, Any]] = []
+			x_ticks: set[int] = set()
 			xs = sorted(points)
 			ys = [float(np.mean(points[x])) for x in xs]
 			yerr = [
@@ -251,7 +219,6 @@ def render_pair_plot_from_paths(
 					markersize=5,
 					linewidth=1.8,
 					capsize=3,
-					label=series_label,
 					color=color,
 				)
 			else:
@@ -261,32 +228,7 @@ def render_pair_plot_from_paths(
 					marker="o",
 					markersize=5,
 					linewidth=1.8,
-					label=series_label,
 					color=color,
-				)
-			events = detect_transitions(xs, ys)
-			for e in events:
-				x_tr = int(e["to_bytes"])
-				ax.axvline(
-					x=x_tr,
-					color=color,
-					linestyle="--",
-					linewidth=1.0,
-					alpha=0.45,
-				)
-				transitions_rows.append(
-					{
-						"series": series_label,
-						"mode": mode,
-						"from_bytes": int(e["from_bytes"]),
-						"to_bytes": x_tr,
-						"from_bytes_human": format_bytes_human(int(e["from_bytes"])),
-						"to_bytes_human": format_bytes_human(x_tr),
-						"from_value": e["from_value"],
-						"to_value": e["to_value"],
-						"delta_value": e["delta_value"],
-						"rel_change_pct": e["rel_change_pct"],
-					}
 				)
 
 			for x, y, err in zip(xs, ys, yerr):
@@ -302,72 +244,74 @@ def render_pair_plot_from_paths(
 					}
 				)
 
-		env_text = ", ".join(sorted(group_envs.get(mode, set())))
-		ax.set_title(
-			"\n".join(
-				[
-					f"{metric_title} для пары {src_label} -> {dst_label}",
-					f"Режим передачи: {mode_title(mode)}; режим копирования: {env_text}",
-				]
-			),
-			fontsize=11,
-		)
-		ax.set_xlabel("Размер сообщения (байты), шкала log₂", fontsize=10)
-		ax.set_ylabel(f"{metric_title} ({metric_unit})", fontsize=10)
-		ax.grid(True, which="major", color="#d4d4d8", linewidth=0.8, alpha=0.9)
-		xticks_sorted = sorted(x_ticks)
-		ax.set_xscale("log", base=2)
-		ax.set_xticks(xticks_sorted)
-		ax.set_xticklabels([str(x) for x in xticks_sorted], rotation=35, ha="right")
-		fig.subplots_adjust(bottom=0.22)
-
-		base_name = (
-			f"pair_src{sanitize_token(src_label)}"
-			f"_dst{sanitize_token(dst_label)}"
-			f"_{sanitize_token(mode)}"
-			f"_{gh.METRIC_FILE_STEM.get(metric, metric)}_vs_bytes"
-		)
-		png_path = out_dir / f"{base_name}.png"
-		csv_path = out_dir / f"{base_name}.csv"
-		transitions_csv_path = out_dir / f"{base_name}_transitions.csv"
-		fig.savefig(png_path, dpi=150, bbox_inches="tight")
-		plt.close(fig)
-
-		with csv_path.open("w", encoding="utf-8", newline="") as f:
-			writer = csv.DictWriter(
-				f,
-				fieldnames=[
-					"series",
-					"mode",
-					"bytes",
-					"bytes_human",
-					"value",
-					"stddev",
-					"samples",
-				],
+			ax.set_title(
+				"\n".join(
+					[
+						f"{metric_title} для пары {src_label} -> {dst_label}",
+						f"Режим передачи: {mode_title(mode)}",
+						f"Среда передачи: {series_label}",
+					]
+				),
+				fontsize=11,
 			)
-			writer.writeheader()
-			writer.writerows(csv_rows)
-		with transitions_csv_path.open("w", encoding="utf-8", newline="") as f:
-			writer = csv.DictWriter(
-				f,
-				fieldnames=[
-					"series",
-					"mode",
-					"from_bytes",
-					"to_bytes",
-					"from_bytes_human",
-					"to_bytes_human",
-					"from_value",
-					"to_value",
-					"delta_value",
-					"rel_change_pct",
-				],
+			ax.set_xlabel("Размер сообщения (байты), шкала log₂", fontsize=10)
+			ax.set_ylabel(f"{metric_title} ({metric_unit})", fontsize=10)
+			ax.grid(True, which="major", color="#d4d4d8", linewidth=0.8, alpha=0.9)
+			xticks_sorted = sorted(x_ticks)
+			ax.set_xscale("log", base=2)
+			ax.set_xticks(xticks_sorted)
+			ax.set_xticklabels([str(x) for x in xticks_sorted], rotation=35, ha="right")
+			fig.subplots_adjust(bottom=0.28)
+			fig.text(
+				0.5,
+				0.082,
+				f"сгенерировано: {gh.generation_timestamp()}",
+				ha="center",
+				va="bottom",
+				fontsize=9,
+				color="black",
+				transform=fig.transFigure,
 			)
-			writer.writeheader()
-			writer.writerows(transitions_rows)
 
-		written_paths.extend([png_path, csv_path, transitions_csv_path])
+			base_name = (
+				f"pair_src{sanitize_token(src_label)}"
+				f"_dst{sanitize_token(dst_label)}"
+				f"_{sanitize_token(mode)}"
+				f"_{sanitize_token(series_label)}"
+				f"_{gh.METRIC_FILE_STEM.get(metric, metric)}_vs_bytes"
+			)
+			png_path = out_dir / f"{base_name}.png"
+			csv_path = out_dir / f"{base_name}.csv"
+			legacy_transitions = out_dir / f"{base_name}_transitions.csv"
+			if legacy_transitions.is_file():
+				try:
+					legacy_transitions.unlink()
+				except OSError as e:
+					print(
+						f"gpu_plot: could not remove {legacy_transitions}: {e}",
+						file=sys.stderr,
+					)
+
+			fig.savefig(png_path, dpi=150, bbox_inches="tight")
+			plt.close(fig)
+
+			with csv_path.open("w", encoding="utf-8", newline="") as f:
+				writer = csv.DictWriter(
+					f,
+					fieldnames=[
+						"series",
+						"mode",
+						"bytes",
+						"bytes_human",
+						"value",
+						"stddev",
+						"samples",
+					],
+				)
+				writer.writeheader()
+				writer.writerows(csv_rows)
+
+			written_paths.extend([png_path, csv_path])
 
 	for path in written_paths:
 		print(path)
