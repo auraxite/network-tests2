@@ -17,7 +17,7 @@ ENVS=( # закомментировать лишнее
 )
 MODES=( # закомментировать лишнее
 	one_to_one
-	all_to_all
+	# all_to_all
 )
 CASES=( # "bytes:iters:warmup", закомментировать лишнее
 	"1000:2000:5"
@@ -63,8 +63,14 @@ fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
 export OMPI_MCA_pml=ucx
-export UCX_TLS=cma,cuda_copy,cuda_ipc,rc_verbs,rc_mlx5,dc_mlx5,ud_verbs,ud_mlx5,sm,self
 export OMPI_MCA_btl_vader_single_copy_mechanism=cma
+# UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME выставляются программой
+# до MPI_Init на основе --env: auto → cuda_copy+cuda_ipc+IB+GDR, host → только IB+cma.
+# Чтобы переопределить — раскомментируй нужное:
+# export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,cuda_copy,cuda_ipc,cma,sm,self
+# export UCX_IB_GPU_DIRECT_RDMA=yes
+# export UCX_RNDV_THRESH=8192   # default UCX threshold (~8–16 КБ); не трогай если
+#                                # хочешь видеть естественный переход eager→rendezvous
 
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"

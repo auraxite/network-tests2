@@ -1,21 +1,20 @@
 #include "gpu_common.hpp"
 
-#include <algorithm> // std::max, std::sort, …
-#include <cctype>    // std::tolower и т.п. при разборе CLI
+#include <algorithm> // std::sort, std::minmax_element, …
+#include <cctype>    // std::tolower
 #include <cerrno>    // errno после mkdir
-#include <cmath>     // std::sqrt для дисперсии/СКО
+#include <cmath>     // std::sqrt
 #include <cstdlib>   // std::strtoull, std::atoi, std::exit
-#include <cstring>   // std::memcpy / строковые C API при необходимости
+#include <cstring>   // std::memcpy
 #include <fstream>   // std::ofstream для raw-файлов
-#include <iomanip>   // std::setprecision, std::fixed (pair_*, raw)
-#include <iostream>  // std::cout, std::cerr — help и ошибки CLI
-#include <numeric>   // std::accumulate и др.
-#include <sstream>   // std::ostringstream — print_pair_line и пути
-#include <sys/stat.h> // mkdir для каталога raw/
-#include <time.h>    // clock_gettime — clock_gettime_wrapper
+#include <iomanip>   // std::setprecision, std::fixed
+#include <iostream>  // std::cout, std::cerr
+#include <numeric>   // std::accumulate
+#include <sstream>   // std::ostringstream
+#include <sys/stat.h> // mkdir
 
 #if defined(OPEN_MPI) && OPEN_MPI
-#include "mpi-ext.h" // MPIX_Query_cuda_support (CUDA-aware MPI)
+#include "mpi-ext.h"
 #endif
 
 namespace gpu_benchmark {
@@ -50,17 +49,21 @@ bool mpi_cuda_aware() {
 void help(int rank) {
 	if (rank != 0)
 		return;
-	std::cout << "gpu — GPU pair latency (one_to_one | all_to_all)\n"
-			  << "  --bytes N       message size in bytes (default 4 MB)\n"
-			  << "  --warmup N      warmup iterations per pair\n"
-			  << "  --iters N       measured iterations per pair\n"
-			  << "  --env E         auto | host\n"
-			  << "  --mode M        one_to_one | all_to_all"
-			  << " (default one_to_one)\n"
-			  << "  --timer T       all | mpi | cpu | cuda (default mpi)\n"
-			  << "  --stat S        all | avg | med | min | max | var | std (pair line output)\n"
-			  << "  --out FILE, -o FILE  also write the same output to FILE (rank 0 only)\n"
-			  << "  --debug, -d     verbose debug logs to stderr\n";
+	std::cout
+		<< "gpu — GPU pair latency (one_to_one | all_to_all)\n"
+		<< "  --bytes N       message size in bytes (default 4 MB)\n"
+		<< "  --warmup N      warmup iterations per pair\n"
+		<< "  --iters N       measured iterations per pair\n"
+		<< "  --env E         auto | host\n"
+		<< "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
+		<< "  --stat S        all | avg | med | min | max | var | std\n"
+		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
+		<< "  --debug, -d     verbose debug logs to stderr\n"
+		<< "\n"
+		<< "UCX defaults applied before MPI_Init (override via env vars):\n"
+		<< "  UCX_RNDV_THRESH=0          force rendezvous for all sizes\n"
+		<< "  UCX_IB_GPU_DIRECT_RDMA=yes enable GPUDirect RDMA\n"
+		<< "  UCX_RNDV_SCHEME=get_zcopy  zero-copy rendezvous\n";
 }
 
 Mode parse_mode(const std::string &s, int rank) {
@@ -69,77 +72,36 @@ Mode parse_mode(const std::string &s, int rank) {
 	if (s == "all_to_all" || s == "alltoall" || s == "parallel")
 		return Mode::AllToAll;
 	if (rank == 0)
-		std::cerr << "unknown --mode: " << s
-				  << " (use one_to_one|all_to_all)\n";
+		std::cerr << "unknown --mode: " << s << " (use one_to_one|all_to_all)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Mode::OneToOne;
 }
 
 const char *mode_to_string(Mode mode) {
 	switch (mode) {
-	case Mode::OneToOne:
-		return "one_to_one";
-	case Mode::AllToAll:
-		return "all_to_all";
+	case Mode::OneToOne: return "one_to_one";
+	case Mode::AllToAll: return "all_to_all";
 	}
 	return "one_to_one";
 }
 
 Env parse_env(const std::string &s, int rank) {
-	if (s == "auto")
-		return Env::Auto;
-	if (s == "host")
-		return Env::Host;
+	if (s == "auto") return Env::Auto;
+	if (s == "host") return Env::Host;
 	if (rank == 0)
 		std::cerr << "unknown --env: " << s << " (use auto|host)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Env::Auto;
 }
 
-Timer parse_timer(const std::string &s, int rank) {
-	if (s == "all")
-		return Timer::All;
-	if (s == "mpi")
-		return Timer::Mpi;
-	if (s == "cpu")
-		return Timer::Cpu;
-	if (s == "cuda" || s == "gpu")
-		return Timer::Cuda;
-	if (rank == 0)
-		std::cerr << "unknown --timer: " << s << " (use all|mpi|cpu|cuda)\n";
-	MPI_Abort(MPI_COMM_WORLD, 1);
-	return Timer::All;
-}
-
-const char *timer_to_string(Timer t) {
-	switch (t) {
-	case Timer::All:
-		return "all";
-	case Timer::Mpi:
-		return "mpi";
-	case Timer::Cpu:
-		return "cpu";
-	case Timer::Cuda:
-		return "cuda";
-	}
-	return "all";
-}
-
 StatOut parse_stat_out(const std::string &s, int rank) {
-	if (s == "all")
-		return StatOut::All;
-	if (s == "avg")
-		return StatOut::Avg;
-	if (s == "med")
-		return StatOut::Med;
-	if (s == "min")
-		return StatOut::Min;
-	if (s == "max")
-		return StatOut::Max;
-	if (s == "var")
-		return StatOut::Var;
-	if (s == "std")
-		return StatOut::Std;
+	if (s == "all") return StatOut::All;
+	if (s == "avg") return StatOut::Avg;
+	if (s == "med") return StatOut::Med;
+	if (s == "min") return StatOut::Min;
+	if (s == "max") return StatOut::Max;
+	if (s == "var") return StatOut::Var;
+	if (s == "std") return StatOut::Std;
 	if (rank == 0)
 		std::cerr << "unknown --stat: " << s
 				  << " (use all|avg|med|min|max|var|std)\n";
@@ -170,8 +132,6 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.env = parse_env(next("--env"), rank);
 		else if (s == "--mode")
 			a.mode = parse_mode(next("--mode"), rank);
-		else if (s == "--timer")
-			a.timer = parse_timer(next("--timer"), rank);
 		else if (s == "--stat")
 			a.stat_out = parse_stat_out(next("--stat"), rank);
 		else if (s == "--out" || s == "-o")
@@ -189,64 +149,42 @@ Args parse_args(int argc, char **argv, int rank) {
 		}
 	}
 	if (a.warmup < 0) {
-		if (rank == 0)
-			std::cerr << "--warmup must be >= 0\n";
+		if (rank == 0) std::cerr << "--warmup must be >= 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 	if (a.iters <= 0) {
-		if (rank == 0)
-			std::cerr << "--iters must be > 0\n";
+		if (rank == 0) std::cerr << "--iters must be > 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 	if (a.nbytes == 0) {
-		if (rank == 0)
-			std::cerr << "--bytes must be > 0\n";
+		if (rank == 0) std::cerr << "--bytes must be > 0\n";
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 	return a;
 }
 
 void debug_log(bool enabled, int rank, const std::string &msg) {
-	if (!enabled)
-		return;
+	if (!enabled) return;
 	std::cerr << "[DBG r" << rank << "] " << msg << "\n";
 }
 
 bool check_host(Env env, bool cuda_aware) {
-	if (env == Env::Host)
-		return true;
+	if (env == Env::Host) return true;
 	return !cuda_aware;
 }
 
-double clock_gettime_wrapper() {
-	timespec ts{};
-#if defined(CLOCK_MONOTONIC_RAW)
-	const clockid_t clk_id = CLOCK_MONOTONIC_RAW;
-#else
-	const clockid_t clk_id = CLOCK_MONOTONIC;
-#endif
-	if (clock_gettime(clk_id, &ts) != 0)
-		return 0.0;
-	return static_cast<double>(ts.tv_sec) * 1e6 +
-		   static_cast<double>(ts.tv_nsec) * 1e-3;
-}
-
 std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
-										   int nproc, int host_len) {
+                                            int nproc, int host_len) {
 	const auto short_host = [](const std::string &host) {
 		const size_t dot = host.find('.');
-		if (dot == std::string::npos)
-			return host;
-		return host.substr(0, dot);
+		return dot == std::string::npos ? host : host.substr(0, dot);
 	};
-	const auto host_node_token = [&](const std::string &host) {
+	const auto node_token = [&](const std::string &host) {
 		const std::string sh = short_host(host);
 		size_t pos = sh.size();
 		while (pos > 0 && std::isdigit(static_cast<unsigned char>(sh[pos - 1])))
 			--pos;
-		if (pos < sh.size())
-			return sh.substr(pos);
-		return sh;
+		return pos < sh.size() ? sh.substr(pos) : sh;
 	};
 
 	std::vector<std::string> labels(static_cast<size_t>(nproc));
@@ -259,8 +197,7 @@ std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 		bool found = false;
 		for (size_t i = 0; i < seen_hosts.size(); ++i) {
 			if (seen_hosts[i] == sh) {
-				local_idx = seen_counts[i];
-				seen_counts[i] += 1;
+				local_idx = seen_counts[i]++;
 				found = true;
 				break;
 			}
@@ -268,51 +205,36 @@ std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 		if (!found) {
 			seen_hosts.push_back(sh);
 			seen_counts.push_back(1);
-			local_idx = 0;
 		}
 		std::ostringstream oss;
-		oss << host_node_token(sh) << "." << local_idx;
+		oss << node_token(sh) << "." << local_idx;
 		labels[static_cast<size_t>(r)] = oss.str();
 	}
 	return labels;
 }
 
 std::vector<std::string> build_global_gpu_labels(const std::vector<char> &hosts_recv,
-												 int nproc, int host_len,
-												 const std::vector<int> &gpu_counts) {
+                                                   int nproc, int host_len,
+                                                   const std::vector<int> &gpu_counts) {
 	const auto short_host = [](const std::string &host) {
 		const size_t dot = host.find('.');
-		if (dot == std::string::npos)
-			return host;
-		return host.substr(0, dot);
+		return dot == std::string::npos ? host : host.substr(0, dot);
 	};
-	const auto host_node_token = [&](const std::string &host) {
+	const auto node_token = [&](const std::string &host) {
 		const std::string sh = short_host(host);
 		size_t pos = sh.size();
 		while (pos > 0 && std::isdigit(static_cast<unsigned char>(sh[pos - 1])))
 			--pos;
-		if (pos < sh.size())
-			return sh.substr(pos);
-		return sh;
+		return pos < sh.size() ? sh.substr(pos) : sh;
 	};
 
-	size_t total_gpu_count = 0;
-	for (int c : gpu_counts) {
-		if (c > 0)
-			total_gpu_count += static_cast<size_t>(c);
-	}
-
 	std::vector<std::string> labels;
-	labels.reserve(total_gpu_count);
 	for (int r = 0; r < nproc; ++r) {
-		const char *h =
-			hosts_recv.data() + static_cast<size_t>(r) * static_cast<size_t>(host_len);
-		const std::string token = host_node_token(std::string(h));
-		const int local_gpu_count =
-			(r < static_cast<int>(gpu_counts.size()) && gpu_counts[static_cast<size_t>(r)] > 0)
-				? gpu_counts[static_cast<size_t>(r)]
-				: 0;
-		for (int g = 0; g < local_gpu_count; ++g) {
+		const char *h = hosts_recv.data() + static_cast<size_t>(r) * static_cast<size_t>(host_len);
+		const std::string token = node_token(std::string(h));
+		const int gc = (r < static_cast<int>(gpu_counts.size()) && gpu_counts[static_cast<size_t>(r)] > 0)
+		                   ? gpu_counts[static_cast<size_t>(r)] : 0;
+		for (int g = 0; g < gc; ++g) {
 			std::ostringstream oss;
 			oss << token << "." << g;
 			labels.push_back(oss.str());
@@ -321,161 +243,109 @@ std::vector<std::string> build_global_gpu_labels(const std::vector<char> &hosts_
 	return labels;
 }
 
-void fill_ack(const std::vector<double> &samples_mpi_us,
-								  const std::vector<double> &samples_cpu_us,
-								  const std::vector<double> &samples_gpu_us,
-								  const Args &args, double *ack) {
-	const auto fill_stats = [](const std::vector<double> &samples, double *out6) {
-		const double n = static_cast<double>(samples.size());
-		const double _sum = std::accumulate(samples.begin(), samples.end(), 0.0);
-		const double _avg = _sum / n;
-		auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
-		const double _min = *it_min;
-		const double _max = *it_max;
-		std::vector<double> sorted = samples;
-		std::sort(sorted.begin(), sorted.end());
-		const size_t m = sorted.size() / 2;
-		const double _med = (sorted.size() % 2 == 0)
-								? (sorted[m - 1] + sorted[m]) * 0.5
-								: sorted[m];
-		double _var = 0.0;
-		if (samples.size() > 1) {
-			for (double x : samples) {
-				const double d = x - _avg;
-				_var += d * d;
-			}
-			_var /= static_cast<double>(samples.size() - 1);
-		}
-		const double _std = std::sqrt(_var);
-		out6[0] = _avg;
-		out6[1] = _med;
-		out6[2] = _min;
-		out6[3] = _max;
-		out6[4] = _var;
-		out6[5] = _std;
-	};
-
+void fill_ack(const std::vector<double> &samples, double *ack) {
 	std::fill(ack, ack + ACK_FIELDS, 0.0);
-	if (samples_mpi_us.empty() || samples_cpu_us.empty() || samples_gpu_us.empty())
-		return;
-	switch (args.timer) {
-	case Timer::All:
-		fill_stats(samples_mpi_us, ack);
-		break;
-	case Timer::Mpi:
-		fill_stats(samples_mpi_us, ack);
-		break;
-	case Timer::Cpu:
-		fill_stats(samples_cpu_us, ack);
-		break;
-	case Timer::Cuda:
-		fill_stats(samples_gpu_us, ack);
-		break;
-	default:
-		fill_stats(samples_mpi_us, ack);
-		break;
+	if (samples.empty()) return;
+
+	const double n   = static_cast<double>(samples.size());
+	const double sum = std::accumulate(samples.begin(), samples.end(), 0.0);
+	const double avg = sum / n;
+	auto [it_min, it_max] = std::minmax_element(samples.begin(), samples.end());
+
+	std::vector<double> sorted = samples;
+	std::sort(sorted.begin(), sorted.end());
+	const size_t m = sorted.size() / 2;
+	const double med = (sorted.size() % 2 == 0)
+	                       ? (sorted[m - 1] + sorted[m]) * 0.5
+	                       : sorted[m];
+
+	double var = 0.0;
+	if (samples.size() > 1) {
+		for (double x : samples) { double d = x - avg; var += d * d; }
+		var /= static_cast<double>(samples.size() - 1);
 	}
-	fill_stats(samples_cpu_us, ack + 7);
-	fill_stats(samples_mpi_us, ack + 13);
-	fill_stats(samples_gpu_us, ack + 19);
-	ack[6] = 1.0;
+
+	ack[0] = avg;
+	ack[1] = med;
+	ack[2] = *it_min;
+	ack[3] = *it_max;
+	ack[4] = var;
+	ack[5] = std::sqrt(var);
+	ack[6] = 1.0; // valid
 }
 
-std::string print_pair_line(const char *line_name,
-							 const std::string &src_label, const std::string &dst_label,
-							 double avg_us, double med_us, double min_us, double max_us,
-							 double var_us, double std_us, StatOut stat) {
+std::string print_pair_line(const char *line_name, const std::string &src_label,
+                             const std::string &dst_label, double avg_us, double med_us,
+                             double min_us, double max_us, double var_us, double std_us,
+                             StatOut stat) {
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(REPORT_DIGITS);
 	oss << line_name << " " << src_label << " -> " << dst_label << " ";
 	switch (stat) {
 	case StatOut::All:
 		oss << "avg_us=" << avg_us << " med_us=" << med_us
-			<< " min_us=" << min_us << " max_us=" << max_us
-			<< " var_us=" << var_us << " std_us=" << std_us;
+		    << " min_us=" << min_us << " max_us=" << max_us
+		    << " var_us=" << var_us << " std_us=" << std_us;
 		break;
-	case StatOut::Avg:
-		oss << "avg_us=" << avg_us;
-		break;
-	case StatOut::Med:
-		oss << "med_us=" << med_us;
-		break;
-	case StatOut::Min:
-		oss << "min_us=" << min_us;
-		break;
-	case StatOut::Max:
-		oss << "max_us=" << max_us;
-		break;
-	case StatOut::Var:
-		oss << "var_us=" << var_us;
-		break;
-	case StatOut::Std:
-		oss << "std_us=" << std_us;
-		break;
+	case StatOut::Avg: oss << "avg_us=" << avg_us; break;
+	case StatOut::Med: oss << "med_us=" << med_us; break;
+	case StatOut::Min: oss << "min_us=" << min_us; break;
+	case StatOut::Max: oss << "max_us=" << max_us; break;
+	case StatOut::Var: oss << "var_us=" << var_us; break;
+	case StatOut::Std: oss << "std_us=" << std_us; break;
 	}
 	oss << "\n";
 	return oss.str();
 }
 
 void append_raw_samples_named(const Args &args, const std::string &src_label,
-							  const std::string &dst_label,
-							  const std::vector<double> &samples_us) {
-	const auto sanitize_label_for_raw_path = [](const std::string &lab) {
+                               const std::string &dst_label,
+                               const std::vector<double> &samples_us) {
+	const auto sanitize = [](const std::string &lab) {
 		std::string out;
-		out.reserve(lab.size());
 		for (unsigned char uc : lab) {
 			const char c = static_cast<char>(uc);
-			if (std::isalnum(uc) || c == '.' || c == '-' || c == '_')
-				out.push_back(c);
-			else
-				out.push_back('_');
+			out.push_back((std::isalnum(uc) || c == '.' || c == '-' || c == '_') ? c : '_');
 		}
 		return out.empty() ? "nolabel" : out;
 	};
 
 	if (!args.save_raw_samples || args.out_path.empty() || samples_us.empty())
 		return;
-	const std::string src_tok = sanitize_label_for_raw_path(src_label);
-	const std::string dst_tok = sanitize_label_for_raw_path(dst_label);
+
 	std::string base = args.out_path;
-	std::string dir = ".";
+	std::string dir  = ".";
 	const size_t slash = base.find_last_of('/');
-	if (slash != std::string::npos) {
-		dir = base.substr(0, slash);
-		base = base.substr(slash + 1);
-	}
+	if (slash != std::string::npos) { dir = base.substr(0, slash); base = base.substr(slash + 1); }
 	const std::string suffix = ".txt";
 	if (base.size() >= suffix.size() &&
-		base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0) {
+	    base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0)
 		base.erase(base.size() - suffix.size());
-	}
+
 	const std::string raw_dir = dir + "/raw";
-	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST)
-		return;
+	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST) return;
+
 	std::ostringstream path;
-	path << raw_dir << "/" << base << "_src" << src_tok << "_dst" << dst_tok
-		 << ".raw";
+	path << raw_dir << "/" << base << "_src" << sanitize(src_label)
+	     << "_dst" << sanitize(dst_label) << ".raw";
 	std::ofstream out(path.str(), std::ios::app);
-	if (!out.is_open())
-		return;
+	if (!out.is_open()) return;
+
 	out << "# src=" << src_label << " dst=" << dst_label << "\n";
-	for (size_t i = 0; i < samples_us.size(); ++i) {
-		out << std::fixed << std::setprecision(REPORT_DIGITS) << samples_us[i]
-			<< "\n";
-	}
+	for (double v : samples_us)
+		out << std::fixed << std::setprecision(REPORT_DIGITS) << v << "\n";
 }
 
 void append_raw_samples(const Args &args, int rank, const Task &t,
-						const std::vector<std::string> &rank_labels,
-						const std::vector<double> &samples_us) {
+                        const std::vector<std::string> &rank_labels,
+                        const std::vector<double> &samples_us) {
 	(void)rank;
 	if (t.src_rank < 0 || t.dst_rank < 0 ||
-		static_cast<size_t>(t.src_rank) >= rank_labels.size() ||
-		static_cast<size_t>(t.dst_rank) >= rank_labels.size())
+	    static_cast<size_t>(t.src_rank) >= rank_labels.size() ||
+	    static_cast<size_t>(t.dst_rank) >= rank_labels.size())
 		return;
-	append_raw_samples_named(
-		args, rank_labels[static_cast<size_t>(t.src_rank)],
-		rank_labels[static_cast<size_t>(t.dst_rank)], samples_us);
+	append_raw_samples_named(args, rank_labels[static_cast<size_t>(t.src_rank)],
+	                         rank_labels[static_cast<size_t>(t.dst_rank)], samples_us);
 }
 
 } // namespace gpu_benchmark

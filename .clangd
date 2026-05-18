@@ -6,4 +6,4 @@ CompileFlags:
     - -I.
     - -isystem/usr/include
     - -I/usr/lib/x86_64-linux-gnu/openmpi/include
-    - -I/usr/local/cuda/include
+    - -I/usr/include

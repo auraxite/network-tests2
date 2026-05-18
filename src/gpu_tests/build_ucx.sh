@@ -1,21 +1,4 @@
 #!/bin/bash
-# Сборка UCX 1.15.0 с поддержкой CMA + CUDA + IB verbs.
-#
-# Зачем:
-#   Существующая сборка UCX без CMA приводит к двойному копиру в intra-node
-#   обмене host-буферов через /dev/shm (UCX выбирает транспорт `sm`).
-#   С CMA UCX делает одну копию через process_vm_readv/writev в kernel mode.
-#
-# Использование:
-#   bash build_ucx.sh                — запускает srun автоматически
-#   srun ... bash build_ucx.sh       — если уже внутри srun
-#
-# Настраиваемые переменные окружения:
-#   UCX_VERSION  (1.15.0)
-#   UCX_PREFIX   ($HOME/opt/ucx-${UCX_VERSION})
-#   CUDA_PATH    (/usr/local/cuda)
-#   PARTITION    (batch)
-#   BUILD_JOBS   (4)
 
 set -euo pipefail
 
@@ -93,7 +76,6 @@ if [ -f "$HOME/${TARBALL}" ]; then
 else
 	echo "Скачиваю: ${URL}"
 	wget -q "${URL}"
-	# Кэшируем в $HOME, чтобы повторные запуски не лезли в интернет.
 	cp "${TARBALL}" "$HOME/${TARBALL}"
 fi
 tar xzf "${TARBALL}"
@@ -117,13 +99,9 @@ CONFIG_LOG="/tmp/ucx_configure_$$.log"
 
 echo ""
 echo "=== Опции, которые нашёл configure ==="
-# В UCX summary имеет формат "UCT modules: < cma knem ... >", "Perf modules: < cuda >",
-# "Compiling with verbs support from ...". Печатаем сводку.
 grep -iE 'uct modules|cuda modules|perf modules|verbs support|gdr support' \
 	"${CONFIG_LOG}" | tail -20 || true
 
-# Жёсткая проверка: CMA обязателен, иначе вся сборка бесполезна.
-# Самый надёжный сигнал — наличие HAVE_CMA в сгенерированном config.h.
 if [ -f "config.h" ] && grep -qE '^#define[[:space:]]+HAVE_CMA[[:space:]]+1' config.h; then
 	echo "OK: HAVE_CMA найден в config.h"
 elif grep -qE 'UCT modules:.*\bcma\b' "${CONFIG_LOG}"; then
@@ -139,11 +117,6 @@ else
 	exit 1
 fi
 
-# Нейтрализуем проблемные bindings, которые UCX 1.15 release tarball пытается
-# собрать, даже если configure-опции для их отключения "сработали" (они
-# молча игнорируются). Заменяем их Makefile на пустышки — make войдёт туда,
-# увидит валидный Makefile с правилами all/install/clean, которые ничего не
-# делают, и пойдёт дальше.
 for STUB_DIR in bindings/go bindings/java; do
 	if [ -d "${STUB_DIR}" ]; then
 		cat > "${STUB_DIR}/Makefile" <<'STUB'
@@ -209,10 +182,5 @@ cat <<EOF
 =================================================================
 Готово. UCX установлен в:
   ${UCX_PREFIX}
-
-Следующий шаг — sbatch fixed.slurm (там уже UCX_TLS=cma,... настроен).
-В diagnostic-блоке должно появиться:
-  UCX transports with cma:
-  #      Transport: cma
 =================================================================
 EOF

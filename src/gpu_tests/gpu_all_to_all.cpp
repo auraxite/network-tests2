@@ -1,514 +1,313 @@
 #include "gpu_all_to_all.hpp"
 
-#include <algorithm>     // std::max
-#include <cuda_runtime.h> // CUDA: устройство, события, cudaMalloc, ...
-#include <functional>    // std::function — параметр mirror в schedule_all_to_all
-#include <iomanip>       // std::setprecision, std::fixed
-#include <sstream>       // std::ostringstream — строки TotalTimeSec и т.п.
-#include <vector>        // буферы ack, samples, MPI_Request
+#include <algorithm>
+#include <cuda_runtime.h>
+#include <functional>
+#include <iomanip>
+#include <sstream>
+#include <vector>
 
 namespace gpu_benchmark {
 
-static int alltoall_pair_tag(int src_rank, int dst_rank, int nproc) {
-	return src_rank * nproc + dst_rank;
+static int pair_tag(int src, int dst, int nproc) {
+	return src * nproc + dst;
 }
-
-static int alltoall_local_ready_tag(int src_rank, int dst_rank, int nproc) {
-	return nproc * nproc + alltoall_pair_tag(src_rank, dst_rank, nproc);
+static int local_ready_tag(int src, int dst, int nproc) {
+	return nproc * nproc + pair_tag(src, dst, nproc);
 }
 
 void schedule_all_to_all(
-	int rank, int nproc, const Args &args, bool via_host,
-	MPI_Comm node_comm, int node_rank,
-	const std::vector<int> &on_my_node,
-	const std::vector<int> &node_ranks,
-	const std::vector<std::string> &rank_labels,
-	const std::function<void(const std::string &)> &mirror) {
-	DBG_LOG(rank, args, "all_to_all SCHEDULE_BEGIN");
-	const int local_gpu = 0;
+    int rank, int nproc, const Args &args, bool via_host,
+    MPI_Comm node_comm, int node_rank,
+    const std::vector<int> &on_my_node,
+    const std::vector<int> &node_ranks,
+    const std::vector<std::string> &rank_labels,
+    const std::function<void(const std::string &)> &mirror) {
+
 	(void)node_rank;
+	DBG_LOG(rank, args, "all_to_all SCHEDULE_BEGIN");
+
 	if (rank != 0) {
-		run_all_to_all(rank, nproc, args, via_host, local_gpu,
-					   node_comm, on_my_node, node_ranks, rank_labels);
-		DBG_LOG(rank, args, "all_to_all SCHEDULE_DONE");
+		run_all_to_all(rank, nproc, args, via_host, 0,
+		               node_comm, on_my_node, node_ranks, rank_labels);
 		return;
 	}
 
-	const double test_t0 = MPI_Wtime();
+	const double t0 = MPI_Wtime();
 	std::vector<double> results =
-		run_all_to_all(rank, nproc, args, via_host, local_gpu,
-					   node_comm, on_my_node, node_ranks, rank_labels);
+		run_all_to_all(rank, nproc, args, via_host, 0,
+		               node_comm, on_my_node, node_ranks, rank_labels);
 
-	auto metric_ptr = [&](int src_rank, int dst_rank) -> const double * {
+	auto metric_ptr = [&](int src, int dst) -> const double * {
 		return results.data() +
-			   (static_cast<size_t>(src_rank) * static_cast<size_t>(nproc) +
-				static_cast<size_t>(dst_rank)) *
-				   static_cast<size_t>(ACK_FIELDS);
+		       (static_cast<size_t>(src) * static_cast<size_t>(nproc) +
+		        static_cast<size_t>(dst)) * static_cast<size_t>(ACK_FIELDS);
 	};
 
-	for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-		for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
-			std::vector<double> metric(metric_ptr(src_rank, dst_rank),
-									   metric_ptr(src_rank, dst_rank) + ACK_FIELDS);
-			DBG_LOG(rank, args,
-					"all_to_all PAIR_MERGE src=" << src_rank << " dst=" << dst_rank);
-			if (src_rank == dst_rank) {
-				if (args.timer == Timer::All) {
-					mirror(print_pair_line("pair_mpi",
-											rank_labels[static_cast<size_t>(src_rank)],
-											rank_labels[static_cast<size_t>(dst_rank)],
-											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-					mirror(print_pair_line("pair_cpu",
-											rank_labels[static_cast<size_t>(src_rank)],
-											rank_labels[static_cast<size_t>(dst_rank)],
-											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-					mirror(print_pair_line("pair_cuda",
-											rank_labels[static_cast<size_t>(src_rank)],
-											rank_labels[static_cast<size_t>(dst_rank)],
-											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-				} else {
-					mirror(print_pair_line("pair",
-											rank_labels[static_cast<size_t>(src_rank)],
-											rank_labels[static_cast<size_t>(dst_rank)],
-											0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-				}
-				continue;
-			}
+	for (int src = 0; src < nproc; ++src) {
+		for (int dst = 0; dst < nproc; ++dst) {
+			const double *m = metric_ptr(src, dst);
+			mirror(print_pair_line("pair",
+			       rank_labels[static_cast<size_t>(src)],
+			       rank_labels[static_cast<size_t>(dst)],
+			       m[0], m[1], m[2], m[3], m[4], m[5], args.stat_out));
+		}
+	}
 
-			if (args.timer == Timer::All) {
-				mirror(print_pair_line("pair_mpi",
-										rank_labels[static_cast<size_t>(src_rank)],
-										rank_labels[static_cast<size_t>(dst_rank)], metric[13],
-										metric[14], metric[15], metric[16],
-										metric[17], metric[18], args.stat_out));
-				mirror(print_pair_line("pair_cpu",
-										rank_labels[static_cast<size_t>(src_rank)],
-										rank_labels[static_cast<size_t>(dst_rank)], metric[7],
-										metric[8], metric[9], metric[10],
-										metric[11], metric[12], args.stat_out));
-				mirror(print_pair_line("pair_cuda",
-										rank_labels[static_cast<size_t>(src_rank)],
-										rank_labels[static_cast<size_t>(dst_rank)], metric[19],
-										metric[20], metric[21], metric[22],
-										metric[23], metric[24], args.stat_out));
+	std::ostringstream oss;
+	oss << "TotalTimeSec: " << std::fixed << std::setprecision(TOTAL_TIME_DIGITS)
+	    << (MPI_Wtime() - t0) << "\n";
+	mirror(oss.str());
+}
+
+std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
+                                    bool check_host, int local_gpu,
+                                    MPI_Comm node_comm,
+                                    const std::vector<int> &on_my_node,
+                                    const std::vector<int> &node_ranks,
+                                    const std::vector<std::string> &rank_labels) {
+	std::vector<double> ack(ACK_FIELDS, 0.0);
+	const int count = static_cast<int>(args.nbytes);
+
+	DBG_LOG(rank, args, "all_to_all RUN_BEGIN bytes=" << args.nbytes
+	        << " path=" << (check_host ? "host" : "auto"));
+
+	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(all_to_all)");
+
+	char *d_send = nullptr;
+	char *d_recv = nullptr;
+	cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(d_send)");
+	cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(d_recv)");
+	cuda_ok(cudaMemset(d_send, 0xAA, args.nbytes), "cudaMemset");
+
+	// Per-peer host buffers (inter-node host path) and shared slots (intra-node)
+	MPI_Win shared_h_win = MPI_WIN_NULL;
+	std::vector<char *> shared_h_slots(static_cast<size_t>(nproc), nullptr);
+	std::vector<char *> shared_h_registered;
+	std::vector<char *> send_host(static_cast<size_t>(nproc), nullptr);
+	std::vector<char *> recv_host(static_cast<size_t>(nproc), nullptr);
+	std::vector<char *> recv_dev(static_cast<size_t>(nproc), nullptr);
+
+	if (check_host) {
+		void *shared_base = nullptr;
+		mpi_ok(MPI_Win_allocate_shared(static_cast<MPI_Aint>(args.nbytes),
+		                               sizeof(char), MPI_INFO_NULL, node_comm,
+		                               &shared_base, &shared_h_win),
+		       "MPI_Win_allocate_shared");
+		const int node_size = static_cast<int>(node_ranks.size());
+		for (int li = 0; li < node_size; ++li) {
+			MPI_Aint sb = 0; int du = 0; void *pb = nullptr;
+			mpi_ok(MPI_Win_shared_query(shared_h_win, li, &sb, &du, &pb),
+			       "MPI_Win_shared_query");
+			if (!pb || sb < static_cast<MPI_Aint>(args.nbytes)) continue;
+			const int pr = node_ranks[static_cast<size_t>(li)];
+			char *pp = static_cast<char *>(pb);
+			shared_h_slots[static_cast<size_t>(pr)] = pp;
+			cudaError_t reg = cudaHostRegister(pp, args.nbytes, cudaHostRegisterPortable);
+			if (reg == cudaSuccess || reg == cudaErrorHostMemoryAlreadyRegistered) {
+				if (reg != cudaSuccess) cudaGetLastError();
+				shared_h_registered.push_back(pp);
 			} else {
-				mirror(print_pair_line("pair",
-										rank_labels[static_cast<size_t>(src_rank)],
-										rank_labels[static_cast<size_t>(dst_rank)], metric[0],
-										metric[1], metric[2], metric[3],
-										metric[4], metric[5], args.stat_out));
+				DBG_LOG(rank, args, "shared host register skipped rank=" << pr
+				        << ": " << cudaGetErrorString(reg));
+				cudaGetLastError();
 			}
 		}
 	}
 
-	const double total_elapsed_s = MPI_Wtime() - test_t0;
-	{
-		/* Этот ostringstream НЕ под if(args.debug): TotalTimeSec — обычная
-		   часть отчёта в --out, а не отладка. */
-		std::ostringstream oss;
-		oss << "TotalTimeSec: " << std::fixed
-			<< std::setprecision(TOTAL_TIME_DIGITS) << total_elapsed_s << "\n";
-		mirror(oss.str());
+	for (int peer = 0; peer < nproc; ++peer) {
+		if (peer == rank) continue;
+		if (check_host) {
+			const bool same = on_my_node[static_cast<size_t>(peer)] != 0 &&
+			                  shared_h_slots[static_cast<size_t>(peer)] != nullptr;
+			if (!same) {
+				cuda_ok(cudaMallocHost(&send_host[static_cast<size_t>(peer)], args.nbytes),
+				        "cudaMallocHost(send)");
+				cuda_ok(cudaMallocHost(&recv_host[static_cast<size_t>(peer)], args.nbytes),
+				        "cudaMallocHost(recv)");
+			}
+		} else {
+			cuda_ok(cudaMalloc(&recv_dev[static_cast<size_t>(peer)], args.nbytes),
+			        "cudaMalloc(recv_dev)");
+		}
 	}
-	DBG_LOG(rank, args, "all_to_all SCHEDULE_DONE");
-}
 
+	// Per-source MPI samples (receiver collects, keyed by src_rank)
+	std::vector<std::vector<double>> samples(static_cast<size_t>(nproc));
+	for (int src = 0; src < nproc; ++src) {
+		if (src == rank) continue;
+		samples[static_cast<size_t>(src)].reserve(static_cast<size_t>(std::max(1, args.iters)));
+	}
 
-std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
-                                   bool check_host, int local_gpu,
-                                   MPI_Comm node_comm,
-                                   const std::vector<int> &on_my_node,
-                                   const std::vector<int> &node_ranks,
-                                   const std::vector<std::string> &rank_labels) {
-    std::vector<double> ack(ACK_FIELDS, 0.0);
-    const int count = static_cast<int>(args.nbytes);
+	auto do_one = [&](bool measure) {
+		std::vector<MPI_Request> recv_req(static_cast<size_t>(2 * nproc), MPI_REQUEST_NULL);
+		std::vector<MPI_Request> send_req(static_cast<size_t>(nproc),     MPI_REQUEST_NULL);
+		std::vector<double>      t0_mpi(static_cast<size_t>(nproc), 0.0);
 
-    char *d_send = nullptr;
-    char *d_recv = nullptr;
-    MPI_Win shared_h_win = MPI_WIN_NULL;
-    std::vector<char *> shared_h_slots(static_cast<size_t>(nproc), nullptr);
-    std::vector<char *> shared_h_registered;
-    std::vector<char *> send_host(static_cast<size_t>(nproc), nullptr);
-    std::vector<char *> recv_host(static_cast<size_t>(nproc), nullptr);
-    std::vector<char *> recv_dev(static_cast<size_t>(nproc), nullptr);
+		// Post recvs
+		for (int src = 0; src < nproc; ++src) {
+			if (src == rank) continue;
+			if (check_host) {
+				const bool same = on_my_node[static_cast<size_t>(src)] != 0 &&
+				                  shared_h_slots[static_cast<size_t>(src)] != nullptr;
+				if (same) {
+					mpi_ok(MPI_Irecv(nullptr, 0, MPI_BYTE, src,
+					                 local_ready_tag(src, rank, nproc),
+					                 MPI_COMM_WORLD,
+					                 &recv_req[static_cast<size_t>(nproc + src)]),
+					       "MPI_Irecv local_ready");
+				} else {
+					mpi_ok(MPI_Irecv(recv_host[static_cast<size_t>(src)], count,
+					                 MPI_BYTE, src, pair_tag(src, rank, nproc),
+					                 MPI_COMM_WORLD, &recv_req[static_cast<size_t>(src)]),
+					       "MPI_Irecv host");
+				}
+			} else {
+				mpi_ok(MPI_Irecv(recv_dev[static_cast<size_t>(src)], count,
+				                 MPI_BYTE, src, pair_tag(src, rank, nproc),
+				                 MPI_COMM_WORLD, &recv_req[static_cast<size_t>(src)]),
+				       "MPI_Irecv device");
+			}
+		}
 
-    DBG_LOG(rank, args,
-            "all_to_all RUN_BEGIN local_gpu=" << local_gpu << " bytes=" << args.nbytes
-            << " nproc=" << nproc << " env_path=" << (check_host ? "host" : "auto"));
+		// Sends
+		if (measure)
+			for (int dst = 0; dst < nproc; ++dst)
+				if (dst != rank) t0_mpi[static_cast<size_t>(dst)] = MPI_Wtime();
 
-    cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(all_to_all)");
-    cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(d_send)");
-    cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(d_recv)");
-    cuda_ok(cudaMemset(d_send, 0xAA, args.nbytes), "cudaMemset(d_send init)");
+		bool shared_copied = false;
+		for (int dst = 0; dst < nproc; ++dst) {
+			if (dst == rank) continue;
+			if (check_host) {
+				const bool same = on_my_node[static_cast<size_t>(dst)] != 0 &&
+				                  shared_h_slots[static_cast<size_t>(rank)] != nullptr;
+				if (same) {
+					if (!shared_copied) {
+						cuda_ok(cudaMemcpy(shared_h_slots[static_cast<size_t>(rank)],
+						                   d_send, args.nbytes, cudaMemcpyDeviceToHost),
+						        "D2H(shared)");
+						if (shared_h_win != MPI_WIN_NULL)
+							mpi_ok(MPI_Win_sync(shared_h_win), "MPI_Win_sync(sender)");
+						shared_copied = true;
+					}
+					mpi_ok(MPI_Isend(nullptr, 0, MPI_BYTE, dst,
+					                 local_ready_tag(rank, dst, nproc),
+					                 MPI_COMM_WORLD, &send_req[static_cast<size_t>(dst)]),
+					       "MPI_Isend local_ready");
+				} else {
+					cuda_ok(cudaMemcpy(send_host[static_cast<size_t>(dst)], d_send,
+					                   args.nbytes, cudaMemcpyDeviceToHost), "D2H");
+					mpi_ok(MPI_Isend(send_host[static_cast<size_t>(dst)], count,
+					                 MPI_BYTE, dst, pair_tag(rank, dst, nproc),
+					                 MPI_COMM_WORLD, &send_req[static_cast<size_t>(dst)]),
+					       "MPI_Isend host");
+				}
+			} else {
+				mpi_ok(MPI_Isend(d_send, count, MPI_BYTE, dst,
+				                 pair_tag(rank, dst, nproc),
+				                 MPI_COMM_WORLD, &send_req[static_cast<size_t>(dst)]),
+				       "MPI_Isend device");
+			}
+		}
 
-    if (check_host) {
-        void *shared_base = nullptr;
-        mpi_ok(MPI_Win_allocate_shared(static_cast<MPI_Aint>(args.nbytes),
-                                       sizeof(char), MPI_INFO_NULL, node_comm,
-                                       &shared_base, &shared_h_win),
-               "MPI_Win_allocate_shared(all_to_all host)");
+		// Receive completions
+		for (int done = 0; done < nproc - 1; ++done) {
+			int idx = MPI_UNDEFINED;
+			mpi_ok(MPI_Waitany(static_cast<int>(recv_req.size()), recv_req.data(),
+			                   &idx, MPI_STATUS_IGNORE), "MPI_Waitany");
+			if (idx == MPI_UNDEFINED) break;
 
-        const int node_size = static_cast<int>(node_ranks.size());
-        shared_h_registered.reserve(static_cast<size_t>(node_size));
-        for (int local_idx = 0; local_idx < node_size; ++local_idx) {
-            MPI_Aint shared_bytes = 0;
-            int disp_unit = 0;
-            void *peer_base = nullptr;
-            mpi_ok(MPI_Win_shared_query(shared_h_win, local_idx, &shared_bytes,
-                                        &disp_unit, &peer_base),
-                   "MPI_Win_shared_query(all_to_all host)");
-            if (peer_base == nullptr ||
-                shared_bytes < static_cast<MPI_Aint>(args.nbytes)) {
-                continue;
-            }
+			int src = idx;
+			if (check_host) {
+				const bool same = idx >= nproc;
+				src = same ? (idx - nproc) : idx;
+				if (same) {
+					if (shared_h_win != MPI_WIN_NULL)
+						mpi_ok(MPI_Win_sync(shared_h_win), "MPI_Win_sync(receiver)");
+					cuda_ok(cudaMemcpy(d_recv,
+					                   shared_h_slots[static_cast<size_t>(src)],
+					                   args.nbytes, cudaMemcpyHostToDevice), "H2D(shared)");
+				} else {
+					cuda_ok(cudaMemcpy(d_recv, recv_host[static_cast<size_t>(src)],
+					                   args.nbytes, cudaMemcpyHostToDevice), "H2D");
+				}
+			} else {
+				cuda_ok(cudaMemcpy(d_recv, recv_dev[static_cast<size_t>(src)],
+				                   args.nbytes, cudaMemcpyDeviceToDevice), "D2D");
+			}
 
-            const int peer_rank = node_ranks[static_cast<size_t>(local_idx)];
-            char *peer_ptr = static_cast<char *>(peer_base);
-            shared_h_slots[static_cast<size_t>(peer_rank)] = peer_ptr;
+			if (measure) {
+				const double t1 = MPI_Wtime();
+				samples[static_cast<size_t>(src)].push_back(
+				    (t1 - t0_mpi[static_cast<size_t>(src)]) * 1e6);
+			}
+		}
 
-            cudaError_t reg_err =
-                cudaHostRegister(peer_ptr, args.nbytes, cudaHostRegisterPortable);
-            if (reg_err == cudaSuccess) {
-                shared_h_registered.push_back(peer_ptr);
-            } else if (reg_err == cudaErrorHostMemoryAlreadyRegistered) {
-                cudaGetLastError();
-                shared_h_registered.push_back(peer_ptr);
-            } else {
-                DBG_LOG(rank, args,
-                        "all_to_all shared host register skipped for rank="
-                            << peer_rank << ": " << cudaGetErrorString(reg_err));
-                cudaGetLastError();
-            }
-        }
-    }
+		mpi_ok(MPI_Waitall(nproc, send_req.data(), MPI_STATUSES_IGNORE),
+		       "MPI_Waitall sends");
+	};
 
-    for (int peer_rank = 0; peer_rank < nproc; ++peer_rank) {
-        if (peer_rank == rank)
-            continue;
-        if (check_host) {
-            const bool same_node_peer =
-                on_my_node[static_cast<size_t>(peer_rank)] != 0 &&
-                shared_h_slots[static_cast<size_t>(peer_rank)] != nullptr;
-            if (!same_node_peer) {
-                cuda_ok(cudaMallocHost(&send_host[static_cast<size_t>(peer_rank)],
-                                       args.nbytes),
-                        "cudaMallocHost(send_host)");
-                cuda_ok(cudaMallocHost(&recv_host[static_cast<size_t>(peer_rank)],
-                                       args.nbytes),
-                        "cudaMallocHost(recv_host)");
-            }
-        } else {
-            cuda_ok(cudaMalloc(&recv_dev[static_cast<size_t>(peer_rank)], args.nbytes),
-                    "cudaMalloc(recv_dev)");
-        }
-    }
+	for (int i = 0; i < args.warmup; ++i) do_one(false);
+	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(iters)");
+	for (int i = 0; i < args.iters;  ++i) do_one(true);
 
-    DBG_LOG(rank, args, "all_to_all ALLOC_DONE");
+	// Save raw samples and compute acks
+	for (int src = 0; src < nproc; ++src) {
+		if (src == rank) continue;
+		Task t{src, local_gpu, rank, local_gpu, 0};
+		append_raw_samples(args, rank, t, rank_labels,
+		                   samples[static_cast<size_t>(src)]);
+	}
 
-    std::vector<std::vector<double>> samples_mpi_us(static_cast<size_t>(nproc));
-    std::vector<std::vector<double>> samples_cpu_us(static_cast<size_t>(nproc));
-    std::vector<std::vector<double>> samples_gpu_us(static_cast<size_t>(nproc));
-    for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-        if (src_rank == rank)
-            continue;
-        const size_t cap = static_cast<size_t>(std::max(1, args.iters));
-        samples_mpi_us[static_cast<size_t>(src_rank)].reserve(cap);
-        samples_cpu_us[static_cast<size_t>(src_rank)].reserve(cap);
-        samples_gpu_us[static_cast<size_t>(src_rank)].reserve(cap);
-    }
+	// Gather results at rank 0
+	std::vector<double> results;
+	if (rank == 0)
+		results.assign(static_cast<size_t>(nproc) * static_cast<size_t>(nproc) *
+		               static_cast<size_t>(ACK_FIELDS), 0.0);
 
-    auto do_one = [&](int iter_idx, bool measure) {
-        DBG_LOG(rank, args,
-                "all_to_all ITER_BEGIN idx=" << iter_idx
-                << " measure=" << (measure ? 1 : 0));
+	auto result_ptr = [&](int src, int dst) -> double * {
+		return results.data() +
+		       (static_cast<size_t>(src) * static_cast<size_t>(nproc) +
+		        static_cast<size_t>(dst)) * static_cast<size_t>(ACK_FIELDS);
+	};
 
-        std::vector<MPI_Request> recv_req(static_cast<size_t>(2 * nproc),
-                                          MPI_REQUEST_NULL);
-        std::vector<MPI_Request> send_req(static_cast<size_t>(nproc), MPI_REQUEST_NULL);
-        std::vector<double> t0_mpi_s(static_cast<size_t>(nproc), 0.0);
-        std::vector<double> t0_cpu_us(static_cast<size_t>(nproc), 0.0);
+	for (int src = 0; src < nproc; ++src) {
+		for (int dst = 0; dst < nproc; ++dst) {
+			if (src == dst) {
+				if (rank == 0) result_ptr(src, dst)[6] = 1.0;
+				continue;
+			}
+			if (rank == dst) {
+				fill_ack(samples[static_cast<size_t>(src)], ack.data());
+				if (rank == 0) {
+					std::copy(ack.begin(), ack.end(), result_ptr(src, dst));
+				} else {
+					mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0,
+					                nproc * nproc + pair_tag(src, dst, nproc),
+					                MPI_COMM_WORLD), "MPI_Send ack");
+				}
+			} else if (rank == 0) {
+				mpi_ok(MPI_Recv(result_ptr(src, dst), ACK_FIELDS, MPI_DOUBLE, dst,
+				                nproc * nproc + pair_tag(src, dst, nproc),
+				                MPI_COMM_WORLD, MPI_STATUS_IGNORE), "MPI_Recv ack");
+			}
+		}
+	}
 
-        cudaEvent_t ev_start = nullptr;
-        std::vector<cudaEvent_t> ev_stop(static_cast<size_t>(nproc), nullptr);
-        if (measure)
-            cuda_ok(cudaEventCreate(&ev_start), "cudaEventCreate(start)");
+	// Cleanup
+	for (int peer = 0; peer < nproc; ++peer) {
+		if (peer == rank) continue;
+		if (send_host[static_cast<size_t>(peer)]) cudaFreeHost(send_host[static_cast<size_t>(peer)]);
+		if (recv_host[static_cast<size_t>(peer)]) cudaFreeHost(recv_host[static_cast<size_t>(peer)]);
+		if (recv_dev[static_cast<size_t>(peer)])  cudaFree(recv_dev[static_cast<size_t>(peer)]);
+	}
+	for (char *p : shared_h_registered) cuda_ok(cudaHostUnregister(p), "cudaHostUnregister");
+	if (shared_h_win != MPI_WIN_NULL) mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free");
+	cudaFree(d_send);
+	cudaFree(d_recv);
 
-        DBG_LOG(rank, args, "all_to_all RECV_POST_BEGIN");
-        for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-            if (src_rank == rank)
-                continue;
-            if (check_host) {
-                const bool same_node_host =
-                    on_my_node[static_cast<size_t>(src_rank)] != 0 &&
-                    shared_h_slots[static_cast<size_t>(src_rank)] != nullptr;
-                if (same_node_host) {
-                    mpi_ok(MPI_Irecv(nullptr, 0, MPI_BYTE, src_rank,
-                                     alltoall_local_ready_tag(src_rank, rank, nproc),
-                                     MPI_COMM_WORLD,
-                                     &recv_req[static_cast<size_t>(nproc + src_rank)]),
-                           "MPI_Irecv(all_to_all local ready)");
-                    continue;
-                }
-                void *recv_ptr = static_cast<void *>(recv_host[static_cast<size_t>(src_rank)]);
-                mpi_ok(MPI_Irecv(recv_ptr, count, MPI_BYTE, src_rank,
-                                 alltoall_pair_tag(src_rank, rank, nproc),
-                                 MPI_COMM_WORLD,
-                                 &recv_req[static_cast<size_t>(src_rank)]),
-                       "MPI_Irecv(all_to_all)");
-            } else {
-                void *recv_ptr = static_cast<void *>(recv_dev[static_cast<size_t>(src_rank)]);
-                mpi_ok(MPI_Irecv(recv_ptr, count, MPI_BYTE, src_rank,
-                                 alltoall_pair_tag(src_rank, rank, nproc),
-                                 MPI_COMM_WORLD,
-                                 &recv_req[static_cast<size_t>(src_rank)]),
-                       "MPI_Irecv(all_to_all)");
-            }
-        }
-        DBG_LOG(rank, args, "all_to_all RECV_POST_DONE");
-
-        DBG_LOG(rank, args, "all_to_all SEND_PHASE_BEGIN");
-        bool gpu_start_recorded = false;
-        for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
-            if (dst_rank == rank)
-                continue;
-            if (measure) {
-                t0_mpi_s[static_cast<size_t>(dst_rank)] = MPI_Wtime();
-                t0_cpu_us[static_cast<size_t>(dst_rank)] = clock_gettime_wrapper();
-                if (!gpu_start_recorded && ev_start != nullptr) {
-                    cuda_ok(cudaEventRecord(ev_start), "cudaEventRecord(start)");
-                    gpu_start_recorded = true;
-                }
-            }
-        }
-
-        bool shared_local_copied = false;
-        for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
-            if (dst_rank == rank)
-                continue;
-            if (check_host) {
-                const bool same_node_host =
-                    on_my_node[static_cast<size_t>(dst_rank)] != 0 &&
-                    shared_h_slots[static_cast<size_t>(rank)] != nullptr;
-                if (same_node_host) {
-                    if (!shared_local_copied) {
-                        cuda_ok(cudaMemcpy(shared_h_slots[static_cast<size_t>(rank)], d_send,
-                                           args.nbytes, cudaMemcpyDeviceToHost),
-                                "D2H(all_to_all shared host)");
-                        if (shared_h_win != MPI_WIN_NULL) {
-                            mpi_ok(MPI_Win_sync(shared_h_win),
-                                   "MPI_Win_sync(all_to_all shared host sender)");
-                        }
-                        shared_local_copied = true;
-                    }
-                    mpi_ok(MPI_Isend(nullptr, 0, MPI_BYTE, dst_rank,
-                                     alltoall_local_ready_tag(rank, dst_rank, nproc),
-                                     MPI_COMM_WORLD,
-                                     &send_req[static_cast<size_t>(dst_rank)]),
-                           "MPI_Isend(all_to_all local ready)");
-                    continue;
-                }
-                char *send_ptr = send_host[static_cast<size_t>(dst_rank)];
-                cuda_ok(cudaMemcpy(send_ptr, d_send, args.nbytes, cudaMemcpyDeviceToHost),
-                        "D2H(all_to_all)");
-                mpi_ok(MPI_Isend(send_ptr, count, MPI_BYTE, dst_rank,
-                                 alltoall_pair_tag(rank, dst_rank, nproc),
-                                 MPI_COMM_WORLD,
-                                 &send_req[static_cast<size_t>(dst_rank)]),
-                       "MPI_Isend(all_to_all host)");
-            } else {
-                mpi_ok(MPI_Isend(d_send, count, MPI_BYTE, dst_rank,
-                                 alltoall_pair_tag(rank, dst_rank, nproc),
-                                 MPI_COMM_WORLD,
-                                 &send_req[static_cast<size_t>(dst_rank)]),
-                       "MPI_Isend(all_to_all device)");
-            }
-        }
-        DBG_LOG(rank, args, "all_to_all SEND_PHASE_DONE");
-
-        DBG_LOG(rank, args, "all_to_all RECV_PHASE_BEGIN");
-        const int n_peers = nproc - 1;
-        for (int done = 0; done < n_peers; ++done) {
-            int idx = MPI_UNDEFINED;
-            mpi_ok(MPI_Waitany(static_cast<int>(recv_req.size()), recv_req.data(), &idx,
-                               MPI_STATUS_IGNORE),
-                   "MPI_Waitany(all_to_all)");
-            if (idx == MPI_UNDEFINED)
-                break;
-
-            int src_rank = idx;
-            if (check_host) {
-                const bool same_node_host = idx >= nproc;
-                src_rank = same_node_host ? (idx - nproc) : idx;
-                if (same_node_host) {
-                    if (shared_h_win != MPI_WIN_NULL) {
-                        mpi_ok(MPI_Win_sync(shared_h_win),
-                               "MPI_Win_sync(all_to_all shared host receiver)");
-                    }
-                    cuda_ok(cudaMemcpy(d_recv, shared_h_slots[static_cast<size_t>(src_rank)],
-                                       args.nbytes, cudaMemcpyHostToDevice),
-                            "H2D(all_to_all shared host)");
-                } else {
-                    cuda_ok(cudaMemcpy(d_recv, recv_host[static_cast<size_t>(src_rank)],
-                                       args.nbytes, cudaMemcpyHostToDevice),
-                            "H2D(all_to_all)");
-                }
-            } else {
-                cuda_ok(cudaMemcpy(d_recv, recv_dev[static_cast<size_t>(src_rank)],
-                                   args.nbytes, cudaMemcpyDeviceToDevice),
-                        "D2D(all_to_all)");
-            }
-            if (measure) {
-                const double t1_mpi_s = MPI_Wtime();
-                const double t1_cpu_us = clock_gettime_wrapper();
-                const double mpi_sample_us =
-                    (t1_mpi_s - t0_mpi_s[static_cast<size_t>(src_rank)]) * 1e6;
-                const double cpu_sample_us =
-                    t1_cpu_us - t0_cpu_us[static_cast<size_t>(src_rank)];
-
-                samples_mpi_us[static_cast<size_t>(src_rank)].push_back(mpi_sample_us);
-                samples_cpu_us[static_cast<size_t>(src_rank)].push_back(cpu_sample_us);
-
-                cudaEvent_t &ev_stop_src = ev_stop[static_cast<size_t>(src_rank)];
-                cuda_ok(cudaEventCreate(&ev_stop_src), "cudaEventCreate(stop[src])");
-                cuda_ok(cudaEventRecord(ev_stop_src), "cudaEventRecord(stop[src])");
-                cuda_ok(cudaEventSynchronize(ev_stop_src),
-                        "cudaEventSynchronize(stop[src])");
-                float elapsed_ms = 0.0f;
-                cuda_ok(cudaEventElapsedTime(&elapsed_ms, ev_start, ev_stop_src),
-                        "cudaEventElapsedTime");
-                samples_gpu_us[static_cast<size_t>(src_rank)].push_back(
-                    static_cast<double>(elapsed_ms) * 1e3);
-            }
-        }
-        DBG_LOG(rank, args, "all_to_all RECV_PHASE_DONE");
-
-        mpi_ok(MPI_Waitall(nproc, send_req.data(), MPI_STATUSES_IGNORE),
-               "MPI_Waitall(all_to_all sends)");
-
-        if (measure) {
-            if (ev_start)
-                cuda_ok(cudaEventDestroy(ev_start), "cudaEventDestroy(start)");
-            for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-                cudaEvent_t &stop = ev_stop[static_cast<size_t>(src_rank)];
-                if (stop)
-                    cuda_ok(cudaEventDestroy(stop), "cudaEventDestroy(stop[src])");
-            }
-        }
-
-        DBG_LOG(rank, args,
-                "all_to_all ITER_DONE idx=" << iter_idx
-                << " measure=" << (measure ? 1 : 0));
-    };
-
-    DBG_LOG(rank, args, "all_to_all WARMUP_BEGIN");
-    for (int i = 0; i < args.warmup; ++i)
-        do_one(i, false);
-    DBG_LOG(rank, args, "all_to_all WARMUP_DONE");
-
-    mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(all_to_all iters)");
-
-    DBG_LOG(rank, args, "all_to_all ITERS_BEGIN");
-    for (int i = 0; i < args.iters; ++i)
-        do_one(i, true);
-    DBG_LOG(rank, args, "all_to_all ITERS_DONE");
-
-    for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-        if (src_rank == rank)
-            continue;
-        Task t{};
-        t.src_rank = src_rank;
-        t.src_gpu = local_gpu;
-        t.dst_rank = rank;
-        t.dst_gpu = local_gpu;
-        switch (args.timer) {
-        case Timer::All:
-        case Timer::Mpi:
-            append_raw_samples(args, rank, t, rank_labels,
-                               samples_mpi_us[static_cast<size_t>(src_rank)]);
-            break;
-        case Timer::Cpu:
-            append_raw_samples(args, rank, t, rank_labels,
-                               samples_cpu_us[static_cast<size_t>(src_rank)]);
-            break;
-        case Timer::Cuda:
-            append_raw_samples(args, rank, t, rank_labels,
-                               samples_gpu_us[static_cast<size_t>(src_rank)]);
-            break;
-        }
-    }
-
-    std::vector<double> results;
-    if (rank == 0) {
-        results.assign(static_cast<size_t>(nproc) * static_cast<size_t>(nproc) *
-                           static_cast<size_t>(ACK_FIELDS),
-                       0.0);
-    }
-
-    const auto result_ptr = [&](int src_rank, int dst_rank) -> double * {
-        return results.data() +
-               (static_cast<size_t>(src_rank) * static_cast<size_t>(nproc) +
-                static_cast<size_t>(dst_rank)) *
-                   static_cast<size_t>(ACK_FIELDS);
-    };
-
-    for (int src_rank = 0; src_rank < nproc; ++src_rank) {
-        for (int dst_rank = 0; dst_rank < nproc; ++dst_rank) {
-            if (src_rank == dst_rank) {
-                if (rank == 0)
-                    result_ptr(src_rank, dst_rank)[6] = 1.0;
-                continue;
-            }
-
-            if (rank == dst_rank) {
-                fill_ack(samples_mpi_us[static_cast<size_t>(src_rank)],
-                         samples_cpu_us[static_cast<size_t>(src_rank)],
-                         samples_gpu_us[static_cast<size_t>(src_rank)], args,
-                         ack.data());
-                if (rank == 0) {
-                    std::copy(ack.begin(), ack.end(), result_ptr(src_rank, dst_rank));
-                } else {
-                    mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0,
-                                    nproc * nproc +
-                                        alltoall_pair_tag(src_rank, dst_rank, nproc),
-                                    MPI_COMM_WORLD),
-                           "MPI_Send ack(all_to_all)");
-                    DBG_LOG(rank, args,
-                            "all_to_all ACK_SENT src=" << src_rank << " dst=" << dst_rank);
-                }
-            } else if (rank == 0) {
-                mpi_ok(MPI_Recv(result_ptr(src_rank, dst_rank), ACK_FIELDS, MPI_DOUBLE,
-                                dst_rank,
-                                nproc * nproc +
-                                    alltoall_pair_tag(src_rank, dst_rank, nproc),
-                                MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-                       "MPI_Recv ack(all_to_all)");
-                DBG_LOG(rank, args,
-                        "all_to_all ACK_RECV src=" << src_rank << " dst=" << dst_rank);
-            }
-        }
-    }
-
-    for (int peer_rank = 0; peer_rank < nproc; ++peer_rank) {
-        if (peer_rank == rank)
-            continue;
-        if (send_host[static_cast<size_t>(peer_rank)])
-            cudaFreeHost(send_host[static_cast<size_t>(peer_rank)]);
-        if (recv_host[static_cast<size_t>(peer_rank)])
-            cudaFreeHost(recv_host[static_cast<size_t>(peer_rank)]);
-        if (recv_dev[static_cast<size_t>(peer_rank)])
-            cudaFree(recv_dev[static_cast<size_t>(peer_rank)]);
-    }
-    for (char *ptr : shared_h_registered)
-        cuda_ok(cudaHostUnregister(ptr), "cudaHostUnregister(all_to_all shared)");
-    if (shared_h_win != MPI_WIN_NULL)
-        mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free(all_to_all host)");
-    if (d_send)
-        cudaFree(d_send);
-    if (d_recv)
-        cudaFree(d_recv);
-
-    DBG_LOG(rank, args, "all_to_all RUN_DONE");
-    return results;
+	DBG_LOG(rank, args, "all_to_all RUN_DONE");
+	return results;
 }
 
 } // namespace gpu_benchmark
