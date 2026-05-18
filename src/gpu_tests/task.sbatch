@@ -74,7 +74,7 @@ export OMPI_MCA_btl_vader_single_copy_mechanism=cma
 
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
-OUT_DIR="${GPU_TESTS}/fixed"
+OUT_DIR="${GPU_TESTS}/results"
 mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu"

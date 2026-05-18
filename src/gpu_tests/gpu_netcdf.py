@@ -14,7 +14,7 @@ Layout in the resulting .nc:
   Variables:   avg_us / med_us / min_us / max_us / var_us / std_us
                → (bytes, src_rank, dst_rank)  [or (src_rank, dst_rank) for one file]
                latency_us → (bytes, src_rank, dst_rank, iter)
-               rank_label → (rank,)  string labels like "28.0"
+               rank_label → (rank, label_len)  S1 (fixed UTF-8 bytes; ncview-friendly)
 
 Raw samples are read from a raw/ subdirectory next to each .txt file,
 using filenames produced by gpu_common.cpp:
@@ -35,13 +35,13 @@ import numpy as np
 
 import gpu_heatmap as gh
 
-# Strips _bNNN from a stem to get the "series" key:
-# cn_4_43_rep1_auto_one_to_one_b1000_w5_i2000 → cn_4_43_rep1_auto_one_to_one_w5_i2000
-_BYTES_STRIP_RE = re.compile(r"_b\d+", re.IGNORECASE)
+# Strips per-run sweep tags from a stem to get the logical "series" key:
+# cn_4_43_rep1_auto_one_to_one_b1000_w5_i2000 → cn_4_43_rep1_auto_one_to_one
+_SERIES_TAG_STRIP_RE = re.compile(r"_(?:b|w|i)\d+", re.IGNORECASE)
 
 
 def _series_key(stem: str) -> str:
-    return _BYTES_STRIP_RE.sub("", stem)
+    return _SERIES_TAG_STRIP_RE.sub("", stem)
 
 
 def _group_by_series(paths: list[Path]) -> dict[str, list[Path]]:
@@ -49,6 +49,30 @@ def _group_by_series(paths: list[Path]) -> dict[str, list[Path]]:
     for p in paths:
         groups[_series_key(p.stem)].append(p)
     return dict(groups)
+
+
+def _shared_int_meta(runs: list["RunData"], key: str) -> int:
+    values = {
+        int(v)
+        for r in runs
+        if isinstance((v := r.meta.get(key)), int)
+    }
+    if not values:
+        return 0
+    if len(values) == 1:
+        return next(iter(values))
+    return -1
+
+
+def _meta_value_list(runs: list["RunData"], key: str) -> str:
+    values = sorted(
+        {
+            int(v)
+            for r in runs
+            if isinstance((v := r.meta.get(key)), int)
+        }
+    )
+    return ",".join(str(v) for v in values)
 
 # --------------------------------------------------------------------------- #
 # Raw file helpers                                                             #
@@ -139,14 +163,9 @@ class RunData:
 # --------------------------------------------------------------------------- #
 
 def _write_common_coords(ds: nc4.Dataset, rank_labels: list[str]) -> None:
-    """Write rank_label coordinate and dimension variables."""
-    str_t = ds.createVLType(str, "str_t")
-    v = ds.createVariable("rank_label", str_t, ("rank",))
-    v.long_name = "rank label (node_id.local_gpu_index)"
-    arr = np.empty(len(rank_labels), dtype=object)
-    for i, lbl in enumerate(rank_labels):
-        arr[i] = lbl
-    v[:] = arr
+    """Store rank labels as a global attribute — ncview crashes on S1 char variables."""
+    if rank_labels:
+        ds.rank_labels = ",".join(rank_labels)
 
 
 def _write_stat_vars(
@@ -190,6 +209,16 @@ def _set_global_attrs(ds: nc4.Dataset, meta: dict[str, Any], source: str) -> Non
     ds.created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _set_merged_global_attrs(ds: nc4.Dataset, runs: list["RunData"], source: str) -> None:
+    _set_global_attrs(ds, runs[0].meta, source)
+    ds.bytes = 0
+    ds.warmup = _shared_int_meta(runs, "warmup")
+    ds.iters = _shared_int_meta(runs, "iters")
+    ds.bytes_values = ",".join(str(r.nbytes) for r in runs)
+    ds.warmup_values = _meta_value_list(runs, "warmup")
+    ds.iters_values = _meta_value_list(runs, "iters")
+
+
 # --------------------------------------------------------------------------- #
 # Single-file writer                                                          #
 # --------------------------------------------------------------------------- #
@@ -200,7 +229,6 @@ def write_single_nc(txt_path: Path, nc_path: Path) -> None:
     n_iter = run.max_iter()
 
     with nc4.Dataset(str(nc_path), "w", format="NETCDF4") as ds:
-        ds.createDimension("rank", n)
         ds.createDimension("src_rank", n)
         ds.createDimension("dst_rank", n)
         if n_iter > 0:
@@ -214,15 +242,24 @@ def write_single_nc(txt_path: Path, nc_path: Path) -> None:
         for j, sn in enumerate(_STAT_KEYS):
             svars[sn][:, :] = run.stat[:, :, j]
 
-        # raw latency: (src_rank, dst_rank, iter)
-        if n_iter > 0:
-            raw_arr = np.full((n, n, n_iter), np.nan)
-            for (sr, dr), samples in run.raw.items():
-                raw_arr[sr, dr, : len(samples)] = samples
-            v_raw = _write_raw_var(ds, ("src_rank", "dst_rank", "iter"))
-            v_raw[:, :, :] = raw_arr
-
         _set_global_attrs(ds, run.meta, str(txt_path.resolve()))
+
+    # raw latency → separate file so ncview var list stays clean
+    if n_iter > 0:
+        raw_path = nc_path.with_name(nc_path.stem + "_raw" + nc_path.suffix)
+        raw_arr = np.full((n, n, n_iter), np.nan)
+        for (sr, dr), samples in run.raw.items():
+            raw_arr[sr, dr, : len(samples)] = samples
+        with nc4.Dataset(str(raw_path), "w", format="NETCDF4") as ds:
+            ds.createDimension("iter", n_iter)
+            ds.createDimension("src_rank", n)
+            ds.createDimension("dst_rank", n)
+            _write_common_coords(ds, run.rank_labels)
+            # dim order: (iter, src_rank, dst_rank) → ncview defaults to src×dst heatmap
+            v_raw = _write_raw_var(ds, ("iter", "src_rank", "dst_rank"))
+            v_raw[:, :, :] = raw_arr.transpose(2, 0, 1)
+            _set_global_attrs(ds, run.meta, str(txt_path.resolve()))
+        print(raw_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -262,14 +299,13 @@ def write_merged_nc(txt_paths: list[Path], nc_path: Path) -> None:
     with nc4.Dataset(str(nc_path), "w", format="NETCDF4") as ds:
         # bytes is the "record" dimension — ncview will animate over it
         ds.createDimension("bytes", n_bytes)
-        ds.createDimension("rank", n)
         ds.createDimension("src_rank", n)
         ds.createDimension("dst_rank", n)
         if n_iter > 0:
             ds.createDimension("iter", n_iter)
 
-        # bytes coordinate
-        v_bytes = ds.createVariable("message_bytes", "i8", ("bytes",))
+        # coordinate variable: same name as dimension → ncview treats it as axis, not var button
+        v_bytes = ds.createVariable("bytes", "i8", ("bytes",))
         v_bytes.long_name = "message size"
         v_bytes.units = "bytes"
         v_bytes[:] = bytes_vals
@@ -289,20 +325,34 @@ def write_merged_nc(txt_paths: list[Path], nc_path: Path) -> None:
         for sn in _STAT_KEYS:
             svars[sn][:, :, :] = stat_data[sn]
 
-        # raw latency: (bytes, src_rank, dst_rank, iter)
-        if n_iter > 0:
-            raw_arr = np.full((n_bytes, n, n, n_iter), np.nan)
-            for bi, run in enumerate(runs):
-                nr = min(run.n_ranks, n)
-                for (sr, dr), samples in run.raw.items():
-                    if sr < nr and dr < nr:
-                        raw_arr[bi, sr, dr, : len(samples)] = samples
-            v_raw = _write_raw_var(ds, ("bytes", "src_rank", "dst_rank", "iter"))
-            v_raw[:, :, :, :] = raw_arr
-
-        _set_global_attrs(ds, runs[0].meta, str(nc_path.parent.resolve()))
+        _set_merged_global_attrs(ds, runs, str(nc_path.parent.resolve()))
         ds.bytes_count = n_bytes
         ds.source_files = " ".join(r.txt_path.name for r in runs)
+
+    # raw latency → separate file so ncview var list stays clean
+    if n_iter > 0:
+        raw_path = nc_path.with_name(nc_path.stem + "_raw" + nc_path.suffix)
+        raw_arr = np.full((n_bytes, n, n, n_iter), np.nan)
+        for bi, run in enumerate(runs):
+            nr = min(run.n_ranks, n)
+            for (sr, dr), samples in run.raw.items():
+                if sr < nr and dr < nr:
+                    raw_arr[bi, sr, dr, : len(samples)] = samples
+        with nc4.Dataset(str(raw_path), "w", format="NETCDF4") as ds:
+            ds.createDimension("bytes", n_bytes)
+            ds.createDimension("iter", n_iter)
+            ds.createDimension("src_rank", n)
+            ds.createDimension("dst_rank", n)
+            v_bytes2 = ds.createVariable("bytes", "i8", ("bytes",))
+            v_bytes2.long_name = "message size"
+            v_bytes2.units = "bytes"
+            v_bytes2[:] = bytes_vals
+            _write_common_coords(ds, rank_labels)
+            # dim order: (bytes, iter, src_rank, dst_rank) → ncview defaults to src×dst heatmap
+            v_raw = _write_raw_var(ds, ("bytes", "iter", "src_rank", "dst_rank"))
+            v_raw[:, :, :, :] = raw_arr.transpose(0, 3, 1, 2)
+            _set_merged_global_attrs(ds, runs, str(nc_path.parent.resolve()))
+        print(raw_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -317,10 +367,10 @@ def main() -> int:
             "Examples:\n"
             "  gpu_netcdf.py run_b4096.txt              → run_b4096.nc\n"
             "  gpu_netcdf.py run_b4096.txt -o out.nc    → out.nc\n"
-            "  gpu_netcdf.py results/                   → results/cn_4_43_rep1_auto_one_to_one_w5_i2000.nc\n"
-            "                                              results/cn_4_43_rep1_host_one_to_one_w5_i2000.nc\n"
+            "  gpu_netcdf.py results/                   → results/cn_4_43_rep1_auto_one_to_one.nc\n"
+            "                                              results/cn_4_43_rep1_host_one_to_one.nc\n"
             "  gpu_netcdf.py results/ -o nc/            → nc/{series}.nc  (выходная папка)\n"
-            "  ncview results/cn_4_43_rep1_auto_one_to_one_w5_i2000.nc\n"
+            "  ncview results/cn_4_43_rep1_auto_one_to_one.nc\n"
         ),
     )
     p.add_argument("input", help=".txt file or directory with .txt files")
@@ -347,7 +397,7 @@ def main() -> int:
             print(f"gpu_netcdf: no *.txt files in {path}", file=sys.stderr)
             return 1
 
-        # Group by series (everything except _bNNN_); auto and host → separate .nc
+        # Group by logical series (drop _bNNN_, _wNNN_, _iNNN_); auto and host stay separate.
         groups = _group_by_series(txts)
         out_dir = args.out if args.out else path
         out_dir.mkdir(parents=True, exist_ok=True)
