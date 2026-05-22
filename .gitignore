@@ -63,6 +63,7 @@ wire_journal_48_53.xlsx
 /.vscode
 *.nc
 *.aux
+*.raw
 *.log
 *.fls
 *.out

@@ -1,28 +1,39 @@
+#
+# This file is a part of the network-tests2 project.
+# GPU-to-GPU latency benchmark (CUDA + MPI).
+#
+
 include ../../config
 
-GPU_BIN = gpu
-GPU_SHARE_DIR = $(INSTALL_DIR)/share/gpu_tests
-GPU_SCRIPTS = \
-	build.sh \
-	build_ucx.sh \
-	py.sh \
-	fixed.sbatch \
-	gpu_heatmap.py \
-	gpu_plot.py \
-	gpu_diff.py \
-	sort_raw.py \
-	requirements.txt \
-	cluster.md
+# GPU_MPI_CXX should point to a CUDA-aware MPI build.
+# Override on the command line or in config if the system mpicxx is not CUDA-aware:
+#   make GPU_MPI_CXX=$(HOME)/opt/openmpi-5.0.10-cuda/bin/mpicxx
+GPU_MPI_CXX ?= $(MPI_CXX)
 
-all: $(GPU_BIN)
+CUDA_INSTALL_PATH ?= /usr/local/cuda
 
-$(GPU_BIN):
-	sh ./build.sh build
+EXECS = gpu
+
+FILES_GPU = \
+	gpu_benchmark.o \
+	gpu_common.o \
+	gpu_one_to_one.o \
+	gpu_all_to_all.o
+
+all: $(EXECS)
+
+$(EXECS): $(FILES_GPU)
+	$(GPU_MPI_CXX) $(MPI_CXXLINKER_FLAGS) $(MPI_LIB_PATH) \
+		-o $(EXECS) $(FILES_GPU) \
+		-L$(CUDA_INSTALL_PATH)/lib64 -lcudart
 
 clean:
-	rm -f $(GPU_BIN) ./*.o
+	rm -f $(FILES_GPU) $(EXECS)
 
 install: all
-	mkdir -p $(INSTALL_DIR)/bin $(GPU_SHARE_DIR)
-	cp -f $(GPU_BIN) $(INSTALL_DIR)/bin/
-	cp -f $(GPU_SCRIPTS) $(GPU_SHARE_DIR)/
+	cp -rf $(EXECS) $(INSTALL_DIR)/bin/
+
+%.o: %.cpp
+	$(GPU_MPI_CXX) $(MPI_CXX_FLAGS) $(MPI_CXX_INCLUDE) \
+		-I$(CUDA_INSTALL_PATH)/include \
+		-c $< -o $@
