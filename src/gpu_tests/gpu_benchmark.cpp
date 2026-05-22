@@ -151,7 +151,14 @@ int main(int argc, char **argv) {
 	const bool enable_local_shared_fallback =
 		(args.env == Env::Auto) && cuda_aware && (local_gpu_count <= 1);
 
-	const int local_gpu = 0;
+	/* Map MPI ranks on a node to distinct CUDA devices.
+	   If Slurm exposes all node GPUs to every rank (e.g. --gpu-bind=none),
+	   each rank picks GPU by its local (per-node) rank, ensuring a true
+	   "1 rank = 1 GPU" mapping inside a node. If Slurm isolates a single
+	   GPU per rank (--gpus-per-task=1), only device 0 is visible. */
+	const int local_gpu = (local_gpu_count > 1)
+	    ? (local_rank % local_gpu_count)
+	    : 0;
 	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice");
 
 	// Optional output file

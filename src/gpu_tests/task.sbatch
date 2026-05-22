@@ -125,7 +125,7 @@ for REP in "${REPS[@]}"; do
 				srun --mpi=pmix \
 					--kill-on-bad-exit=1 \
 					--cpu-bind=cores \
-					--gpu-bind=closest \
+					--gpu-bind=none \
 					-n"${NTASKS}" "${BIN}" \
 					--bytes "${BYTES}" \
 					--warmup "${WARMUP}" \
