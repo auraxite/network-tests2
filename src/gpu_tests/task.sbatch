@@ -10,7 +10,6 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:4
 
-REPS=(1) # задать число
 ENVS=( # закомментировать лишнее
 	auto
 	host
@@ -111,31 +110,29 @@ srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" \
 	2>/dev/null || true
 echo "======================"
 
-for REP in "${REPS[@]}"; do
-	for ENV in "${ENVS[@]}"; do
-		for MODE in "${MODES[@]}"; do
-				for CASE in "${CASES[@]}"; do
-				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+for ENV in "${ENVS[@]}"; do
+	for MODE in "${MODES[@]}"; do
+			for CASE in "${CASES[@]}"; do
+			IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-				echo "  -> ${OUT_TXT}"
+		OUT_TXT="${OUT_DIR}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+		echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+			echo "  -> ${OUT_TXT}"
 
-				echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s))"
-				srun --mpi=pmix \
-					--kill-on-bad-exit=1 \
-					--cpu-bind=cores \
-					--gpu-bind=none \
-					-n"${NTASKS}" "${BIN}" \
-					--bytes "${BYTES}" \
-					--warmup "${WARMUP}" \
-					--iters "${ITERS}" \
-					--env "${ENV}" \
-					--mode "${MODE}" \
-					--out "${OUT_TXT}"
+			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s))"
+			srun --mpi=pmix \
+				--kill-on-bad-exit=1 \
+				--cpu-bind=cores \
+				--gpu-bind=none \
+				-n"${NTASKS}" "${BIN}" \
+				--bytes "${BYTES}" \
+				--warmup "${WARMUP}" \
+				--iters "${ITERS}" \
+				--env "${ENV}" \
+				--mode "${MODE}" \
+				--out "${OUT_TXT}"
 
-				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES}"
-			done
+			echo "OK  env=${ENV} mode=${MODE} bytes=${BYTES}"
 		done
 	done
 done

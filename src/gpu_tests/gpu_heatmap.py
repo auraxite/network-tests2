@@ -614,8 +614,7 @@ def render_one_text(
 			continue
 		stem = METRIC_FILE_STEM.get(key, key)
 		out_file = out_dir / (
-			f"{hostname}_rep{tags['rep']}"
-			f"_b{tags['b']}_w{tags['w']}_i{tags['i']}_{stem}.png"
+			f"{out_dir.name}_{stem}.png"
 		)
 		draw_heatmap(
 			mats[key],
@@ -762,7 +761,8 @@ def main() -> int:
 		code = 0
 		for txt in txts:
 			text = txt.read_text(encoding="utf-8", errors="replace")
-			sub = args.out_dir / txt.stem
+			clean_stem = re.sub(r"_w\d+", "", re.sub(r"_i\d+", "", txt.stem))
+			sub = args.out_dir / clean_stem
 			r = render_one_text(
 				text,
 				sub,

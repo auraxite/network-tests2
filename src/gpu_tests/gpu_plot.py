@@ -274,11 +274,11 @@ def render_pair_plot_from_paths(
 			)
 
 			base_name = (
-				f"pair_src{sanitize_token(src_label)}"
+				f"src{sanitize_token(src_label)}"
 				f"_dst{sanitize_token(dst_label)}"
 				f"_{sanitize_token(mode)}"
 				f"_{sanitize_token(series_label)}"
-				f"_{gh.METRIC_FILE_STEM.get(metric, metric)}_vs_bytes"
+				f"_{gh.METRIC_FILE_STEM.get(metric, metric)}"
 			)
 			png_path = out_dir / f"{base_name}.png"
 			csv_path = out_dir / f"{base_name}.csv"
