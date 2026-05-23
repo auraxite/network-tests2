@@ -28,10 +28,9 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 /* Set UCX flags before MPI_Init based on the requested env.
    overwrite=0: explicit exports in the job script always take precedence.
 
-   env=auto  →  include cuda_copy + cuda_ipc so UCX can use CUDA IPC for
+   env=auto  →  include cuda_copy + cuda_ipc + gdr_copy so UCX can use CUDA IPC for
                intra-node and GPU Direct RDMA for inter-node.
-               UCX_RNDV_THRESH is intentionally left at the UCX default so
-               the natural eager→rendezvous transition remains visible.
+               UCX_RNDV_THRESH=0 forces rendezvous for all sizes (both auto and host).
 
    env=host  →  exclude cuda_* transports; the code already does explicit
                D2H+MPI(host_buf)+H2D, UCX only ever sees host pointers. */
@@ -47,9 +46,8 @@ static void set_ucx_for_env(bool host_env) {
 		setenv("UCX_IB_GPU_DIRECT_RDMA", "yes",        0);
 		setenv("UCX_RNDV_SCHEME",        "put_zcopy",  0);
 		setenv("UCX_MEMTYPE_CACHE",      "n",          0);
-		// UCX_RNDV_THRESH: NOT set — preserve the natural eager/rendezvous
-		// threshold so the protocol-switch transition remains visible in data.
 	}
+	setenv("UCX_RNDV_THRESH", "0", 0);
 }
 
 /* Print the UCX knobs that matter for GPU-direct transfers. */
