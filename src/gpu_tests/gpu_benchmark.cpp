@@ -28,7 +28,7 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 /* Set UCX flags before MPI_Init based on the requested env.
    overwrite=0: explicit exports in the job script always take precedence.
 
-   env=auto  →  include cuda_copy + cuda_ipc + gdr_copy so UCX can use CUDA IPC for
+   env=auto  →  include cuda_copy + cuda_ipc so UCX can use CUDA IPC for
                intra-node and GPU Direct RDMA for inter-node.
                UCX_RNDV_THRESH defaults to 0 unless set in the environment
                (e.g. by task3.sbatch) or UCX_RNDV_THRESH_LEAVE_DEFAULT=1.
@@ -40,9 +40,10 @@ static void set_ucx_for_env(bool host_env) {
 		// No CUDA-aware transports needed — MPI receives host pointers only
 		std::string tls = std::string(IB_TLS) + ",cma,sm,self";
 		setenv("UCX_TLS", tls.c_str(), /*overwrite=*/0);
+		setenv("UCX_IB_GPU_DIRECT_RDMA", "n", /*overwrite=*/0);
 	} else {
 		// auto: CUDA IPC for intra-node, GPU Direct RDMA for inter-node
-		std::string tls = std::string("cuda_copy,cuda_ipc,gdr_copy,") + IB_TLS + ",cma,sm,self";
+		std::string tls = std::string("cuda_copy,cuda_ipc,") + IB_TLS + ",cma,sm,self";
 		setenv("UCX_TLS",                tls.c_str(),   0);
 		setenv("UCX_IB_GPU_DIRECT_RDMA", "yes",        0);
 		setenv("UCX_RNDV_SCHEME",        "put_zcopy",  0);
