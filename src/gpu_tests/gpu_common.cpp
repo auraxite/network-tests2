@@ -63,7 +63,8 @@ void help(int rank) {
 		<< "UCX defaults applied before MPI_Init (override via env vars):\n"
 		<< "  UCX_RNDV_THRESH=0          force rendezvous for all sizes\n"
 		<< "  UCX_IB_GPU_DIRECT_RDMA=yes enable GPUDirect RDMA\n"
-		<< "  UCX_RNDV_SCHEME=get_zcopy  zero-copy rendezvous\n";
+		<< "  UCX_RNDV_SCHEME=put_zcopy zero-copy rendezvous\n"
+		<< "  UCX_MEMTYPE_CACHE=n        disable memtype cache\n";
 }
 
 Mode parse_mode(const std::string &s, int rank) {

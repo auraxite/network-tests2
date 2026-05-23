@@ -42,10 +42,11 @@ static void set_ucx_for_env(bool host_env) {
 		setenv("UCX_TLS", tls.c_str(), /*overwrite=*/0);
 	} else {
 		// auto: CUDA IPC for intra-node, GPU Direct RDMA for inter-node
-		std::string tls = std::string("cuda_copy,cuda_ipc,") + IB_TLS + ",cma,sm,self";
-		setenv("UCX_TLS",             tls.c_str(),   0);
-		setenv("UCX_IB_GPU_DIRECT_RDMA", "yes",      0);
-		setenv("UCX_RNDV_SCHEME",    "get_zcopy",    0);
+		std::string tls = std::string("cuda_copy,cuda_ipc,gdr_copy,") + IB_TLS + ",cma,sm,self";
+		setenv("UCX_TLS",                tls.c_str(),   0);
+		setenv("UCX_IB_GPU_DIRECT_RDMA", "yes",        0);
+		setenv("UCX_RNDV_SCHEME",        "put_zcopy",  0);
+		setenv("UCX_MEMTYPE_CACHE",      "n",          0);
 		// UCX_RNDV_THRESH: NOT set — preserve the natural eager/rendezvous
 		// threshold so the protocol-switch transition remains visible in data.
 	}
@@ -64,7 +65,7 @@ static void print_ucx_config(const std::function<void(const std::string &)> &mir
 		"UCX_RNDV_THRESH",
 		"UCX_IB_GPU_DIRECT_RDMA",
 		"UCX_RNDV_SCHEME",
-		"UCX_TLS",
+		"UCX_MEMTYPE_CACHE",
 		"UCX_NET_DEVICES",
 		"UCX_LOG_LEVEL",
 	};
