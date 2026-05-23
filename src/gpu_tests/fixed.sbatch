@@ -1,25 +1,29 @@
 #!/bin/bash
-#SBATCH --job-name=clustbench
+#SBATCH --job-name=clustbench-fixed
 #SBATCH --partition=batch
 #SBATCH --time=02:00:00
-#SBATCH --output=clustbench-%j.out
-#SBATCH --error=clustbench-%j.err
+#SBATCH --output=clustbench-fixed-%j.out
+#SBATCH --error=clustbench-fixed-%j.err
 #SBATCH --nodes=2
 #SBATCH --ntasks=8
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:4
-#SBATCH --gpus-per-task=1
 
-ENVS=( # закомментировать лишнее
+# Старый сценарий (~май 2026): UCX_TLS в sbatch, --gpu-bind=closest, results в fixed/.
+# UCX_TLS (overwrite=0 в gpu) перебивает setenv из программы; GDR/RNDV_SCHEME
+# программа может всё равно выставить — для полного совпадения смотри коммит до 5ea3933.
+
+REPS=(1)
+ENVS=(
 	auto
 	host
 )
-MODES=( # закомментировать лишнее
+MODES=(
 	one_to_one
-	# all_to_all
+	all_to_all
 )
-CASES=( # "bytes:iters:warmup", закомментировать лишнее
+CASES=(
 	"1000:2000:5"
 	"2000:2000:5"
 	"4000:2000:5"
@@ -29,11 +33,6 @@ CASES=( # "bytes:iters:warmup", закомментировать лишнее
 	"64000:2000:5"
 	"128000:2000:5"
 	"256000:2000:5"
-	"512000:2000:5"
-	"1024000:1000:5"
-	"2048000:1000:5"
-	"4096000:1000:5"
-	
 	# "500000:1500:5"
 	# "4000000:500:5"
 	# "16000000:200:5"
@@ -63,28 +62,23 @@ fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
 export OMPI_MCA_pml=ucx
+export UCX_TLS=cma,cuda_copy,cuda_ipc,rc_verbs,rc_mlx5,dc_mlx5,ud_verbs,ud_mlx5,sm,self
 export OMPI_MCA_btl_vader_single_copy_mechanism=cma
-# UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME выставляются программой
-# до MPI_Init на основе --env: auto → cuda_copy+cuda_ipc+IB+GDR, host → только IB+cma.
-# Чтобы переопределить — раскомментируй нужное:
-# export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,cuda_copy,cuda_ipc,cma,sm,self
-# export UCX_IB_GPU_DIRECT_RDMA=yes
-# export UCX_RNDV_THRESH=8192   # default UCX threshold (~8–16 КБ); не трогай если
-#                                # хочешь видеть естественный переход eager→rendezvous
-
+export UCX_RNDV_THRESH_LEAVE_DEFAULT=1
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
-OUT_DIR="${GPU_TESTS}/results"
+OUT_DIR="${GPU_TESTS}/fixed"
 mkdir -p "${OUT_DIR}"
 NTASKS="${SLURM_NTASKS:-8}"
 BIN="${GPU_TESTS}/gpu"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"
 
-echo "=== clustbench env ==="
+echo "=== clustbench fixed (legacy UCX in sbatch) ==="
 echo "host: $(hostname -s)"
 echo "OMPI_PATH=$OMPI_PATH"
 echo "UCX_PATH=$UCX_PATH"
+echo "UCX_TLS=$UCX_TLS"
 if [[ -d "$UCX_PATH/lib" ]]; then
 	echo "UCX lib: OK ($UCX_PATH/lib)"
 else
@@ -109,31 +103,33 @@ echo "yama.ptrace_scope на узлах задания:"
 srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" \
 	bash -c 'echo "  $(hostname -s): $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo n/a)"' \
 	2>/dev/null || true
-echo "======================"
+echo "=============================================="
 
-for ENV in "${ENVS[@]}"; do
-	for MODE in "${MODES[@]}"; do
+for REP in "${REPS[@]}"; do
+	for ENV in "${ENVS[@]}"; do
+		for MODE in "${MODES[@]}"; do
 			for CASE in "${CASES[@]}"; do
-			IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-		OUT_TXT="${OUT_DIR}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-		echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-			echo "  -> ${OUT_TXT}"
+				OUT_TXT="${OUT_DIR}/${SAFE_NODES}_rep${REP}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+				echo "RUN rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+				echo "  -> ${OUT_TXT}"
 
-			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s))"
-			srun --mpi=pmix \
-				--kill-on-bad-exit=1 \
-				--cpu-bind=cores \
-				--gpu-bind=closest \
-				-n"${NTASKS}" "${BIN}" \
-				--bytes "${BYTES}" \
-				--warmup "${WARMUP}" \
-				--iters "${ITERS}" \
-				--env "${ENV}" \
-				--mode "${MODE}" \
-				--out "${OUT_TXT}"
+				echo "  launch: rank-per-gpu (${NTASKS} MPI rank(s), gpu-bind=closest)"
+				srun --mpi=pmix \
+					--kill-on-bad-exit=1 \
+					--cpu-bind=cores \
+					--gpu-bind=closest \
+					-n"${NTASKS}" "${BIN}" \
+					--bytes "${BYTES}" \
+					--warmup "${WARMUP}" \
+					--iters "${ITERS}" \
+					--env "${ENV}" \
+					--mode "${MODE}" \
+					--out "${OUT_TXT}"
 
-			echo "OK  env=${ENV} mode=${MODE} bytes=${BYTES}"
+				echo "OK  rep=${REP} env=${ENV} mode=${MODE} bytes=${BYTES}"
+			done
 		done
 	done
 done

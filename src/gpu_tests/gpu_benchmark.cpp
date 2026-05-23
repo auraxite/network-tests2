@@ -143,14 +143,24 @@ int main(int argc, char **argv) {
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 
-	/* Map MPI ranks on a node to distinct CUDA devices.
-	   If Slurm exposes all node GPUs to every rank (e.g. --gpu-bind=none),
-	   each rank picks GPU by its local (per-node) rank, ensuring a true
-	   "1 rank = 1 GPU" mapping inside a node. If Slurm isolates a single
-	   GPU per rank (--gpus-per-task=1), only device 0 is visible. */
-	const int local_gpu = (local_gpu_count > 1)
-	    ? (local_rank % local_gpu_count)
-	    : 0;
+	/* GPU index within this process's CUDA_VISIBLE_DEVICES.
+	   --gpus-per-task=1 + --gpu-bind=closest  →  one visible GPU, use 0.
+	   --gpu-bind=none (all node GPUs visible)   →  local_rank, 4 GPUs / 4 ranks.
+	   Do not use local_rank % count when count < node_size: that collides
+	   (e.g. visible_gpus=2 and ranks 0,2 both pick device 0). */
+	int local_gpu = 0;
+	if (local_gpu_count == 1) {
+		local_gpu = 0;
+	} else if (local_gpu_count >= node_size) {
+		local_gpu = local_rank;
+	} else {
+		local_gpu = local_rank % local_gpu_count;
+		if (rank == 0) {
+			std::cerr << "WARNING: visible_gpus=" << local_gpu_count
+			          << " < ranks_on_node=" << node_size
+			          << " — use #SBATCH --gpus-per-task=1 with --gpu-bind=closest\n";
+		}
+	}
 	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice");
 
 	// Optional output file
