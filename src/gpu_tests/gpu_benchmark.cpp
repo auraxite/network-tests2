@@ -53,8 +53,7 @@ static void set_ucx_for_env(bool host_env) {
 
 /* Print the UCX knobs that matter for GPU-direct transfers. */
 static void print_ucx_config(const std::function<void(const std::string &)> &mirror,
-                              bool cuda_aware, bool via_host,
-                              bool local_shared_fallback) {
+                              bool cuda_aware, bool via_host) {
 	std::ostringstream o;
 
 	o << "CUDA-aware MPI: " << (cuda_aware ? "yes" : "no") << "\n";
@@ -79,9 +78,7 @@ static void print_ucx_config(const std::function<void(const std::string &)> &mir
 	// Derived route description
 	o << "Route:\n";
 	o << "  intra-node: ";
-	if (local_shared_fallback)
-		o << "host-shared-mem  (D2H → shared DRAM → H2D, CUDA IPC bypassed)\n";
-	else if (via_host)
+	if (via_host)
 		o << "host-staging     (explicit D2H + MPI + H2D)\n";
 	else
 		o << "UCX-auto         (UCX may use CUDA IPC or NVLink if available)\n";
@@ -145,12 +142,6 @@ int main(int argc, char **argv) {
 		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 
-	/* In auto mode with 1 GPU per rank: proactively use shared host memory
-	   for intra-node pairs because CUDA IPC context sharing is typically
-	   unavailable under cgroup/--gpus-per-task=1 isolation. */
-	const bool enable_local_shared_fallback =
-		(args.env == Env::Auto) && cuda_aware && (local_gpu_count <= 1);
-
 	/* Map MPI ranks on a node to distinct CUDA devices.
 	   If Slurm exposes all node GPUs to every rank (e.g. --gpu-bind=none),
 	   each rank picks GPU by its local (per-node) rank, ensuring a true
@@ -189,12 +180,16 @@ int main(int argc, char **argv) {
 	std::vector<char> hosts_recv(static_cast<size_t>(nproc) * HOST_LEN);
 	std::vector<char> pci_recv(static_cast<size_t>(nproc) * PCI_LEN);
 	std::vector<int>  gpu_counts(static_cast<size_t>(nproc), 0);
+	std::vector<int>  local_gpus(static_cast<size_t>(nproc), 0);
 	mpi_ok(MPI_Allgather(my_host, HOST_LEN, MPI_CHAR,
 	                     hosts_recv.data(), HOST_LEN, MPI_CHAR, MPI_COMM_WORLD),
 	       "MPI_Allgather hostnames");
 	mpi_ok(MPI_Allgather(&local_gpu_count, 1, MPI_INT,
 	                     gpu_counts.data(), 1, MPI_INT, MPI_COMM_WORLD),
 	       "MPI_Allgather gpu_counts");
+	mpi_ok(MPI_Allgather(&local_gpu, 1, MPI_INT,
+	                     local_gpus.data(), 1, MPI_INT, MPI_COMM_WORLD),
+	       "MPI_Allgather local_gpus");
 	mpi_ok(MPI_Allgather(my_pci, PCI_LEN, MPI_CHAR,
 	                     pci_recv.data(), PCI_LEN, MPI_CHAR, MPI_COMM_WORLD),
 	       "MPI_Allgather pci");
@@ -230,7 +225,7 @@ int main(int argc, char **argv) {
 			for (int r = 0; r < nproc; ++r) {
 				o << "  r" << r
 				  << " hostname=" << (hosts_recv.data() + static_cast<size_t>(r) * HOST_LEN)
-				  << " local_gpu=0"
+				  << " local_gpu=" << local_gpus[static_cast<size_t>(r)]
 				  << " visible_gpus=" << gpu_counts[static_cast<size_t>(r)]
 				  << " pci=" << (pci_recv.data() + static_cast<size_t>(r) * PCI_LEN)
 				  << "\n";
@@ -239,7 +234,7 @@ int main(int argc, char **argv) {
 		}
 
 		// UCX / route diagnostics
-		print_ucx_config(mirror, cuda_aware, via_host, enable_local_shared_fallback);
+		print_ucx_config(mirror, cuda_aware, via_host);
 
 		std::cout << std::fixed << std::setprecision(REPORT_DIGITS);
 		if (out_file) *out_file << std::fixed << std::setprecision(REPORT_DIGITS);
@@ -249,7 +244,6 @@ int main(int argc, char **argv) {
 
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host,
-		                    enable_local_shared_fallback,
 		                    node_comm, local_rank, on_my_node,
 		                    rank_labels, mirror);
 	else

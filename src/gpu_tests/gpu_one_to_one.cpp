@@ -20,7 +20,6 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 
 void schedule_one_to_one(
     int rank, int nproc, const Args &args, bool via_host,
-    bool enable_local_shared_fallback,
     MPI_Comm node_comm, int node_rank,
     const std::vector<int> &on_my_node,
     const std::vector<std::string> &rank_labels,
@@ -35,7 +34,7 @@ void schedule_one_to_one(
 	char   *shared_h_buf     = nullptr;
 	MPI_Win shared_h_win     = MPI_WIN_NULL;
 	bool    shared_h_registered = false;
-	const bool use_shared = via_host || enable_local_shared_fallback;
+	const bool use_shared = via_host;
 
 	cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(d_send)");
 	cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(d_recv)");
