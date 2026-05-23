@@ -1,21 +1,27 @@
 #!/bin/bash
-#SBATCH --job-name=clustbench2
+#SBATCH --job-name=clustbench3
 #SBATCH --partition=batch
-#SBATCH --time=04:00:00
-#SBATCH --output=clustbench2-%j.out
-#SBATCH --error=clustbench2-%j.err
+#SBATCH --time=08:00:00
+#SBATCH --output=clustbench3-%j.out
+#SBATCH --error=clustbench3-%j.err
 #SBATCH --nodes=2
 #SBATCH --ntasks=8
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:4
 
-# Только auto + one_to_one:
-#   1) матрица пар при 16 МБ
-#   2) линейка 1k..4096k при UCX_RNDV_THRESH=0
-#   3) та же линейка при пороге UCX по умолчанию
+ENVS=(
+	auto
+	host
+)
+MODES=(
+	one_to_one
+	all_to_all
+)
 
-MATRIX_CASE=(
+BIG_CASES=(
+	"500000:1500:5"
+	"4000000:500:5"
 	"16000000:200:5"
 )
 
@@ -67,12 +73,8 @@ BIN="${GPU_TESTS}/gpu"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"
 
-ENV=auto
-MODE=one_to_one
-
-echo "=== clustbench2 env ==="
+echo "=== clustbench3 env ==="
 echo "host: $(hostname -s)"
-echo "scenario: ${ENV} ${MODE} only"
 echo "OMPI_PATH=$OMPI_PATH"
 echo "UCX_PATH=$UCX_PATH"
 if [[ -d "$UCX_PATH/lib" ]]; then
@@ -101,7 +103,9 @@ srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" \
 	2>/dev/null || true
 echo "======================="
 
-# $1 — каталог результатов; $2 — "program" | "0" | "default"; $3+ — CASES
+# $1 — каталог результатов (относительно GPU_TESTS)
+# $2 — метка порога: "program" | "0" | "default"
+# $3+ — CASES ("bytes:iters:warmup" ...)
 run_suite() {
 	local out_rel="$1"
 	local thresh_mode="$2"
@@ -126,41 +130,45 @@ run_suite() {
 	esac
 
 	echo ""
-	echo ">>> suite: ${out_rel}  env=${ENV} mode=${MODE}  UCX_RNDV_THRESH_mode=${thresh_mode}"
+	echo ">>> suite: ${out_rel}  UCX_RNDV_THRESH_mode=${thresh_mode}"
 	echo "    UCX_RNDV_THRESH=${UCX_RNDV_THRESH:-<unset>}"
 	echo "    UCX_RNDV_THRESH_LEAVE_DEFAULT=${UCX_RNDV_THRESH_LEAVE_DEFAULT:-<unset>}"
 
-	for CASE in "${cases[@]}"; do
-		IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+	for ENV in "${ENVS[@]}"; do
+		for MODE in "${MODES[@]}"; do
+			for CASE in "${cases[@]}"; do
+				IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-		OUT_TXT="${out_dir}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-		echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-		echo "  -> ${OUT_TXT}"
+				OUT_TXT="${out_dir}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+				echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+				echo "  -> ${OUT_TXT}"
 
-		srun --mpi=pmix \
-			--kill-on-bad-exit=1 \
-			--cpu-bind=cores \
-			--gpu-bind=none \
-			-n"${NTASKS}" "${BIN}" \
-			--bytes "${BYTES}" \
-			--warmup "${WARMUP}" \
-			--iters "${ITERS}" \
-			--env "${ENV}" \
-			--mode "${MODE}" \
-			--out "${OUT_TXT}"
+				srun --mpi=pmix \
+					--kill-on-bad-exit=1 \
+					--cpu-bind=cores \
+					--gpu-bind=none \
+					-n"${NTASKS}" "${BIN}" \
+					--bytes "${BYTES}" \
+					--warmup "${WARMUP}" \
+					--iters "${ITERS}" \
+					--env "${ENV}" \
+					--mode "${MODE}" \
+					--out "${OUT_TXT}"
 
-		echo "OK  bytes=${BYTES}"
+				echo "OK  env=${ENV} mode=${MODE} bytes=${BYTES}"
+			done
+		done
 	done
 }
 
-# 1) Матрица 8×8 пар, 16 МБ (порог — как в программе, по умолчанию 0)
-run_suite results_auto_matrix_16m program "${MATRIX_CASE[@]}"
+# 1) Большие сообщения — порог из программы (по умолчанию 0, если не задан в sbatch)
+run_suite results_big program "${BIG_CASES[@]}"
 
-# 2) Линейка размеров, UCX_RNDV_THRESH=0
-run_suite results_auto_small_threshold_0 0 "${SMALL_CASES[@]}"
+# 2) Малые — явно UCX_RNDV_THRESH=0 для auto и host
+run_suite results_small_threshold_0 0 "${SMALL_CASES[@]}"
 
-# 3) Линейка размеров, порог UCX по умолчанию
-run_suite results_auto_small_threshold_default default "${SMALL_CASES[@]}"
+# 3) Малые — внутренний порог UCX (переменная не задаётся)
+run_suite results_small_threshold_default default "${SMALL_CASES[@]}"
 
 echo ""
-echo "=== clustbench2 done ==="
+echo "=== clustbench3 done ==="

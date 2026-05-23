@@ -30,7 +30,8 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 
    env=auto  →  include cuda_copy + cuda_ipc + gdr_copy so UCX can use CUDA IPC for
                intra-node and GPU Direct RDMA for inter-node.
-               UCX_RNDV_THRESH=0 forces rendezvous for all sizes (both auto and host).
+               UCX_RNDV_THRESH defaults to 0 unless set in the environment
+               (e.g. by task3.sbatch) or UCX_RNDV_THRESH_LEAVE_DEFAULT=1.
 
    env=host  →  exclude cuda_* transports; the code already does explicit
                D2H+MPI(host_buf)+H2D, UCX only ever sees host pointers. */
@@ -47,7 +48,8 @@ static void set_ucx_for_env(bool host_env) {
 		setenv("UCX_RNDV_SCHEME",        "put_zcopy",  0);
 		setenv("UCX_MEMTYPE_CACHE",      "n",          0);
 	}
-	setenv("UCX_RNDV_THRESH", "0", 0);
+	if (!getenv("UCX_RNDV_THRESH") && !getenv("UCX_RNDV_THRESH_LEAVE_DEFAULT"))
+		setenv("UCX_RNDV_THRESH", "0", 0);
 }
 
 /* Print the UCX knobs that matter for GPU-direct transfers. */
