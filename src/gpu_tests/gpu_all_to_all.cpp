@@ -232,6 +232,9 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					                   args.nbytes, cudaMemcpyHostToDevice), "H2D");
 				}
 		} else {
+			// Synchronize before D2D copy: UCX cuda_ipc may have written to
+			// recv_dev[src] on a non-default stream; ensure it is complete.
+			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(before D2D)");
 			cuda_ok(cudaMemcpy(d_recv, recv_dev[static_cast<size_t>(src)],
 			                   args.nbytes, cudaMemcpyDeviceToDevice), "D2D");
 		}

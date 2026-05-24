@@ -46,7 +46,7 @@ static void set_ucx_for_env(bool host_env) {
 		std::string tls = std::string("cuda_copy,cuda_ipc,") + IB_TLS + ",cma,sm,self";
 		setenv("UCX_TLS",                tls.c_str(),   0);
 		setenv("UCX_IB_GPU_DIRECT_RDMA", "yes",        0);
-		setenv("UCX_RNDV_SCHEME",        "get_zcopy",  0);
+		setenv("UCX_RNDV_SCHEME",        "put_zcopy",  0);
 		setenv("UCX_MEMTYPE_CACHE",      "n",          0);
 	}
 	if (!getenv("UCX_RNDV_THRESH") && !getenv("UCX_RNDV_THRESH_LEAVE_DEFAULT"))
