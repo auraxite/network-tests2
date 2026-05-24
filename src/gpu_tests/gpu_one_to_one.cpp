@@ -231,19 +231,13 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD, &st),
 				       "MPI_Recv(host)");
 				cuda_ok(cudaMemcpy(d_recv, h_buf, count, cudaMemcpyHostToDevice), "H2D");
-			} else {
-				mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD, &st),
-				       "MPI_Recv(device)");
-				// Probe read of d_recv on the default stream: triggers any
-				// CUDA-aware MPI cross-stream dependencies set up by UCX so
-				// the timer reflects buffer visibility, not just MPI-level
-				// completion. Reads only 1 byte, but is synchronous w.r.t.
-				// the receive buffer.
-				volatile char probe = 0;
-				cuda_ok(cudaMemcpy((void *)&probe, d_recv, 1,
-				                   cudaMemcpyDeviceToHost),
-				        "probe(d_recv)");
-			}
+		} else {
+			mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD, &st),
+			       "MPI_Recv(device)");
+			// UCX cuda_ipc may signal MPI completion before device DMA is fully
+			// committed on the default stream; synchronize to measure true latency.
+			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(recv device)");
+		}
 		}
 	};
 
