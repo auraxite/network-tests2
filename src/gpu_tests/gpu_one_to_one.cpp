@@ -234,9 +234,6 @@ std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
 		} else {
 			mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD, &st),
 			       "MPI_Recv(device)");
-			// UCX cuda_ipc may signal MPI completion before device DMA is fully
-			// committed on the default stream; synchronize to measure true latency.
-			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(recv device)");
 		}
 		}
 	};
