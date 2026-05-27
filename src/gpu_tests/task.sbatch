@@ -8,8 +8,9 @@
 #SBATCH --ntasks=8
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=1
-#SBATCH --gres=gpu:4
+#SBATCH --gpus-per-node=4
 #SBATCH --gpus-per-task=1
+#SBATCH --gpu-bind=closest
 
 ENVS=( # закомментировать лишнее
 	auto
@@ -120,12 +121,11 @@ for ENV in "${ENVS[@]}"; do
 		echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_TXT}"
 
-			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s))"
+			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 4 GPU/node)"
 			srun --mpi=pmix \
 				--kill-on-bad-exit=1 \
 				--cpu-bind=cores \
-				--gpu-bind=closest \
-				-n"${NTASKS}" "${BIN}" \
+				"${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \
 				--iters "${ITERS}" \

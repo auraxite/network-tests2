@@ -3,6 +3,7 @@
 #include "gpu_one_to_one.hpp"
 
 #include <cstdlib>   // setenv, getenv
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -146,21 +147,21 @@ int main(int argc, char **argv) {
 
 	/* GPU index within this process's CUDA_VISIBLE_DEVICES.
 	   --gpus-per-task=1 + --gpu-bind=closest  →  one visible GPU, use 0.
-	   --gpu-bind=none (all node GPUs visible)   →  local_rank, 4 GPUs / 4 ranks.
-	   Do not use local_rank % count when count < node_size: that collides
-	   (e.g. visible_gpus=2 and ranks 0,2 both pick device 0). */
+	   --gpu-bind=none (all node GPUs visible)  →  local_rank.
+	   Never use modulo when ranks_on_node > visible_gpus. */
 	int local_gpu = 0;
-	if (local_gpu_count == 1) {
-		local_gpu = 0;
-	} else if (local_gpu_count >= node_size) {
-		local_gpu = local_rank;
-	} else {
-		local_gpu = local_rank % local_gpu_count;
-		if (rank == 0) {
-			std::cerr << "WARNING: visible_gpus=" << local_gpu_count
-			          << " < ranks_on_node=" << node_size
-			          << " — use #SBATCH --gpus-per-task=1 with --gpu-bind=closest\n";
+	if (local_gpu_count > 1) {
+		if (local_rank >= local_gpu_count) {
+			std::cerr << "rank " << rank << " (local_rank " << local_rank
+			          << ") has no dedicated GPU: node exposes only "
+			          << local_gpu_count << " devices.\n"
+			          << "  Launch one rank per GPU, e.g.:\n"
+			          << "    srun --ntasks-per-node=<gpus_per_node>"
+			          << " --gpus-per-node=<gpus_per_node>"
+			          << " --gpu-bind=closest ...\n";
+			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
+		local_gpu = local_rank;
 	}
 	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice");
 
@@ -211,6 +212,25 @@ int main(int argc, char **argv) {
 			if (gpu_counts[static_cast<size_t>(r)] <= 0) {
 				std::cerr << "rank " << r << " sees no GPUs\n";
 				MPI_Abort(MPI_COMM_WORLD, 1);
+			}
+		}
+		// Two ranks on the same host must not point to one physical GPU.
+		for (int a = 0; a < nproc; ++a) {
+			for (int b = a + 1; b < nproc; ++b) {
+				const char *ha = hosts_recv.data() + static_cast<size_t>(a) * HOST_LEN;
+				const char *hb = hosts_recv.data() + static_cast<size_t>(b) * HOST_LEN;
+				const char *pa = pci_recv.data()   + static_cast<size_t>(a) * PCI_LEN;
+				const char *pb = pci_recv.data()   + static_cast<size_t>(b) * PCI_LEN;
+				if (std::strcmp(ha, hb) == 0 && std::strcmp(pa, pb) == 0) {
+					std::cerr << "error: ranks " << a << " and " << b
+					          << " share GPU " << pa << " on " << ha
+					          << " (GPU oversubscription).\n"
+					          << "  Launch exactly one rank per GPU, e.g.:\n"
+					          << "    srun --ntasks-per-node=<gpus_per_node>"
+					          << " --gpus-per-node=<gpus_per_node>"
+					          << " --gpu-bind=closest ...\n";
+					MPI_Abort(MPI_COMM_WORLD, 1);
+				}
 			}
 		}
 	}

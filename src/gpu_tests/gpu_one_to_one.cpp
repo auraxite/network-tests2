@@ -25,8 +25,9 @@ void schedule_one_to_one(
     const std::vector<std::string> &rank_labels,
     const std::function<void(const std::string &)> &mirror) {
 
-	const int local_gpu = 0;
-	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(schedule_one_to_one)");
+	int local_gpu = 0;
+	cuda_ok(cudaGetDevice(&local_gpu), "cudaGetDevice(schedule_one_to_one)");
+	(void)local_gpu;
 
 	char   *d_send           = nullptr;
 	char   *d_recv           = nullptr;

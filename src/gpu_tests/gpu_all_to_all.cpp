@@ -72,7 +72,8 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	DBG_LOG(rank, args, "all_to_all RUN_BEGIN bytes=" << args.nbytes
 	        << " path=" << (check_host ? "host" : "auto"));
 
-	cuda_ok(cudaSetDevice(local_gpu), "cudaSetDevice(all_to_all)");
+	(void)local_gpu;
+	cuda_ok(cudaGetDevice(&local_gpu), "cudaGetDevice(all_to_all)");
 
 	char *d_send = nullptr;
 	char *d_recv = nullptr;
