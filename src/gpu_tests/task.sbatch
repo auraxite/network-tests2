@@ -5,12 +5,11 @@
 #SBATCH --output=clustbench-%j.out
 #SBATCH --error=clustbench-%j.err
 #SBATCH --nodes=2
-#SBATCH --ntasks=8
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks=4
+#SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=1
-#SBATCH --gpus-per-node=4
-#SBATCH --gpus-per-task=1
-#SBATCH --gpu-bind=closest
+#SBATCH --gpus-per-node=2
+#SBATCH --gpu-bind=none
 
 ENVS=( # закомментировать лишнее
 	auto
@@ -20,7 +19,7 @@ MODES=( # закомментировать лишнее
 	one_to_one
 	all_to_all
 )
-# one_to_one: строки 24–36 прежнего файла
+
 ONE_TO_ONE_CASES=( # "bytes:iters:warmup"
 	"1000:2000:5"
 	"2000:2000:5"
@@ -35,16 +34,17 @@ ONE_TO_ONE_CASES=( # "bytes:iters:warmup"
 	"1024000:1000:5"
 	"2048000:1000:5"
 	"4096000:1000:5"
+	"8192000:100:5"
+	"16384000:100:5"
 )
 
-# all_to_all: строки 38–40 прежнего файла
 ALL_TO_ALL_CASES=( # "bytes:iters:warmup"
-	"500000:1500:5"
-	"4000000:500:5"
-	"16000000:200:5"
+	"512000:1000:5"
+	"4096000:500:5"
+	"16384000:200:5"
 )
 
-OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
+OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda-clean}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
 
@@ -81,7 +81,7 @@ export OMPI_MCA_btl_vader_single_copy_mechanism=cma
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 OUT_DIR="${GPU_TESTS}/results"
 mkdir -p "${OUT_DIR}"
-NTASKS="${SLURM_NTASKS:-8}"
+NTASKS="${SLURM_NTASKS:-4}"
 BIN="${GPU_TESTS}/gpu"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"
@@ -131,10 +131,11 @@ for ENV in "${ENVS[@]}"; do
 			echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_TXT}"
 
-			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 4 GPU/node)"
+			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 2 visible GPU/node)"
 			srun --mpi=pmix \
 				--kill-on-bad-exit=1 \
 				--cpu-bind=cores \
+				--gpu-bind=none \
 				"${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \

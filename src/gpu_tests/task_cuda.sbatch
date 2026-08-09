@@ -7,12 +7,11 @@
 #SBATCH --output=clustbench-cuda-ipc-%j.out
 #SBATCH --error=clustbench-cuda-ipc-%j.err
 #SBATCH --nodes=1
-#SBATCH --ntasks=4
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks=2
+#SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=1
-#SBATCH --gpus-per-node=4
-#SBATCH --gpus-per-task=1
-#SBATCH --gpu-bind=closest
+#SBATCH --gpus-per-node=2
+#SBATCH --gpu-bind=none
 
 set -eEuo pipefail
 
@@ -56,7 +55,7 @@ run_mode() {
 		IFS=":" read -r bytes iters warmup <<<"${case_spec}"
 		local out="${OUT_DIR}/$(hostname -s)_${mode}_b${bytes}_w${warmup}_i${iters}.txt"
 		echo "RUN mode=${mode} bytes=${bytes} iters=${iters} warmup=${warmup}"
-		srun --mpi=pmix --kill-on-bad-exit=1 --cpu-bind=cores \
+		srun --mpi=pmix --kill-on-bad-exit=1 --cpu-bind=cores --gpu-bind=none \
 			"${BIN}" --mode "${mode}" --env auto --bytes "${bytes}" \
 			--warmup "${warmup}" --iters "${iters}" --out "${out}"
 	done

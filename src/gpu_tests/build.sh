@@ -6,7 +6,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_GPU_TESTS="$SCRIPT_DIR"
 SELF="$SCRIPT_DIR/build.sh"
 
-OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
+OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda-clean}"
 CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
 
@@ -77,6 +77,7 @@ trap 'rm -f $CUDA_OBJS' EXIT
 	-o "$REPO_GPU_TESTS/gpu" \
 	$RPATH \
 	-Wl,--no-as-needed \
+	-Wl,-rpath-link,"$OMPI_PATH/lib" \
 	-L"$OMPI_PATH/lib" -lmpi -lopen-pal \
 	-Wl,--as-needed \
 	-L"$CUDA_PATH/lib64" -lcudart
