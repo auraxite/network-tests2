@@ -41,6 +41,8 @@ fi
 
 MPICXX="$OMPI_PATH/bin/mpicxx"
 test -x "$MPICXX" || { echo "build.sh: not executable: $MPICXX" >&2; exit 1; }
+NVCC="$CUDA_PATH/bin/nvcc"
+test -x "$NVCC" || { echo "build.sh: not executable: $NVCC" >&2; exit 1; }
 
 if ! test -f "$CUDA_PATH/include/cuda_runtime.h"; then
 	echo "build.sh: missing $CUDA_PATH/include/cuda_runtime.h" >&2
@@ -51,17 +53,27 @@ fi
 echo "$MPICXX"
 "$MPICXX" --showme:version 2>/dev/null || true
 
-CXXFLAGS="-O2 -I$CUDA_PATH/include"
+CXXFLAGS="-O2 -std=c++17 -I$CUDA_PATH/include"
 RPATH="-Wl,-rpath,$OMPI_PATH/lib -Wl,-rpath,$CUDA_PATH/lib64"
 if [ -d "$UCX_PATH/lib" ]; then
 	RPATH="-Wl,-rpath,$UCX_PATH/lib $RPATH"
 fi
+
+CUDA_OBJS="$REPO_GPU_TESTS/gpu_cuda_one_to_one.o $REPO_GPU_TESTS/gpu_cuda_all_to_all.o"
+trap 'rm -f $CUDA_OBJS' EXIT
+"$NVCC" $CXXFLAGS -ccbin "$MPICXX" -I"$OMPI_PATH/include" \
+	-c "$REPO_GPU_TESTS/gpu_cuda_one_to_one.cu" \
+	-o "$REPO_GPU_TESTS/gpu_cuda_one_to_one.o"
+"$NVCC" $CXXFLAGS -ccbin "$MPICXX" -I"$OMPI_PATH/include" \
+	-c "$REPO_GPU_TESTS/gpu_cuda_all_to_all.cu" \
+	-o "$REPO_GPU_TESTS/gpu_cuda_all_to_all.o"
 
 "$MPICXX" $CXXFLAGS \
 	"$REPO_GPU_TESTS/gpu_benchmark.cpp" \
 	"$REPO_GPU_TESTS/gpu_common.cpp" \
 	"$REPO_GPU_TESTS/gpu_one_to_one.cpp" \
 	"$REPO_GPU_TESTS/gpu_all_to_all.cpp" \
+	$CUDA_OBJS \
 	-o "$REPO_GPU_TESTS/gpu" \
 	$RPATH \
 	-Wl,--no-as-needed \

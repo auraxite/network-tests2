@@ -122,6 +122,14 @@ int main(int argc, char **argv) {
 	const Args args         = parse_args(argc, argv, rank);
 	const bool cuda_aware   = mpi_cuda_aware();
 	const bool via_host     = check_host(args.env, cuda_aware);
+	const bool cuda_ipc_mode =
+		args.mode == Mode::CudaOneToOne || args.mode == Mode::CudaAllToAll;
+	if (cuda_ipc_mode && args.env == Env::Host) {
+		if (rank == 0)
+			std::cerr << "CUDA IPC modes require --env auto: their payload path is "
+			             "direct GPU-to-GPU P2P, not host staging.\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
 
 	// Node communicator
 	MPI_Comm node_comm = MPI_COMM_NULL;
@@ -245,6 +253,7 @@ int main(int argc, char **argv) {
 			std::ostringstream o;
 			o << "Env: "    << (via_host ? "host" : "auto") << "\n"
 			  << "Mode: "   << mode_to_string(args.mode)    << "\n"
+			  << "Transport: " << (cuda_ipc_mode ? "cuda_ipc_p2p" : "mpi_ucx") << "\n"
 			  << "Timer: mpi\n"
 			  << "Bytes: "  << args.nbytes  << "\n"
 			  << "Warmup: " << args.warmup  << "\n"
@@ -278,10 +287,16 @@ int main(int argc, char **argv) {
 		schedule_one_to_one(rank, nproc, args, via_host,
 		                    node_comm, local_rank, on_my_node,
 		                    rank_labels, mirror);
-	else
+	else if (args.mode == Mode::AllToAll)
 		schedule_all_to_all(rank, nproc, args, via_host,
 		                    node_comm, local_rank, on_my_node, node_ranks,
 		                    rank_labels, mirror);
+	else if (args.mode == Mode::CudaOneToOne)
+		schedule_cuda_one_to_one(rank, nproc, args, node_comm, node_ranks,
+		                         rank_labels, mirror);
+	else
+		schedule_cuda_all_to_all(rank, nproc, args, node_comm, node_ranks,
+		                         rank_labels, mirror);
 
 	mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free");
 	mpi_ok(MPI_Finalize(), "MPI_Finalize");

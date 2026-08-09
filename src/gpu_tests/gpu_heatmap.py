@@ -84,7 +84,9 @@ ITERS_LINE_RE = re.compile(r"^Iters:\s*(\d+)\s*$")
 TOTAL_TIME_LINE_RE = re.compile(r"^TotalTimeSec:\s*([0-9.eE+-]+)\s*$")
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
-MODE_TAG_RE = re.compile(r"(?:^|_)(one_to_one|all_to_all)(?:_|$)", re.I)
+MODE_TAG_RE = re.compile(
+	 r"(?:^|_)(cuda_one_to_one|cuda_all_to_all|one_to_one|all_to_all)(?:_|$)", re.I
+)
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)
 ITERS_TAG_RE = re.compile(r"(?:^|_)i(\d+)(?:_|$)", re.I)
@@ -235,6 +237,8 @@ def parse_gpu_one_to_one_text(
 			meta["env"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Mode:"):
 			meta["mode"] = line.split(":", 1)[1].strip()
+		elif line.startswith("Transport:"):
+			meta["transport"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Timer:"):
 			meta["timer"] = line.split(":", 1)[1].strip()
 		elif line.startswith("Ranks:"):
@@ -363,6 +367,7 @@ def title_block(
 ) -> str:
 	env = str(meta.get("env", "unknown"))
 	mode = str(meta.get("mode", "unknown"))
+	transport = str(meta.get("transport", "unknown"))
 	title_line = METRIC_TITLE.get(metric, metric)
 	node_scope = ""
 	if rank_hosts:
@@ -380,6 +385,7 @@ def title_block(
 		[
 			title_line,
 			f"Режим передачи: {mode}",
+			f"Транспорт: {transport}",
 			f"Режим копирования: {env}",
 		]
 	)

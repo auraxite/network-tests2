@@ -143,7 +143,6 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 	auto do_one = [&](bool measure) {
 		std::vector<MPI_Request> recv_req(static_cast<size_t>(2 * nproc), MPI_REQUEST_NULL);
 		std::vector<MPI_Request> send_req(static_cast<size_t>(nproc),     MPI_REQUEST_NULL);
-		std::vector<double>      t0_mpi(static_cast<size_t>(nproc), 0.0);
 
 		// Post recvs
 		for (int src = 0; src < nproc; ++src) {
@@ -171,10 +170,10 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			}
 		}
 
-		// Sends
-		if (measure)
-			for (int dst = 0; dst < nproc; ++dst)
-				if (dst != rank) t0_mpi[static_cast<size_t>(dst)] = MPI_Wtime();
+		// Receiver-side measurement starts once, immediately before the
+		// exchange phase. It must not depend on src: indexing a per-dst t0
+		// by src made the reported latency depend on rank traversal order.
+		const double t0_mpi = measure ? MPI_Wtime() : 0.0;
 
 		bool shared_copied = false;
 		for (int dst = 0; dst < nproc; ++dst) {
@@ -243,7 +242,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			if (measure) {
 				const double t1 = MPI_Wtime();
 				samples[static_cast<size_t>(src)].push_back(
-				    (t1 - t0_mpi[static_cast<size_t>(src)]) * 1e6);
+				    (t1 - t0_mpi) * 1e6);
 			}
 		}
 

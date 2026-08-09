@@ -84,9 +84,13 @@ def plot_series_label(meta: dict[str, Any]) -> str:
 	"""Legend label without the default MPI timer noise."""
 	env = str(meta.get("env", "unknown"))
 	timer = str(meta.get("timer", "unknown"))
-	if timer in ("", "mpi", "unknown"):
-		return env
-	return f"{env} / {timer}"
+	transport = str(meta.get("transport", "unknown"))
+	parts = [env]
+	if transport not in ("", "unknown"):
+		parts.append(transport)
+	if timer not in ("", "mpi", "unknown"):
+		parts.append(timer)
+	return " / ".join(parts)
 
 
 def mode_title(mode: str) -> str:

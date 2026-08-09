@@ -2,6 +2,7 @@
 
 #include <cstddef>        // std::size_t
 #include <cuda_runtime.h> // cudaError_t, cudaSetDevice, …
+#include <functional>
 #include <mpi.h>          // MPI типы и коллективы
 #include <sstream>        // std::ostringstream — для макроса DBG_LOG
 #include <string>         // std::string в Args, метках рангов
@@ -20,7 +21,7 @@ enum class Env { Auto, Host };
 
 enum class StatOut { All, Avg, Med, Min, Max, Std, Var };
 
-enum class Mode { OneToOne, AllToAll };
+enum class Mode { OneToOne, AllToAll, CudaOneToOne, CudaAllToAll };
 
 /* ack layout (7 doubles):
      [0] avg_us  [1] med_us  [2] min_us  [3] max_us
@@ -85,5 +86,18 @@ std::string print_pair_line(const char *line_name, const std::string &src_label,
                              const std::string &dst_label, double avg_us, double med_us,
                              double min_us, double max_us, double var_us, double std_us,
                              StatOut stat);
+
+// CUDA IPC / P2P payload modes. MPI is used only for control and results.
+void schedule_cuda_one_to_one(
+    int rank, int nproc, const Args &args, MPI_Comm node_comm,
+    const std::vector<int> &node_ranks,
+    const std::vector<std::string> &rank_labels,
+    const std::function<void(const std::string &)> &mirror);
+
+void schedule_cuda_all_to_all(
+    int rank, int nproc, const Args &args, MPI_Comm node_comm,
+    const std::vector<int> &node_ranks,
+    const std::vector<std::string> &rank_labels,
+    const std::function<void(const std::string &)> &mirror);
 
 } // namespace gpu_benchmark

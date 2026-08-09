@@ -198,6 +198,7 @@ def _set_global_attrs(ds: nc4.Dataset, meta: dict[str, Any], source: str) -> Non
     ds.Conventions = "CF-1.8"
     ds.env = str(meta.get("env", ""))
     ds.mode = str(meta.get("mode", ""))
+    ds.transport = str(meta.get("transport", ""))
     ds.timer = str(meta.get("timer", ""))
     ds.bytes = int(meta.get("bytes", 0)) if isinstance(meta.get("bytes"), int) else 0
     ds.warmup = int(meta.get("warmup", 0)) if isinstance(meta.get("warmup"), int) else 0

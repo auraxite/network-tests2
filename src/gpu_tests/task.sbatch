@@ -18,9 +18,10 @@ ENVS=( # закомментировать лишнее
 )
 MODES=( # закомментировать лишнее
 	one_to_one
-	# all_to_all
+	all_to_all
 )
-CASES=( # "bytes:iters:warmup", закомментировать лишнее
+# one_to_one: строки 24–36 прежнего файла
+ONE_TO_ONE_CASES=( # "bytes:iters:warmup"
 	"1000:2000:5"
 	"2000:2000:5"
 	"4000:2000:5"
@@ -34,10 +35,13 @@ CASES=( # "bytes:iters:warmup", закомментировать лишнее
 	"1024000:1000:5"
 	"2048000:1000:5"
 	"4096000:1000:5"
-	
-	# "500000:1500:5"
-	# "4000000:500:5"
-	# "16000000:200:5"
+)
+
+# all_to_all: строки 38–40 прежнего файла
+ALL_TO_ALL_CASES=( # "bytes:iters:warmup"
+	"500000:1500:5"
+	"4000000:500:5"
+	"16000000:200:5"
 )
 
 OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda}"
@@ -114,11 +118,17 @@ echo "======================"
 
 for ENV in "${ENVS[@]}"; do
 	for MODE in "${MODES[@]}"; do
-			for CASE in "${CASES[@]}"; do
+		case "${MODE}" in
+		one_to_one) CASES=("${ONE_TO_ONE_CASES[@]}") ;;
+		all_to_all) CASES=("${ALL_TO_ALL_CASES[@]}") ;;
+		*) echo "unknown mode: ${MODE}" >&2; exit 1 ;;
+		esac
+
+		for CASE in "${CASES[@]}"; do
 			IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
 
-		OUT_TXT="${OUT_DIR}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-		echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
+			OUT_TXT="${OUT_DIR}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
+			echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
 			echo "  -> ${OUT_TXT}"
 
 			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 4 GPU/node)"

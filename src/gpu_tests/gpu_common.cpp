@@ -50,12 +50,14 @@ void help(int rank) {
 	if (rank != 0)
 		return;
 	std::cout
-		<< "gpu — GPU pair latency (one_to_one | all_to_all)\n"
+		<< "gpu — GPU pair latency (one_to_one | all_to_all | "
+		   "cuda_one_to_one | cuda_all_to_all)\n"
 		<< "  --bytes N       message size in bytes (default 4 MB)\n"
 		<< "  --warmup N      warmup iterations per pair\n"
 		<< "  --iters N       measured iterations per pair\n"
 		<< "  --env E         auto | host\n"
-		<< "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
+		<< "  --mode M        one_to_one | all_to_all | cuda_one_to_one | "
+		   "cuda_all_to_all (default one_to_one)\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
@@ -72,8 +74,13 @@ Mode parse_mode(const std::string &s, int rank) {
 		return Mode::OneToOne;
 	if (s == "all_to_all" || s == "alltoall" || s == "parallel")
 		return Mode::AllToAll;
+	if (s == "cuda_one_to_one" || s == "cuda_1to1")
+		return Mode::CudaOneToOne;
+	if (s == "cuda_all_to_all" || s == "cuda_alltoall")
+		return Mode::CudaAllToAll;
 	if (rank == 0)
-		std::cerr << "unknown --mode: " << s << " (use one_to_one|all_to_all)\n";
+		std::cerr << "unknown --mode: " << s
+		          << " (use one_to_one|all_to_all|cuda_one_to_one|cuda_all_to_all)\n";
 	MPI_Abort(MPI_COMM_WORLD, 1);
 	return Mode::OneToOne;
 }
@@ -82,6 +89,8 @@ const char *mode_to_string(Mode mode) {
 	switch (mode) {
 	case Mode::OneToOne: return "one_to_one";
 	case Mode::AllToAll: return "all_to_all";
+	case Mode::CudaOneToOne: return "cuda_one_to_one";
+	case Mode::CudaAllToAll: return "cuda_all_to_all";
 	}
 	return "one_to_one";
 }

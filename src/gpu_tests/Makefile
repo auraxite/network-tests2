@@ -11,6 +11,7 @@ include ../../config
 GPU_MPI_CXX ?= $(MPI_CXX)
 
 CUDA_INSTALL_PATH ?= /usr/local/cuda
+NVCC ?= $(CUDA_INSTALL_PATH)/bin/nvcc
 
 EXECS = gpu
 
@@ -18,7 +19,9 @@ FILES_GPU = \
 	gpu_benchmark.o \
 	gpu_common.o \
 	gpu_one_to_one.o \
-	gpu_all_to_all.o
+	gpu_all_to_all.o \
+	gpu_cuda_one_to_one.o \
+	gpu_cuda_all_to_all.o
 
 all: $(EXECS)
 
@@ -37,3 +40,11 @@ install: all
 	$(GPU_MPI_CXX) $(MPI_CXX_FLAGS) $(MPI_CXX_INCLUDE) \
 		-I$(CUDA_INSTALL_PATH)/include \
 		-c $< -o $@
+
+gpu_cuda_one_to_one.o: gpu_cuda_one_to_one.cu gpu_cuda_one_to_one.cpp
+	$(NVCC) -std=c++17 -ccbin $(GPU_MPI_CXX) $(MPI_CXX_FLAGS) $(MPI_CXX_INCLUDE) \
+		-I$(CUDA_INSTALL_PATH)/include -c $< -o $@
+
+gpu_cuda_all_to_all.o: gpu_cuda_all_to_all.cu gpu_cuda_all_to_all.cpp
+	$(NVCC) -std=c++17 -ccbin $(GPU_MPI_CXX) $(MPI_CXX_FLAGS) $(MPI_CXX_INCLUDE) \
+		-I$(CUDA_INSTALL_PATH)/include -c $< -o $@
