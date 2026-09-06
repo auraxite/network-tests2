@@ -9,6 +9,7 @@
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-node=2
+#SBATCH --cpu-bind=cores
 #SBATCH --gpu-bind=none
 
 ENVS=( # закомментировать лишнее
@@ -134,8 +135,6 @@ for ENV in "${ENVS[@]}"; do
 			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 2 visible GPU/node)"
 			srun --mpi=pmix \
 				--kill-on-bad-exit=1 \
-				--cpu-bind=cores \
-				--gpu-bind=none \
 				--gres-flags=allow-task-sharing \
 				"${BIN}" \
 				--bytes "${BYTES}" \
