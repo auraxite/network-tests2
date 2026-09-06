@@ -87,9 +87,9 @@ CONFIG_LOG="/tmp/ucx_configure_$$.log"
 	--prefix="${UCX_PREFIX}" \
 	--enable-cma \
 	--with-cuda="${CUDA_PATH}" \
+	--with-gdrcopy \
 	--with-verbs \
 	--enable-mt \
-	--disable-logging \
 	--disable-debug \
 	--disable-assertions \
 	--disable-params-check \

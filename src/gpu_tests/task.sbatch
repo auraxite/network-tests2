@@ -136,6 +136,7 @@ for ENV in "${ENVS[@]}"; do
 				--kill-on-bad-exit=1 \
 				--cpu-bind=cores \
 				--gpu-bind=none \
+				--gres-flags=allow-task-sharing \
 				"${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \
