@@ -231,19 +231,43 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 					cuda_ok(cudaMemcpy(d_recv, recv_host[static_cast<size_t>(src)],
 					                   args.nbytes, cudaMemcpyHostToDevice), "H2D");
 				}
-		} else {
-			// Synchronize before D2D copy: UCX cuda_ipc may have written to
-			// recv_dev[src] on a non-default stream; ensure it is complete.
-			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(before D2D)");
-			cuda_ok(cudaMemcpy(d_recv, recv_dev[static_cast<size_t>(src)],
-			                   args.nbytes, cudaMemcpyDeviceToDevice), "D2D");
-		}
+			} else {
+				// Ветка auto: здесь намеренно НИЧЕГО не делается.
+				//
+				// Раньше на каждое принятое сообщение стояли
+				// cudaDeviceSynchronize() и копия 16 МБ в d_recv.
+				//
+				// Копия бенчмарку не нужна: данные уже в памяти GPU, в
+				// отдельном буфере recv_dev[src] на каждый источник.
+				//
+				// cudaDeviceSynchronize — барьер на ВСЁ устройство: он ждал
+				// в том числе передачи от других пиров, ещё летящие по сети.
+				// Из-за этого первый завершившийся источник получал в свой
+				// тайминг длительность всего обмена. На g5500 внутриузловая
+				// пара показывала 7213 мкс вместо своих ~860 — ровно время
+				// полного all_to_all. Host-путь такого барьера не делает,
+				// поэтому auto здесь выглядел втрое ХУЖЕ host, хотя в
+				// one_to_one он в полтора раза быстрее.
+				//
+				// Данные на месте и так: по семантике MPI буфер пригоден к
+				// использованию сразу после Waitany. Страхующая синхронизация
+				// устройства осталась, но одна на итерацию и уже ПОСЛЕ
+				// замеров — см. ниже.
+			}
 
 			if (measure) {
 				const double t1 = MPI_Wtime();
 				samples[static_cast<size_t>(src)].push_back(
 				    (t1 - t0_mpi) * 1e6);
 			}
+		}
+
+		if (!check_host) {
+			// Одна синхронизация на всю итерацию, уже после того как все
+			// per-source тайминги сняты. Гарантирует, что к следующей
+			// итерации устройство свободно и буферы можно переиспользовать,
+			// но в измерения не попадает и потому их не искажает.
+			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(after exchange)");
 		}
 
 		mpi_ok(MPI_Waitall(nproc, send_req.data(), MPI_STATUSES_IGNORE),

@@ -439,13 +439,12 @@ def generation_timestamp() -> str:
 
 """Собирает блок параметров под графиком."""
 def param_block(
-	meta: dict[str, Any], tags: dict[str, str], total_time: str, creation_time: str
+	meta: dict[str, Any], tags: dict[str, str], creation_time: str
 ) -> str:
 	lines: list[str] = []
 	lines.append(f"w: {tags['w']}  i: {tags['i']}")
 	lines.append(f"b: {tags['b']} байт")
 	lines.append(f"сгенерировано: {creation_time}")
-	lines.append(total_time)
 	return "\n".join(lines)
 
 
@@ -455,53 +454,91 @@ def param_block(
 COLOR_SPREAD_FLOOR = 0.05
 
 
-def color_limits(matrix: np.ndarray) -> tuple[float | None, float | None, float | None]:
-	"""Границы цветовой шкалы и относительный разброс значений.
+# Во сколько погрешностей должен укладываться разброс, чтобы раскраска
+# считалась осмысленной. Меньше — значит различия между ячейками сопоставимы
+# с погрешностью самих чисел, и цвет рисует не структуру, а случайность.
+COLOR_ERR_SIGMAS = 3.0
+
+
+def median_stderr(sigma: float | None, iters: int | None) -> float | None:
+	"""Погрешность нарисованного числа.
+
+	ВАЖНО: σ из результатов — это разброс ОТДЕЛЬНЫХ замеров, и сравнивать
+	разброс между ячейками напрямую с ним неверно. На карте нарисована
+	медиана по iters итерациям, а её точность выше в √iters раз. Например
+	all_to_all с σ≈1220 мкс при i=200 даёт погрешность медианы всего ≈108 мкс,
+	то есть различия в 1700 мкс между парами — настоящие, а не шум.
+	Коэффициент 1.2533 = √(π/2), асимптотика для медианы.
+	"""
+	if sigma is None or iters is None or iters < 2:
+		return None
+	if not math.isfinite(sigma) or sigma <= 0:
+		return None
+	return 1.2533 * sigma / math.sqrt(iters)
+
+
+def color_limits(
+	matrix: np.ndarray, err: float | None = None
+) -> tuple[float | None, float | None, float | None, str | None]:
+	"""Границы цветовой шкалы, относительный разброс и причина растяжения.
 
 	matplotlib по умолчанию растягивает палитру ровно на [min, max] данных.
-	Для почти однородных матриц это врёт: разброс в 0.6% (74.28…74.72 мкс)
-	раскрашивается так же контрастно, как разброс в два раза, и шум читается
-	как структура. Здесь при малом разбросе шкала расширяется до
-	COLOR_SPREAD_FLOOR, и такая матрица выглядит равномерной — как и должна.
+	Для однородных матриц это врёт: разброс в 0.6% (74.28…74.72 мкс)
+	раскрашивается так же контрастно, как разброс в два раза, и случайность
+	читается как структура. Поэтому диапазон шкалы не опускается ниже:
 
-	Возвращает (vmin, vmax, rel). None в vmin/vmax означает «оставить
-	автоматическое поведение matplotlib», None в rel — что относительный
-	разброс не определён (значения около нуля или ниже).
+	  * COLOR_SPREAD_FLOOR от минимума — практический порог: различия
+	    меньше нескольких процентов не стоят внимания, даже если реальны;
+	  * COLOR_ERR_SIGMAS × погрешность — статистический порог: различия
+	    меньше погрешности самих чисел показывать контрастно нельзя.
+
+	Возвращает (vmin, vmax, rel, reason); reason — "spread" или "err",
+	если шкалу растянули, иначе None.
 	"""
 	finite = matrix[np.isfinite(matrix)]
 	if finite.size == 0:
-		return None, None, None
+		return None, None, None, None
 	lo = float(finite.min())
 	hi = float(finite.max())
 	if hi <= lo:
-		return None, None, 0.0
-	if lo <= 0:
-		# var_us/std_us могут лежать около нуля — деление бессмысленно
-		return lo, hi, None
-	rel = (hi - lo) / lo
-	if rel < COLOR_SPREAD_FLOOR:
-		return lo, lo * (1.0 + COLOR_SPREAD_FLOOR), rel
-	return lo, hi, rel
+		return None, None, 0.0, None
+
+	spread = hi - lo
+	rel = (hi - lo) / lo if lo > 0 else None
+
+	span, reason = spread, None
+	if lo > 0 and lo * COLOR_SPREAD_FLOOR > span:
+		span, reason = lo * COLOR_SPREAD_FLOOR, "spread"
+	if err is not None and COLOR_ERR_SIGMAS * err > span:
+		span, reason = COLOR_ERR_SIGMAS * err, "err"
+	return lo, lo + span, rel, reason
 
 
 def spread_caption(
-	matrix: np.ndarray, metric: str, rel: float | None, noise: float | None,
-	*, scale_stretched: bool
+	matrix: np.ndarray, metric: str, rel: float | None, err: float | None,
+	*, reason: str | None
 ) -> str:
-	"""Подпись с фактическим разбросом — чтобы цвет не приходилось додумывать."""
-	if rel is None:
+	"""Подпись с разбросом и погрешностью — чтобы цвет не приходилось додумывать."""
+	finite = matrix[np.isfinite(matrix)]
+	if finite.size == 0:
 		return ""
-	unit = METRIC_CBAR_LABEL.get(metric, "мкс")
-	if rel == 0.0:
+	lo, hi = float(finite.min()), float(finite.max())
+	if hi <= lo:
 		return "все значения одинаковы"
 
-	finite = matrix[np.isfinite(matrix)]
-	lo, hi = float(finite.min()), float(finite.max())
-	head = f"разброс {rel * 100:.1f}% ({lo:.4g}…{hi:.4g} {unit})"
-	if noise is not None and math.isfinite(noise) and noise > 0:
-		head += f", шум σ≈{noise:.3g} {unit}"
-	if scale_stretched:
-		head += f"\nшкала растянута до {COLOR_SPREAD_FLOOR * 100:.0f}%: различия в пределах шума"
+	unit = METRIC_CBAR_LABEL.get(metric, "мкс")
+	head = f"разброс {format_cell_value(metric, lo)}…{format_cell_value(metric, hi)} {unit}"
+	if rel is not None:
+		head += f" ({rel * 100:.1f}%)"
+	if err is not None:
+		head += f", погрешность ±{format_cell_value(metric, err)} {unit}"
+
+	if reason == "err":
+		head += "\nразличия в пределах погрешности — шкала приглушена"
+	elif reason == "spread":
+		head += (
+			f"\nразличия меньше {COLOR_SPREAD_FLOOR * 100:.0f}% — шкала приглушена"
+		)
 	return head
 
 
@@ -553,6 +590,7 @@ def draw_heatmap(
 	node_bounds: list[float],
 	render_style: str,
 	noise: float | None = None,
+	iters: int | None = None,
 ) -> None:
 	labels = tick_labels
 	axis_fs = 9
@@ -561,12 +599,12 @@ def draw_heatmap(
 	fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
 	masked = np.ma.masked_invalid(matrix)
-	vmin, vmax, rel = color_limits(matrix)
-	stretched = rel is not None and 0.0 < rel < COLOR_SPREAD_FLOOR
+	err = median_stderr(noise, iters)
+	vmin, vmax, rel, reason = color_limits(matrix, err)
 	caption = spread_caption(
-		matrix, metric, rel, noise,
+		matrix, metric, rel, err,
 		# в стиле plain цвета нет, оговорка про шкалу там не к месту
-		scale_stretched=stretched and render_style != "plain",
+		reason=reason if render_style != "plain" else None,
 	)
 	# origin="upper": ряд/ранг 0 сверху, ось ординат растёт сверху вниз (как табличная нумерация).
 	if render_style == "plain":
@@ -677,14 +715,16 @@ def render_one_text(
 
 	out_dir.mkdir(parents=True, exist_ok=True)
 	tags = run_tags(source_path, meta)
-	total_time = total_time_line(meta)
 	creation_time = generation_timestamp()
-	params = param_block(meta, tags, total_time, creation_time)
+	params = param_block(meta, tags, creation_time)
 	cmap_resolved = resolve_colormap("latency_gr")
 
 	# Типичный внутриячеечный шум: медиана std по парам. Нужен, чтобы в
 	# подписи было видно, сопоставим ли разброс между ячейками с разбросом
 	# внутри одного замера.
+	iters_raw = meta.get("iters")
+	iters = int(iters_raw) if isinstance(iters_raw, (int, float)) else None
+
 	noise: float | None = None
 	std_mat = mats.get("std_us")
 	if std_mat is not None:
@@ -718,6 +758,7 @@ def render_one_text(
 			# для самой карты std шум — это и есть её собственные значения,
 			# дублировать его в подписи смысла нет
 			noise=None if key in ("std_us", "var_us") else noise,
+			iters=iters,
 		)
 		print(out_file)
 		written += 1
