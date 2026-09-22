@@ -449,6 +449,62 @@ def param_block(
 	return "\n".join(lines)
 
 
+# Минимальный относительный разброс, при котором раскраска несёт смысл.
+# Если фактический разброс меньше, верхнюю границу шкалы растягиваем до этого
+# порога — тогда почти одинаковые значения и выглядят почти одинаково.
+COLOR_SPREAD_FLOOR = 0.05
+
+
+def color_limits(matrix: np.ndarray) -> tuple[float | None, float | None, float | None]:
+	"""Границы цветовой шкалы и относительный разброс значений.
+
+	matplotlib по умолчанию растягивает палитру ровно на [min, max] данных.
+	Для почти однородных матриц это врёт: разброс в 0.6% (74.28…74.72 мкс)
+	раскрашивается так же контрастно, как разброс в два раза, и шум читается
+	как структура. Здесь при малом разбросе шкала расширяется до
+	COLOR_SPREAD_FLOOR, и такая матрица выглядит равномерной — как и должна.
+
+	Возвращает (vmin, vmax, rel). None в vmin/vmax означает «оставить
+	автоматическое поведение matplotlib», None в rel — что относительный
+	разброс не определён (значения около нуля или ниже).
+	"""
+	finite = matrix[np.isfinite(matrix)]
+	if finite.size == 0:
+		return None, None, None
+	lo = float(finite.min())
+	hi = float(finite.max())
+	if hi <= lo:
+		return None, None, 0.0
+	if lo <= 0:
+		# var_us/std_us могут лежать около нуля — деление бессмысленно
+		return lo, hi, None
+	rel = (hi - lo) / lo
+	if rel < COLOR_SPREAD_FLOOR:
+		return lo, lo * (1.0 + COLOR_SPREAD_FLOOR), rel
+	return lo, hi, rel
+
+
+def spread_caption(
+	matrix: np.ndarray, metric: str, rel: float | None, noise: float | None,
+	*, scale_stretched: bool
+) -> str:
+	"""Подпись с фактическим разбросом — чтобы цвет не приходилось додумывать."""
+	if rel is None:
+		return ""
+	unit = METRIC_CBAR_LABEL.get(metric, "мкс")
+	if rel == 0.0:
+		return "все значения одинаковы"
+
+	finite = matrix[np.isfinite(matrix)]
+	lo, hi = float(finite.min()), float(finite.max())
+	head = f"разброс {rel * 100:.1f}% ({lo:.4g}…{hi:.4g} {unit})"
+	if noise is not None and math.isfinite(noise) and noise > 0:
+		head += f", шум σ≈{noise:.3g} {unit}"
+	if scale_stretched:
+		head += f"\nшкала растянута до {COLOR_SPREAD_FLOOR * 100:.0f}%: различия в пределах шума"
+	return head
+
+
 def format_cell_value(metric: str, v: float) -> str:
 	av = abs(v)
 	if metric == "var_us":
@@ -496,6 +552,7 @@ def draw_heatmap(
 	tick_labels: list[str],
 	node_bounds: list[float],
 	render_style: str,
+	noise: float | None = None,
 ) -> None:
 	labels = tick_labels
 	axis_fs = 9
@@ -504,6 +561,13 @@ def draw_heatmap(
 	fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
 	masked = np.ma.masked_invalid(matrix)
+	vmin, vmax, rel = color_limits(matrix)
+	stretched = rel is not None and 0.0 < rel < COLOR_SPREAD_FLOOR
+	caption = spread_caption(
+		matrix, metric, rel, noise,
+		# в стиле plain цвета нет, оговорка про шкалу там не к месту
+		scale_stretched=stretched and render_style != "plain",
+	)
 	# origin="upper": ряд/ранг 0 сверху, ось ординат растёт сверху вниз (как табличная нумерация).
 	if render_style == "plain":
 		white_bg = np.zeros(matrix.shape, dtype=float)
@@ -519,7 +583,13 @@ def draw_heatmap(
 		text_color = "black"
 	else:
 		im = ax.imshow(
-			masked, cmap=cmap, aspect="equal", interpolation="nearest", origin="upper"
+			masked,
+			cmap=cmap,
+			aspect="equal",
+			interpolation="nearest",
+			origin="upper",
+			vmin=vmin,
+			vmax=vmax,
 		)
 		text_color = "white"
 
@@ -529,7 +599,7 @@ def draw_heatmap(
 	ax.set_yticklabels(labels, fontsize=axis_fs)
 
 	ax.set_xlabel(
-		f"dst GPU\n\n{param_block}",
+		f"dst GPU\n\n{param_block}" + (f"\n{caption}" if caption else ""),
 		fontsize=axis_fs,
 		labelpad=4,
 	)
@@ -612,6 +682,16 @@ def render_one_text(
 	params = param_block(meta, tags, total_time, creation_time)
 	cmap_resolved = resolve_colormap("latency_gr")
 
+	# Типичный внутриячеечный шум: медиана std по парам. Нужен, чтобы в
+	# подписи было видно, сопоставим ли разброс между ячейками с разбросом
+	# внутри одного замера.
+	noise: float | None = None
+	std_mat = mats.get("std_us")
+	if std_mat is not None:
+		std_finite = std_mat[np.isfinite(std_mat)]
+		if std_finite.size:
+			noise = float(np.median(std_finite))
+
 	written = 0
 	for key in METRIC_KEYS:
 		if key not in want:
@@ -635,6 +715,9 @@ def render_one_text(
 			tick_labels=tick_labels,
 			node_bounds=node_bounds,
 			render_style=render_style,
+			# для самой карты std шум — это и есть её собственные значения,
+			# дублировать его в подписи смысла нет
+			noise=None if key in ("std_us", "var_us") else noise,
 		)
 		print(out_file)
 		written += 1

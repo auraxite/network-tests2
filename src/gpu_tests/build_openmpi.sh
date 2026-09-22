@@ -29,23 +29,23 @@ TARBALL="openmpi-${OMPI_VERSION}.tar.gz"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # === Скачивание и распаковка исходников (на логин-узле, GPU не нужен) ===
-mkdir -p "${SRC_DIR}"
-cd "${SRC_DIR}"
+# mkdir -p "${SRC_DIR}"
+# cd "${SRC_DIR}"
 
-if [ -d "openmpi-${OMPI_VERSION}" ]; then
-	echo "Исходники уже распакованы: ${SRC_DIR}/openmpi-${OMPI_VERSION}"
-else
-	if [ -f "$HOME/${TARBALL}" ]; then
-		echo "Использую кэш $HOME/${TARBALL}"
-		cp "$HOME/${TARBALL}" .
-	else
-		echo "Скачиваю (официальный сайт): ${OMPI_URL}"
-		wget -q "${OMPI_URL}" -O "${TARBALL}"
-		cp "${TARBALL}" "$HOME/${TARBALL}"
-	fi
-	echo "Распаковываю ${TARBALL} в ${SRC_DIR}"
-	tar xzf "${TARBALL}"
-fi
+# if [ -d "openmpi-${OMPI_VERSION}" ]; then
+# 	echo "Исходники уже распакованы: ${SRC_DIR}/openmpi-${OMPI_VERSION}"
+# else
+# 	if [ -f "$HOME/${TARBALL}" ]; then
+# 		echo "Использую кэш $HOME/${TARBALL}"
+# 		cp "$HOME/${TARBALL}" .
+# 	else
+# 		echo "Скачиваю (официальный сайт): ${OMPI_URL}"
+# 		wget -q "${OMPI_URL}" -O "${TARBALL}"
+# 		cp "${TARBALL}" "$HOME/${TARBALL}"
+# 	fi
+# 	echo "Распаковываю ${TARBALL} в ${SRC_DIR}"
+# 	tar xzf "${TARBALL}"
+# fi
 
 # === Сборка — одна srun-джоба на узле с GPU ===
 if [ ! -x "${UCX_PATH}/bin/ucx_info" ]; then
