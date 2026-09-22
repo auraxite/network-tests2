@@ -62,11 +62,14 @@ void help(int rank) {
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
 		<< "\n"
-		<< "UCX defaults applied before MPI_Init (override via env vars):\n"
-		<< "  UCX_RNDV_THRESH=0          force rendezvous for all sizes\n"
-		<< "  UCX_IB_GPU_DIRECT_RDMA=yes enable GPUDirect RDMA\n"
-		<< "  UCX_RNDV_SCHEME=put_zcopy zero-copy rendezvous\n"
-		<< "  UCX_MEMTYPE_CACHE=n        disable memtype cache\n";
+		<< "UCX defaults applied before MPI_Init for --env auto "
+		   "(override via env vars):\n"
+		<< "  UCX_IB_GPU_DIRECT_RDMA=y   enable GPUDirect RDMA\n"
+		<< "  UCX_RNDV_SCHEME=auto       let UCX pick get/put zcopy or pipeline\n"
+		<< "  UCX_MEMTYPE_CACHE=y        keep memtype cache on\n"
+		<< "  UCX_TLS=gdr_copy,cuda_copy,cuda_ipc,<ib>,cma,sm,self\n"
+		<< "  UCX_RNDV_THRESH            not set — UCX picks eager/rendezvous\n"
+		<< "                             by size (forcing 0 hurts small msgs)\n";
 }
 
 Mode parse_mode(const std::string &s, int rank) {

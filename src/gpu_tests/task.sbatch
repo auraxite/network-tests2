@@ -1,16 +1,35 @@
 #!/bin/bash
-#SBATCH --job-name=clustbench
 #SBATCH --partition=batch
+#SBATCH --job-name=clustbench
 #SBATCH --time=02:00:00
 #SBATCH --output=clustbench-%j.out
 #SBATCH --error=clustbench-%j.err
 #SBATCH --nodes=2
 #SBATCH --ntasks=4
 #SBATCH --ntasks-per-node=2
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=2
-#SBATCH --cpu-bind=cores
-#SBATCH --gpu-bind=none
+
+# --cpus-per-task=8 вместо 1: одного ядра на ранг мало. UCX крутит прогресс
+# (rc_mlx5/cuda_copy) в том же потоке, плюс CUDA-драйверу нужен CPU на
+# обслуживание копирований — на одном ядре прогресс упирается в CPU и
+# GPU-путь не выходит на полосу.
+#
+# --cpu-bind НЕ указывается здесь: в sbatch эта опция игнорируется,
+# она задаётся ниже на srun (--cpu-bind=verbose,cores).
+#
+# --gpu-bind намеренно НЕ ставим: программа сама выбирает GPU по локальному
+# рангу (local_rank → cudaSetDevice) и ей нужно видеть оба GPU узла, чтобы
+# корректно печатать карту рангов и PCI-адреса. По той же причине на srun
+# ниже остаётся --gres-flags=allow-task-sharing.
+#
+# Если диагностика ниже покажет, что GPU и HCA сидят на РАЗНЫХ сокетах
+# (в "nvidia-smi topo -m" связь SYS, а не PIX/PXB/NODE), то трафик
+# GPU↔NIC пойдёт через UPI и полоса упрётся в ~0.8 ГБ/с — ровно то, что
+# было в прошлом прогоне. Лечится это не здесь, а привязкой к «своему»
+# HCA через UCX_NET_DEVICES (см. ниже) либо, если админы разрешат,
+# заменой allow-task-sharing на --gres-flags=enforce-binding — но тогда
+# каждый ранг увидит только один GPU.
 
 ENVS=( # закомментировать лишнее
 	auto
@@ -69,14 +88,38 @@ fi
 export LD_LIBRARY_PATH="$_LDPATH:${LD_LIBRARY_PATH:-}"
 export OMPI_MCA_opal_cuda_support=1
 export OMPI_MCA_pml=ucx
-export OMPI_MCA_btl_vader_single_copy_mechanism=cma
-# UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME выставляются программой
-# до MPI_Init на основе --env: auto → cuda_copy+cuda_ipc+IB+GDR, host → только IB+cma.
+# В OpenMPI 5 компонент vader переименован в sm; старое имя
+# btl_vader_single_copy_mechanism уже не действует. При pml=ucxshared-memory
+# путь всё равно обслуживает UCX (cma/sm в UCX_TLS), так что btl тут не нужен.
+export OMPI_MCA_btl_sm_single_copy_mechanism=cma
+
+# ВАЖНО: снимаем возможные "залипшие" экспорты из ~/.bashrc или прошлых
+# сессий. Программа выставляет свои значения с overwrite=0, то есть любой
+# внешний export её перебивает. В прошлом прогоне именно так в auto-режим
+# попали UCX_RNDV_SCHEME=put_zcopy и UCX_MEMTYPE_CACHE=n (видно в шапке
+# results/*_auto_*.txt, хотя код их не ставит) — и убили GPU-путь.
+unset UCX_RNDV_SCHEME
+unset UCX_MEMTYPE_CACHE
+unset UCX_RNDV_THRESH
+unset UCX_TLS
+
+# UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME, UCX_MEMTYPE_CACHE
+# выставляются программой до MPI_Init на основе --env:
+#   auto → gdr_copy+cuda_copy+cuda_ipc+IB+GDR
+#   host → только IB+cma
 # Чтобы переопределить — раскомментируй нужное:
-# export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,cuda_copy,cuda_ipc,cma,sm,self
+# export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,gdr_copy,cuda_copy,cuda_ipc,cma,sm,self
 # export UCX_IB_GPU_DIRECT_RDMA=yes
-# export UCX_RNDV_THRESH=8192   # default UCX threshold (~8–16 КБ); не трогай если
-#                                # хочешь видеть естественный переход eager→rendezvous
+# export UCX_RNDV_THRESH=0      # форсировать rendezvous на всех размерах.
+#                                # НЕ рекомендуется: душит мелкие сообщения,
+#                                # из-за этого auto проигрывал host на 1–8 КБ.
+
+# Привязка к конкретному HCA. Если на узле несколько IB-карт, UCX может
+# выбрать ту, что висит на чужом сокете относительно GPU — тогда GPUDirect
+# идёт через UPI и полоса падает до ~0.8 ГБ/с. Посмотри вывод
+# "nvidia-smi topo -m" в диагностике ниже и, если GPU и нужный mlx5_* в
+# одном NUMA-узле, пропиши его явно:
+# export UCX_NET_DEVICES=mlx5_0:1
 
 
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
@@ -115,6 +158,42 @@ echo "yama.ptrace_scope на узлах задания:"
 srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" \
 	bash -c 'echo "  $(hostname -s): $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo n/a)"' \
 	2>/dev/null || true
+
+# --- Диагностика GPUDirect RDMA ---------------------------------------
+# Без этих трёх пунктов auto-режим будет упираться в ~0.8 ГБ/с независимо
+# от любых UCX-настроек, потому что NIC просто не сможет читать память GPU
+# напрямую и всё пойдёт через staging в хостовой памяти.
+echo "=== GPUDirect diagnostics ==="
+srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" bash -c '
+echo "--- $(hostname -s) ---"
+
+# 1. Модуль peer-memory. Без него GPUDirect RDMA физически не работает.
+if lsmod | grep -qE "nvidia_peermem|nv_peer_mem"; then
+	echo "  peermem: OK ($(lsmod | grep -oE "nvidia_peermem|nv_peer_mem" | head -1))"
+else
+	echo "  peermem: ОТСУТСТВУЕТ — GPUDirect RDMA не работает!"
+	echo "           нужен modprobe nvidia_peermem (права root, к админам кластера)"
+fi
+
+# 2. gdrdrv — ускоряет мелкие сообщения через gdr_copy.
+if lsmod | grep -q gdrdrv; then
+	echo "  gdrdrv:  OK"
+else
+	echo "  gdrdrv:  нет (gdr_copy будет пропущен, крупные размеры не пострадают)"
+fi
+
+# 3. Топология: GPU и HCA должны быть на одном PCIe-свитче/NUMA-узле.
+#    Связь PIX/PXB — хорошо, SYS (через UPI между сокетами) — те самые 0.8 ГБ/с.
+echo "  топология GPU<->HCA:"
+nvidia-smi topo -m 2>/dev/null | sed "s/^/    /" || echo "    nvidia-smi topo недоступен"
+' 2>/dev/null || true
+
+# Какие CUDA/GDR-транспорты реально собрались в UCX
+if command -v ucx_info >/dev/null 2>&1; then
+	echo "CUDA/GDR транспорты в ucx_info -d:"
+	ucx_info -d 2>/dev/null | grep -E '^# *Transport:' | grep -iE 'cuda|gdr' | sort -u | sed 's/^/  /' || \
+		echo "  WARNING: cuda_copy/cuda_ipc/gdr_copy не найдены — UCX собран без CUDA?"
+fi
 echo "======================"
 
 for ENV in "${ENVS[@]}"; do
@@ -133,9 +212,13 @@ for ENV in "${ENVS[@]}"; do
 			echo "  -> ${OUT_TXT}"
 
 			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 2 visible GPU/node)"
+			# --cpu-bind=verbose,cores — жёсткая привязка ранга к ядрам
+			# (verbose печатает фактическую маску, чтобы было видно, что
+			# ранг сел рядом со своим GPU, а не на чужой сокет).
 			srun --mpi=pmix \
 				--kill-on-bad-exit=1 \
 				--gres-flags=allow-task-sharing \
+				--cpu-bind=verbose,cores \
 				"${BIN}" \
 				--bytes "${BYTES}" \
 				--warmup "${WARMUP}" \

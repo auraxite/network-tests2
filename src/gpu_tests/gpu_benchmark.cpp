@@ -29,13 +29,39 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 /* Set UCX flags before MPI_Init based on the requested env.
    overwrite=0: explicit exports in the job script always take precedence.
 
-   env=auto  →  include cuda_copy + cuda_ipc so UCX can use CUDA IPC for
-               intra-node and GPU Direct RDMA for inter-node.
-               UCX_RNDV_THRESH defaults to 0 unless set in the environment
-               (e.g. by task3.sbatch) or UCX_RNDV_THRESH_LEAVE_DEFAULT=1.
+   env=auto  →  include gdr_copy + cuda_copy + cuda_ipc so UCX can use CUDA IPC
+               for intra-node and GPU Direct RDMA for inter-node.
 
    env=host  →  exclude cuda_* transports; the code already does explicit
-               D2H+MPI(host_buf)+H2D, UCX only ever sees host pointers. */
+               D2H+MPI(host_buf)+H2D, UCX only ever sees host pointers.
+
+   ВАЖНО про настройки ниже. Прошлый прогон (results/*_auto_*) упирался
+   в ~0.8 ГБ/с на ЛЮБОМ размере и ЛЮБОЙ паре — и внутри узла, и между
+   узлами, тогда как host-режим давал 13 ГБ/с внутри узла и 6 ГБ/с между.
+   Одинаковый потолок для intra и inter означает, что GPU-путь ни разу не
+   попал ни в CUDA IPC, ни в настоящий GPUDirect RDMA, а всё время шёл
+   через непайплайненное staging-копирование. Виновники были такие:
+
+     UCX_RNDV_THRESH=0    форсировал rendezvous даже для 1 КБ — из-за
+                          этого auto проигрывал host на малых размерах
+                          (31 мкс против 20 мкс). Теперь не трогаем порог:
+                          пусть UCX сам выбирает eager/rendezvous.
+     UCX_MEMTYPE_CACHE=n  отключал кэш типа памяти: каждая операция заново
+                          дёргала cuPointerGetAttribute. Теперь y.
+     UCX_RNDV_SCHEME=     форсированный put_zcopy мешал UCX выбрать
+       put_zcopy          get_zcopy/пайплайн. Теперь auto.
+     нет gdr_copy в TLS   UCX собран --with-gdrcopy, но транспорт не был
+                          в списке. Добавлен.
+
+   Если после этого auto всё ещё ~0.8 ГБ/с — значит GPUDirect RDMA не
+   работает на уровне системы. Проверь на узле (см. task.sbatch):
+     lsmod | grep -E 'nvidia_peermem|nv_peer_mem'   — модуль должен быть загружен,
+                                                      иначе NIC физически не может
+                                                      читать память GPU;
+     nvidia-smi topo -m                             — GPU и HCA должны висеть на
+                                                      одном PCIe-свитче/NUMA-узле.
+                                                      GDR через UPI между сокетами
+                                                      как раз и даёт ~0.8 ГБ/с. */
 static void set_ucx_for_env(bool host_env) {
 	if (host_env) {
 		// No CUDA-aware transports needed — MPI receives host pointers only
@@ -43,15 +69,24 @@ static void set_ucx_for_env(bool host_env) {
 		setenv("UCX_TLS", tls.c_str(), /*overwrite=*/0);
 		setenv("UCX_IB_GPU_DIRECT_RDMA", "n", /*overwrite=*/0);
 	} else {
-		// auto: CUDA IPC for intra-node, GPU Direct RDMA for inter-node
-		std::string tls = std::string("cuda_copy,cuda_ipc,") + IB_TLS + ",cma,sm,self";
-		setenv("UCX_TLS",                tls.c_str(),   0);
-		setenv("UCX_IB_GPU_DIRECT_RDMA", "y",        0);
-		setenv("UCX_RNDV_SCHEME",        "auto",  0); // Also consider put_zcopy
-		// setenv("UCX_MEMTYPE_CACHE",      "n",          0);
+		// auto: CUDA IPC for intra-node, GPU Direct RDMA for inter-node.
+		// gdr_copy — прямой доступ CPU к памяти GPU, сильно ускоряет мелкие
+		// сообщения; если модуль gdrdrv не загружен, UCX просто пропустит его.
+		std::string tls = std::string("gdr_copy,cuda_copy,cuda_ipc,") + IB_TLS +
+		                  ",cma,sm,self";
+		setenv("UCX_TLS",                tls.c_str(), 0);
+		setenv("UCX_IB_GPU_DIRECT_RDMA", "y",         0);
+		// auto — UCX сам выберет get_zcopy/put_zcopy/пайплайн под размер и
+		// доступность GDR. Форсировать put_zcopy нельзя: без рабочего GDR он
+		// скатывается в медленный staging.
+		setenv("UCX_RNDV_SCHEME",        "auto",      0);
+		// Кэш типа памяти обязан быть включён, иначе каждый Send/Recv платит
+		// за определение типа указателя.
+		setenv("UCX_MEMTYPE_CACHE",      "y",         0);
 	}
-	if (!getenv("UCX_RNDV_THRESH") && !getenv("UCX_RNDV_THRESH_LEAVE_DEFAULT"))
-		setenv("UCX_RNDV_THRESH", "0", 0);
+	// UCX_RNDV_THRESH намеренно НЕ выставляем: дефолт UCX (~8–16 КБ) сам
+	// переключает eager→rendezvous по размеру. Форсированный 0 душил малые
+	// сообщения. Чтобы вернуть старое поведение: export UCX_RNDV_THRESH=0.
 }
 
 /* Print the UCX knobs that matter for GPU-direct transfers. */
@@ -93,12 +128,13 @@ static void print_ucx_config(const std::function<void(const std::string &)> &mir
 		const char *rndv = getenv("UCX_RNDV_THRESH");
 		const bool rndv_zero = rndv && (std::string(rndv) == "0");
 		if (rndv_zero)
-			o << "UCX rendezvous   (GPU→NIC→GPU via GPUDirect RDMA, all sizes)\n";
+			o << "UCX rendezvous   (forced for all sizes by UCX_RNDV_THRESH=0)\n"
+			  << "                 WARNING: rendezvous для мелких сообщений даёт\n"
+			     "                 лишнюю латентность — auto проиграет host на\n"
+			     "                 малых размерах. Убери UCX_RNDV_THRESH=0.\n";
 		else
-			o << "UCX auto         (small msgs: eager+host staging; "
-			     "large msgs: GPU Direct if GDR available)\n"
-			  << "                 WARNING: set UCX_RNDV_THRESH=0 to force "
-			     "GPU Direct for all sizes\n";
+			o << "UCX auto         (small msgs: eager; large msgs: rendezvous, "
+			     "GPU Direct if GDR available)\n";
 	}
 
 	mirror(o.str());
