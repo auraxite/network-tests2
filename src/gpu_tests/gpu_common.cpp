@@ -67,7 +67,7 @@ void help(int rank) {
 		<< "  UCX_IB_GPU_DIRECT_RDMA=y   enable GPUDirect RDMA\n"
 		<< "  UCX_RNDV_SCHEME=auto       let UCX pick get/put zcopy or pipeline\n"
 		<< "  UCX_MEMTYPE_CACHE=y        keep memtype cache on\n"
-		<< "  UCX_TLS=gdr_copy,cuda_copy,cuda_ipc,<ib>,cma,sm,self\n"
+		<< "  UCX_TLS=cuda_copy,cuda_ipc,<ib>,cma,sm,self\n"
 		<< "  UCX_RNDV_THRESH            not set — UCX picks eager/rendezvous\n"
 		<< "                             by size (forcing 0 hurts small msgs)\n";
 }

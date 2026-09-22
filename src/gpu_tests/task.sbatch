@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=batch
+#SBATCH --partition=intel-a100-pci5
 #SBATCH --job-name=clustbench
 #SBATCH --time=02:00:00
 #SBATCH --output=clustbench-%j.out
@@ -105,10 +105,10 @@ unset UCX_TLS
 
 # UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME, UCX_MEMTYPE_CACHE
 # выставляются программой до MPI_Init на основе --env:
-#   auto → gdr_copy+cuda_copy+cuda_ipc+IB+GDR
+#   auto → cuda_copy+cuda_ipc+IB+GDR (gdr_copy нет: в системе нет gdrcopy)
 #   host → только IB+cma
 # Чтобы переопределить — раскомментируй нужное:
-# export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,gdr_copy,cuda_copy,cuda_ipc,cma,sm,self
+# export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,cuda_copy,cuda_ipc,cma,sm,self
 # export UCX_IB_GPU_DIRECT_RDMA=yes
 # export UCX_RNDV_THRESH=0      # форсировать rendezvous на всех размерах.
 #                                # НЕ рекомендуется: душит мелкие сообщения,
@@ -192,7 +192,7 @@ nvidia-smi topo -m 2>/dev/null | sed "s/^/    /" || echo "    nvidia-smi topo н
 if command -v ucx_info >/dev/null 2>&1; then
 	echo "CUDA/GDR транспорты в ucx_info -d:"
 	ucx_info -d 2>/dev/null | grep -E '^# *Transport:' | grep -iE 'cuda|gdr' | sort -u | sed 's/^/  /' || \
-		echo "  WARNING: cuda_copy/cuda_ipc/gdr_copy не найдены — UCX собран без CUDA?"
+		echo "  WARNING: cuda_copy/cuda_ipc не найдены — UCX собран без CUDA?"
 fi
 echo "======================"
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # ==== Настройки — правь тут при необходимости ====
-PARTITION="${PARTITION:-batch}"
+PARTITION="${PARTITION:-intel-a100-pci5}"
 BUILD_JOBS="${BUILD_JOBS:-4}"
 UCX_VERSION="${UCX_VERSION:-1.15.0}"
 UCX_PREFIX="${UCX_PREFIX:-$HOME/opt/ucx-${UCX_VERSION}}"

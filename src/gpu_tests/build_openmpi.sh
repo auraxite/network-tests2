@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # ==== Настройки — правь тут при необходимости ====
-PARTITION="${PARTITION:-batch}"
+PARTITION="${PARTITION:-intel-a100-pci5}"
 BUILD_JOBS="${BUILD_JOBS:-4}"
 OMPI_VERSION="${OMPI_VERSION:-5.0.10}"
 OMPI_PREFIX="${OMPI_PREFIX:-$HOME/opt/openmpi-${OMPI_VERSION}}"

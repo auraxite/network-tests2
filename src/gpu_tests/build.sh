@@ -3,7 +3,7 @@
 set -eu
 
 # ==== Настройки — правь тут при необходимости ====
-PARTITION="${PARTITION:-batch}"
+PARTITION="${PARTITION:-intel-a100-pci5}"
 SRUN_NODES="${SRUN_NODES:-1}"
 SRUN_TIME="${SRUN_TIME:-00:10:00}"
 OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10}"

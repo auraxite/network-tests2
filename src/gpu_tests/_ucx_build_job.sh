@@ -25,13 +25,32 @@ fi
 tar xzf "$TARBALL"
 cd "ucx-$UCX_VERSION"
 
+# gdrcopy опционален: --with-gdrcopy без пути означает "обязательно найди",
+# и configure падает с "gdrcopy packages cannot be found", если в системе нет
+# gdrapi.h. Поэтому ищем заголовок сами и включаем транспорт только если он
+# реально есть.
+#
+# Важно: gdrcopy — это НЕ GPUDirect RDMA. gdrcopy ускоряет мелкие сообщения
+# (даёт CPU прямой доступ к памяти GPU), а крупные передачи GPU→NIC→GPU идут
+# через GPUDirect RDMA и зависят от модуля nvidia_peermem, а не от gdrcopy.
+# Так что без gdrcopy полоса на больших размерах не пострадает.
+GDR_FLAG="--without-gdrcopy"
+for p in "${GDRCOPY_PATH:-}" /usr /usr/local "$HOME/opt/gdrcopy"; do
+	[ -n "$p" ] || continue
+	if [ -f "$p/include/gdrapi.h" ]; then
+		GDR_FLAG="--with-gdrcopy=$p"
+		break
+	fi
+done
+echo "gdrcopy: ${GDR_FLAG#--}"
+
 # Configure
 CONFIG_LOG="/tmp/ucx_configure_$$.log"
 ./configure \
 	--prefix="$UCX_PREFIX" \
 	--enable-cma \
 	--with-cuda="$CUDA_PATH" \
-	--with-gdrcopy \
+	"$GDR_FLAG" \
 	--with-verbs \
 	--enable-mt \
 	--disable-debug \

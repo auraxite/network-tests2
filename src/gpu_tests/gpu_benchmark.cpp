@@ -29,8 +29,8 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 /* Set UCX flags before MPI_Init based on the requested env.
    overwrite=0: explicit exports in the job script always take precedence.
 
-   env=auto  →  include gdr_copy + cuda_copy + cuda_ipc so UCX can use CUDA IPC
-               for intra-node and GPU Direct RDMA for inter-node.
+   env=auto  →  include cuda_copy + cuda_ipc so UCX can use CUDA IPC for
+               intra-node and GPU Direct RDMA for inter-node.
 
    env=host  →  exclude cuda_* transports; the code already does explicit
                D2H+MPI(host_buf)+H2D, UCX only ever sees host pointers.
@@ -50,8 +50,7 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
                           дёргала cuPointerGetAttribute. Теперь y.
      UCX_RNDV_SCHEME=     форсированный put_zcopy мешал UCX выбрать
        put_zcopy          get_zcopy/пайплайн. Теперь auto.
-     нет gdr_copy в TLS   UCX собран --with-gdrcopy, но транспорт не был
-                          в списке. Добавлен.
+   (gdr_copy сюда не добавляем — на этом кластере нет gdrcopy, см. ниже.)
 
    Если после этого auto всё ещё ~0.8 ГБ/с — значит GPUDirect RDMA не
    работает на уровне системы. Проверь на узле (см. task.sbatch):
@@ -70,9 +69,15 @@ static void set_ucx_for_env(bool host_env) {
 		setenv("UCX_IB_GPU_DIRECT_RDMA", "n", /*overwrite=*/0);
 	} else {
 		// auto: CUDA IPC for intra-node, GPU Direct RDMA for inter-node.
-		// gdr_copy — прямой доступ CPU к памяти GPU, сильно ускоряет мелкие
-		// сообщения; если модуль gdrdrv не загружен, UCX просто пропустит его.
-		std::string tls = std::string("gdr_copy,cuda_copy,cuda_ipc,") + IB_TLS +
+		//
+		// gdr_copy в список НЕ включён: на этом кластере нет gdrapi.h, UCX
+		// собирается без gdrcopy (см. _ucx_build_job.sh), и упоминание
+		// недоступного транспорта только плодит warning'и на каждом ранге.
+		// Если gdrcopy появится — пересобери UCX и добавь транспорт руками:
+		//   export UCX_TLS=gdr_copy,cuda_copy,cuda_ipc,<ib>,cma,sm,self
+		// На крупные размеры это не влияет: gdr_copy ускоряет мелкие
+		// сообщения, а полосу GPU→NIC→GPU определяет GPUDirect RDMA.
+		std::string tls = std::string("cuda_copy,cuda_ipc,") + IB_TLS +
 		                  ",cma,sm,self";
 		setenv("UCX_TLS",                tls.c_str(), 0);
 		setenv("UCX_IB_GPU_DIRECT_RDMA", "y",         0);
