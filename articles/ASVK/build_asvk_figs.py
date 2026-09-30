@@ -20,9 +20,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
+from matplotlib.legend_handler import HandlerLine2D
+from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
-from matplotlib.ticker import (FixedLocator, FuncFormatter, LogLocator,
-                               NullFormatter, NullLocator)
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
 from analyze import SOURCES, collect, statistics
 
@@ -65,15 +66,19 @@ LINKS = [
     ("nvlink", "NVLink, внутри узла G8600 V7",
      dict(color=MID, ls="-.", marker="^", mfc=MID)),
 ]
+# Кривая порога по умолчанию до 256 КБ совпадает с кривой порога выше 16 МБ,
+# а после 512 КБ — с кривой порога 0. Поэтому она рисуется поверх остальных
+# тонкой линией с мелкими закрашенными маркерами, а остальные — крупными
+# полыми: в местах совпадения закрашенный кружок виден внутри полого маркера.
 THRESHOLDS = [
     ("default", "auto", "auto, порог по умолчанию",
-     dict(color=BLACK, ls="-", marker="o", mfc=BLACK)),
+     dict(color=BLACK, ls="-", lw=0.8, marker="o", ms=2.4, mfc=BLACK, zorder=5)),
     ("0", "auto", "auto, порог 0",
-     dict(color=DARK, ls="--", marker="s", mfc="white")),
+     dict(color=DARK, ls="--", lw=1.1, marker="s", ms=4.4, mfc="white", zorder=3)),
     ("32M", "auto", "auto, порог выше 16 МБ",
-     dict(color=MID, ls="-.", marker="D", mfc="white")),
-    ("0", "host", "host",
-     dict(color=BLACK, ls=":", marker="^", mfc="white")),
+     dict(color=MID, ls="-.", lw=1.1, marker="D", ms=4.4, mfc="white", zorder=2)),
+    ("0", "host", "host, порог 0",
+     dict(color=BLACK, ls=":", lw=1.1, marker="^", ms=4.0, mfc="white", zorder=4)),
 ]
 SIZE_TICKS = [1000, 4000, 16000, 64000, 256000, 1024000, 4096000, 16384000]
 SIZE_LABELS = ["1 КБ", "4 КБ", "16 КБ", "64 КБ", "256 КБ", "1 МБ", "4 МБ", "16 МБ"]
@@ -100,8 +105,7 @@ def setup(ax, ymax):
     ax.yaxis.set_major_locator(FixedLocator([10 ** k for k in range(1, len(str(top)))]))
     ax.yaxis.set_major_formatter(
         FuncFormatter(lambda v, _: f"{int(v):,}".replace(",", "\u2009")))
-    ax.yaxis.set_minor_locator(LogLocator(base=10, subs=range(2, 10)))
-    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.yaxis.set_minor_locator(NullLocator())
 
     ax.set_xlabel("Размер сообщения")
     ax.set_ylabel("Медианная задержка, мкс")
@@ -123,6 +127,53 @@ def save(fig, name, tight=True):
     print("saved", name)
 
 
+class SymmetricLine(HandlerLine2D):
+    """Образец линии в легенде: две половины от маркера наружу.
+
+    Штриховой узор начинается от первой точки линии, поэтому при обычной
+    отрисовке он обрезается по краям несимметрично. Половины, идущие от
+    центра в разные стороны, начинаются с одной фазы и зеркальны.
+    """
+
+    def create_artists(self, legend, orig_handle, xdescent, ydescent,
+                       width, height, fontsize, trans):
+        y = (height - ydescent) / 2
+        x0, x1 = -xdescent, -xdescent + width
+        xc = (x0 + x1) / 2
+        artists = []
+        for sign in (-1, 1):
+            half = Line2D([xc, xc + sign * (x1 - xc)], [y, y])
+            self.update_prop(half, orig_handle, legend)
+            half.set_marker("")
+            half.set_transform(trans)
+            # Обрезать половину по концу целого штриха, чтобы на краю
+            # образца не оставался обрубок.
+            _, seq = half._dash_pattern
+            if seq:
+                length, pos, i = x1 - xc, 0.0, 0
+                end = length
+                while pos < length:
+                    on = seq[i % len(seq)]
+                    if pos + on <= length:
+                        end = pos + on
+                    pos += on + seq[(i + 1) % len(seq)]
+                    i += 2
+                half.set_xdata([xc, xc + sign * end])
+            artists.append(half)
+        mark = Line2D([xc], [y])
+        self.update_prop(mark, orig_handle, legend)
+        mark.set_linestyle("None")
+        mark.set_transform(trans)
+        artists.append(mark)
+        return artists
+
+
+def legend(ax):
+    ax.legend(frameon=False, loc="upper left", handlelength=3.2,
+              borderaxespad=0.2, labelspacing=0.3,
+              handler_map={Line2D: SymmetricLine()})
+
+
 def plot(lines, name):
     fig, ax = plt.subplots(figsize=(WIDTH_IN, PLOT_HEIGHT_IN))
     ymax = 0
@@ -130,8 +181,7 @@ def plot(lines, name):
         ymax = max(ymax, max(y))
         ax.plot(x, y, label=label, **style)
     setup(ax, ymax)
-    ax.legend(frameon=False, loc="upper left", handlelength=3.0,
-              borderaxespad=0.2, labelspacing=0.3)
+    legend(ax)
     save(fig, name)
 
 
@@ -169,13 +219,15 @@ def fig_speedup():
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax.yaxis.set_minor_locator(NullLocator())
     ax.set_xlabel("Размер сообщения")
-    ax.set_ylabel("Отношение host / auto")
+    ax.set_ylabel("Во сколько раз\nauto быстрее host")
+    note = dict(fontsize=6.5, style="italic", color="0.3", ha="left")
+    ax.text(40_000, 1.1, "выше 1: быстрее auto", va="bottom", **note)
+    ax.text(40_000, 0.555, "ниже 1: быстрее host", va="center", **note)
     ax.grid(True, which="major", color="0.85", lw=0.4)
     ax.set_axisbelow(True)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
-    ax.legend(frameon=False, loc="upper left", handlelength=3.0,
-              borderaxespad=0.2, labelspacing=0.3)
+    legend(ax)
     save(fig, "speedup")
 
 

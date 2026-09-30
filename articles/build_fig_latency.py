@@ -19,18 +19,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
 
-DESKTOP = Path(__file__).resolve().parents[2]
-LAST = Path(__file__).resolve().parent / "LAST_RESULTS"
+RESULTS = Path(__file__).resolve().parents[1] / "src" / "gpu_tests" / "results"
 ENV = sys.argv[1] if len(sys.argv) > 1 else "auto"
-# Порог UCX_RNDV_THRESH: default — не задан (данные в ~/Desktop/pci5, sxm4),
-# 0 и 32M — повторные запуски из LAST_RESULTS.
+# Порог UCX_RNDV_THRESH: default — не задан, 0 и 32M — задан при запуске.
+# Прогон 30.09.2026: G5500 V7 — узлы g5500-1 и g5500-2, G8600 V7 — g8600-1.
 THRESH = sys.argv[2] if len(sys.argv) > 2 else "default"
 VARIANTS = {
-    "default": (DESKTOP / "pci5", DESKTOP / "sxm4", "default",
-                "UCX_RNDV_THRESH по умолчанию"),
-    "0": (LAST / "results_0_PCI5", LAST / "results_0_SXM4", "thresh0",
+    "default": (RESULTS / "results_pci5_default", RESULTS / "results_sxm_default",
+                "default", "UCX_RNDV_THRESH по умолчанию"),
+    "0": (RESULTS / "results_pci5_0", RESULTS / "results_sxm_0", "thresh0",
           "UCX_RNDV_THRESH=0"),
-    "32M": (LAST / "results_32M_PCI5", LAST / "results_32M_SXM4", "thresh32M",
+    "32M": (RESULTS / "results_pci5_32", RESULTS / "results_sxm_32", "thresh32M",
             "UCX_RNDV_THRESH=32M"),
 }
 PCI_DIR, SXM_DIR, TAG, TITLE_SUFFIX = VARIANTS[THRESH]

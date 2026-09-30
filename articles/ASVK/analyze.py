@@ -10,12 +10,13 @@ import re
 import statistics
 from pathlib import Path
 
-ARTICLES = Path(__file__).resolve().parents[1]
-LAST = ARTICLES / "LAST_RESULTS"
+REPO = Path(__file__).resolve().parents[2]
+RESULTS = REPO / "src" / "gpu_tests" / "results"
+# Прогон 30.09.2026: G5500 V7 — узлы g5500-1 и g5500-2, G8600 V7 — узел g8600-1.
 SOURCES = {
-    "default": (LAST / "results_default_PCI5", LAST / "results_default_SXM4"),
-    "0": (LAST / "results_0_PCI5", LAST / "results_0_SXM4"),
-    "32M": (LAST / "results_32M_PCI5", LAST / "results_32M_SXM4"),
+    "default": (RESULTS / "results_pci5_default", RESULTS / "results_sxm_default"),
+    "0": (RESULTS / "results_pci5_0", RESULTS / "results_sxm_0"),
+    "32M": (RESULTS / "results_pci5_32", RESULTS / "results_sxm_32"),
 }
 PAIR_RE = re.compile(r"^pair (\d+)\.(\d+) -> (\d+)\.(\d+) .*?med_us=([\d.]+)")
 

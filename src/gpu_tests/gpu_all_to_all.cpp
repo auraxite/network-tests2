@@ -170,6 +170,17 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args,
 			}
 		}
 
+		// Общий старт итерации. Без барьера ранги расходятся по фазе:
+		// каждый начинает следующую итерацию, когда завершились ЕГО отправки
+		// (MPI_Waitall ниже), а межузловые отправки завершаются только когда
+		// их заберёт удалённый получатель. На g5500 расхождение доходило до
+		// нескольких мс, и даже первый источник приходил через 4–6 мс при
+		// одиночной передаче 0.8 мс: в замер попадало ожидание старта
+		// отправителя, из-за чего внутриузловые пары выглядели как межузловые.
+		// Приёмы уже выставлены, поэтому барьер не задерживает передачу,
+		// а отметка t0 снимается после него.
+		mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(iteration)");
+
 		// Receiver-side measurement starts once, immediately before the
 		// exchange phase. It must not depend on src: indexing a per-dst t0
 		// by src made the reported latency depend on rank traversal order.

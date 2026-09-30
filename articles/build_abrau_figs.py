@@ -30,15 +30,17 @@ b.LINKS = [
     ("nvlink", "NVLink, внутри узла G8600 V7",
      dict(color=GREEN, ls="-", marker="^", mfc=GREEN)),
 ]
+# Порог по умолчанию — поверх остальных тонкой линией с мелкими маркерами:
+# его кривая совпадает то с порогом 32M, то с порогом 0 (см. build_asvk_figs).
 b.THRESHOLDS = [
     ("default", "auto", "auto, порог по умолчанию",
-     dict(color="#e07b00", ls="-", marker="o", mfc="#e07b00")),
+     dict(color="#e07b00", ls="-", lw=1.0, marker="o", ms=2.8, mfc="#e07b00", zorder=5)),
     ("0", "auto", "auto, порог 0",
-     dict(color=BLUE, ls="-", marker="s", mfc=BLUE)),
+     dict(color=BLUE, ls="-", lw=1.4, marker="s", ms=5.0, mfc="white", zorder=3)),
     ("32M", "auto", "auto, порог 32M",
-     dict(color="#8e44ad", ls="-", marker="D", mfc="#8e44ad")),
-    ("0", "host", "host",
-     dict(color="0.35", ls="--", marker="^", mfc="white")),
+     dict(color="#8e44ad", ls="-", lw=1.4, marker="D", ms=5.0, mfc="white", zorder=2)),
+    ("0", "host", "host, порог 0",
+     dict(color="0.35", ls="--", lw=1.2, marker="^", ms=4.6, mfc="white", zorder=4)),
 ]
 b.FILL.update({"GPU": "#d4f0e3", "RAM": "#fde2c4", "NIC": "#d6e6f7"})
 
