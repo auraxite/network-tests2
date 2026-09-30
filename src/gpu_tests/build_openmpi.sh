@@ -4,7 +4,9 @@ set -euo pipefail
 
 # ==== Настройки — правь тут при необходимости ====
 PARTITION="${PARTITION:-intel-a100-pci5}"
-BUILD_JOBS="${BUILD_JOBS:-4}"
+# 4 ядер не хватало: сборка обрывалась по лимиту времени до make install,
+# и в ~/opt оставалась старая libmpi.
+BUILD_JOBS="${BUILD_JOBS:-16}"
 OMPI_VERSION="${OMPI_VERSION:-5.0.10}"
 OMPI_PREFIX="${OMPI_PREFIX:-$HOME/opt/openmpi-${OMPI_VERSION}}"
 UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
@@ -58,5 +60,5 @@ echo "Запускаю сборку OpenMPI ${OMPI_VERSION} одной джоб�
 export OMPI_VERSION OMPI_PREFIX UCX_PATH CUDA_PATH SRC_DIR BUILD_JOBS
 
 srun --partition="${PARTITION}" --nodes=1 --ntasks=1 \
-	--cpus-per-task="${BUILD_JOBS}" --gres=gpu:1 --time=01:00:00 \
+	--cpus-per-task="${BUILD_JOBS}" --gres=gpu:1 --time=02:00:00 \
 	--job-name=openmpi-build bash "${SCRIPT_DIR}/_openmpi_build_job.sh"

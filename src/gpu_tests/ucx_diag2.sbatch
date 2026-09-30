@@ -73,4 +73,10 @@ echo "=== 2. Сообщения pml ucx"
 run step1node -N1 -n2 --ntasks-per-node=2
 run step2node -N2 -n4
 
+# Обход без пересборки: хранилище данных PMIx-клиента hash вместо shmem.
+# Если адреса станут по 322 байта и пары внутри узла ~80 мкс — причина в
+# том, как gds/shmem отдаёт данные с областью видимости «свой узел».
+echo "=== 3. То же с PMIX_MCA_gds=hash"
+PMIX_MCA_gds=hash run step2node_gdshash -N2 -n4
+
 echo "=== DONE"
