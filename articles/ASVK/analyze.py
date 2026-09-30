@@ -11,7 +11,7 @@ import statistics
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-RESULTS = REPO / "src" / "gpu_tests" / "results"
+RESULTS = REPO / "src" / "gpu_tests" / "results_1_to_1"
 # Прогон 30.09.2026: G5500 V7 — узлы g5500-1 и g5500-2, G8600 V7 — узел g8600-1.
 SOURCES = {
     "default": (RESULTS / "results_pci5_default", RESULTS / "results_sxm_default"),

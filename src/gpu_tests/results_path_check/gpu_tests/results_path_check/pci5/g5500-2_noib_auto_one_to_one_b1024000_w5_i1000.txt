@@ -1,0 +1,31 @@
+Env: auto
+Mode: one_to_one
+Transport: mpi_ucx
+Timer: mpi
+Bytes: 1024000
+Warmup: 5
+Iters: 1000
+Ranks: 2, total visible GPUs: 8
+Rank map:
+  r0 hostname=g5500-2.hpc.frccsc.ru local_gpu=0 visible_gpus=4 pci=0000:56:00.0 nic=mlx5_0
+  r1 hostname=g5500-2.hpc.frccsc.ru local_gpu=1 visible_gpus=4 pci=0000:57:00.0 nic=mlx5_0
+CUDA-aware MPI: yes
+UCX config (effective after MPI_Init):
+  UCX_TLS = cuda_copy,cuda_ipc,sm,cma,self
+  UCX_RNDV_THRESH = 0
+  UCX_IB_GPU_DIRECT_RDMA = y
+  UCX_RNDV_SCHEME = auto
+  UCX_MEMTYPE_CACHE = <not set>
+  UCX_NET_DEVICES = all
+  UCX_LOG_LEVEL = <not set>
+Route:
+  intra-node: UCX-auto         (UCX may use CUDA IPC or NVLink if available)
+  inter-node: UCX rendezvous   (forced for all sizes by UCX_RNDV_THRESH=0)
+                 WARNING: rendezvous для мелких сообщений даёт
+                 лишнюю латентность — auto проиграет host на
+                 малых размерах. Убери UCX_RNDV_THRESH=0.
+pair 2.0 -> 2.0 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 2.0 -> 2.1 avg_us=17.904 med_us=17.671 min_us=16.490 max_us=33.319 var_us=1.922 std_us=1.386
+pair 2.1 -> 2.0 avg_us=18.084 med_us=17.895 min_us=16.581 max_us=33.614 var_us=2.219 std_us=1.490
+pair 2.1 -> 2.1 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+TotalTimeSec: 0.059

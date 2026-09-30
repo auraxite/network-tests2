@@ -44,9 +44,12 @@ static const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 
 /* Номер ранга внутри узла по переменным лаунчера. -1, если не нашли. */
 static int env_local_rank() {
+	// OMPI_COMM_WORLD_LOCAL_RANK первым: под mpirun внутри задания Slurm
+	// процессы наследуют SLURM_LOCALID служебного процесса (у всех 0), а
+	// под srun переменная OMPI_* до MPI_Init не задана.
 	static const char *const vars[] = {
-		"SLURM_LOCALID",
 		"OMPI_COMM_WORLD_LOCAL_RANK",
+		"SLURM_LOCALID",
 		"PMI_LOCAL_RANK",
 		"MV2_COMM_WORLD_LOCAL_RANK",
 	};

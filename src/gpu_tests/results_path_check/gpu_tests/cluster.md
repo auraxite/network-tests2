@@ -1,0 +1,23 @@
+cd ~/network-tests2/src/gpu_tests
+sh build.sh
+
+# В кластере (сделать один раз)
+
+mkdir -p "$HOME/opt/openmpi-5.0.10"
+./configure --prefix="$HOME/opt/openmpi-5.0.10" --disable-mpi-fortran --without-java
+make -j$(nproc)
+make install
+rm -rf ~/ompi-5.0.10
+
+cd ~
+wget https://downloads.unidata.ucar.edu/netcdf-c/4.9.2/netcdf-c-4.9.2.tar.gz
+tar -xzf netcdf-c-4.9.2.tar.gz
+cd netcdf-c-4.9.2
+mkdir -p "$HOME/opt/netcdf-c-4.9.2"
+./configure --prefix="$HOME/opt/netcdf-c-4.9.2" --disable-netcdf-4 --disable-byterange
+make -j$(nproc)
+make install
+rm rf ~/netcdf-c-4.9.2
+
+cd ~/network-tests2/src/gpu_tests
+sh py.sh

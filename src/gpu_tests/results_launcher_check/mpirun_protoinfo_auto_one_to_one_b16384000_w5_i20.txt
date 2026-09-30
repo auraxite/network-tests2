@@ -1,0 +1,42 @@
+Env: host
+Mode: one_to_one
+Transport: mpi_ucx
+Timer: mpi
+Bytes: 16384000
+Warmup: 5
+Iters: 20
+Ranks: 4, total visible GPUs: 16
+Rank map:
+  r0 hostname=g5500-2.hpc.frccsc.ru local_gpu=0 visible_gpus=4 pci=0000:56:00.0 nic=mlx5_0
+  r1 hostname=g5500-2.hpc.frccsc.ru local_gpu=1 visible_gpus=4 pci=0000:57:00.0 nic=mlx5_0
+  r2 hostname=g5500-4.hpc.frccsc.ru local_gpu=0 visible_gpus=4 pci=0000:56:00.0 nic=mlx5_0
+  r3 hostname=g5500-4.hpc.frccsc.ru local_gpu=1 visible_gpus=4 pci=0000:57:00.0 nic=mlx5_0
+CUDA-aware MPI: no
+UCX config (effective after MPI_Init):
+  UCX_TLS = cuda_copy,cuda_ipc,rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5,cma,sm,self
+  UCX_RNDV_THRESH = 0
+  UCX_IB_GPU_DIRECT_RDMA = y
+  UCX_RNDV_SCHEME = auto
+  UCX_MEMTYPE_CACHE = <not set>
+  UCX_NET_DEVICES = mlx5_0:1
+  UCX_LOG_LEVEL = <not set>
+Route:
+  intra-node: host-staging     (explicit D2H + MPI + H2D)
+  inter-node: host-staging     (explicit D2H + MPI + H2D)
+pair 2.0 -> 2.0 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 2.0 -> 2.1 avg_us=1442.707 med_us=1474.789 min_us=831.983 max_us=1476.982 var_us=20664.305 std_us=143.751
+pair 2.0 -> 4.0 avg_us=2666.537 med_us=2697.706 min_us=2057.873 max_us=2705.709 var_us=20532.103 std_us=143.290
+pair 2.0 -> 4.1 avg_us=2819.719 med_us=2851.214 min_us=2213.726 max_us=2854.816 var_us=20346.106 std_us=142.640
+pair 2.1 -> 2.0 avg_us=1567.053 med_us=1597.093 min_us=978.414 max_us=1610.870 var_us=19206.425 std_us=138.587
+pair 2.1 -> 2.1 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 2.1 -> 4.0 avg_us=3008.757 med_us=3040.475 min_us=2342.886 max_us=3099.972 var_us=24745.335 std_us=157.306
+pair 2.1 -> 4.1 avg_us=3152.070 med_us=3194.296 min_us=2344.141 max_us=3198.382 var_us=36164.789 std_us=190.170
+pair 4.0 -> 2.0 avg_us=2616.834 med_us=2645.652 min_us=2030.987 max_us=2659.849 var_us=19036.571 std_us=137.973
+pair 4.0 -> 2.1 avg_us=2827.365 med_us=2859.832 min_us=2192.053 max_us=2871.293 var_us=22373.723 std_us=149.578
+pair 4.0 -> 4.0 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 4.0 -> 4.1 avg_us=1504.732 med_us=1538.168 min_us=867.203 max_us=1539.627 var_us=22517.852 std_us=150.059
+pair 4.1 -> 2.0 avg_us=2949.861 med_us=2980.669 min_us=2363.450 max_us=2981.948 var_us=19051.667 std_us=138.028
+pair 4.1 -> 2.1 avg_us=3153.891 med_us=3195.357 min_us=2365.647 max_us=3198.488 var_us=34423.523 std_us=185.536
+pair 4.1 -> 4.0 avg_us=1607.471 med_us=1638.144 min_us=1006.891 max_us=1651.423 var_us=19992.251 std_us=141.394
+pair 4.1 -> 4.1 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+TotalTimeSec: 0.789
