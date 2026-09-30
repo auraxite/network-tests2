@@ -31,7 +31,7 @@ OUT = Path(__file__).resolve().parent / "kibizov_421"
 PREFIX = "kibizov_421_"
 MM = 1 / 25.4
 WIDTH_IN = 110 * MM
-PLOT_HEIGHT_IN = 1.95
+PLOT_HEIGHT_IN = 1.75
 PREVIEW = Path(sys.argv[sys.argv.index("--preview") + 1]) if "--preview" in sys.argv else None
 
 CMU_DIR = Path(r"C:\Users\user\AppData\Local\Programs\MiKTeX\fonts\opentype\public\cm-unicode")
@@ -257,7 +257,7 @@ PATHS = [
      [(0, "GPU"), (1, "RAM"), (2, "NIC"), (3, "NIC"), (4, "RAM"), (5, "GPU")],
      ["PCIe", "PCIe", NET, "PCIe", "PCIe"]),
 ]
-ROW_H = 12.0
+ROW_H = 10.5
 
 
 def fig_paths():
@@ -301,9 +301,95 @@ def fig_paths():
     save(fig, "paths", tight=False)
 
 
+# --- Архитектура узла с несколькими GPU --------------------------------------
+# Обобщённая схема по мотивам схем узлов NVIDIA с GPU: два процессора с
+# межпроцессорным соединением, коммутаторы PCIe, GPU, связанные NVLink, и
+# сетевые адаптеры, выходящие на коммутатор InfiniBand или Ethernet. Не
+# описывает конкретный узел кластера. Подписи блоков английские, как на
+# схеме путей.
+def fig_arch():
+    width, height = 110.0, 58.0
+    fig = plt.figure(figsize=(WIDTH_IN, height * MM))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, width)
+    ax.set_ylim(0, height)
+    ax.axis("off")
+
+    PCIE = dict(color="black", lw=0.6)
+    NVL = dict(color="0.45", lw=2.6, solid_capstyle="butt")
+    UPI = dict(color="black", lw=0.8, ls=(0, (3, 2)))
+    NET_STYLE = dict(color="black", lw=1.4, ls=(0, (5, 1.5, 1, 1.5)))
+
+    def box(x, y, w, h, label, fc="white", fs=7.5):
+        ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h,
+                                    boxstyle="round,pad=0,rounding_size=0.8",
+                                    fc=fc, ec="black", lw=0.6, zorder=3))
+        ax.text(x, y, label, ha="center", va="center", fontsize=fs, zorder=4)
+
+    def line(xs, ys, style):
+        ax.plot(xs, ys, zorder=2, **style)
+
+    # Рамка узла
+    ax.add_patch(FancyBboxPatch((1, 10), 83, 44, boxstyle="round,pad=0,rounding_size=1.5",
+                                fc="none", ec="0.35", lw=0.6, ls=(0, (2, 1.5)), zorder=1))
+    ax.text(43, 52.6, "Узел", ha="center", va="top", fontsize=8, fontweight="bold")
+
+    y_cpu, y_sw, y_gpu, y_nvl = 46, 35, 24, 15.5
+    x_ram0, x_cpu0, x_cpu1, x_ram1 = 11, 31, 55, 75
+    gpus = [16, 32, 52, 68]
+
+    # Процессоры, память, межпроцессорное соединение
+    box(x_ram0, y_cpu, 11, 6, "RAM", fc="0.82")
+    box(x_ram1, y_cpu, 11, 6, "RAM", fc="0.82")
+    box(x_cpu0, y_cpu, 11, 6, "CPU")
+    box(x_cpu1, y_cpu, 11, 6, "CPU")
+    line([x_ram0 + 5.5, x_cpu0 - 5.5], [y_cpu, y_cpu], dict(color="0.4", lw=1.0))
+    line([x_cpu1 + 5.5, x_ram1 - 5.5], [y_cpu, y_cpu], dict(color="0.4", lw=1.0))
+    line([x_cpu0 + 5.5, x_cpu1 - 5.5], [y_cpu, y_cpu], UPI)
+
+    # Коммутаторы PCIe и сетевые адаптеры
+    for xc, xn in ((x_cpu0, x_ram0), (x_cpu1, x_ram1)):
+        box(xc, y_sw, 13, 6.5, "PCIe\nswitch", fs=6.5)
+        line([xc, xc], [y_cpu - 3, y_sw + 3.25], PCIE)
+        box(xn, y_sw, 11, 6, "NIC")
+        side = 1 if xn > xc else -1
+        line([xc + side * 6.5, xn - side * 5.5], [y_sw, y_sw], PCIE)
+
+    # GPU: каждый подключён к коммутатору PCIe своего процессора
+    for i, xg in enumerate(gpus):
+        box(xg, y_gpu, 10, 6, "GPU")
+        xs = x_cpu0 if i < 2 else x_cpu1
+        line([xg, xg, xs + (xg - xs) * 0.35, xs + (xg - xs) * 0.35],
+             [y_gpu + 3, y_gpu + 6.5, y_gpu + 6.5, y_sw - 3.25], PCIE)
+        line([xg, xg], [y_gpu - 3, y_nvl], NVL)
+    line([gpus[0] - 1.3, gpus[-1] + 1.3], [y_nvl, y_nvl], NVL)
+    ax.text((gpus[1] + gpus[2]) / 2, y_nvl - 1.3, "NVLink или NVSwitch",
+            ha="center", va="top", fontsize=6.5)
+
+    # Сеть: оба адаптера выходят на коммутатор InfiniBand / Ethernet
+    x_net, y_net = 98, y_sw
+    box(x_net, y_net, 19, 9, "InfiniBand\nили Ethernet\nswitch", fs=6)
+    line([x_ram1 + 5.5, x_net - 9.5], [y_sw, y_sw], NET_STYLE)
+    line([x_ram0 - 5.5, 3.2, 3.2, x_net, x_net],
+         [y_sw, y_sw, 56.5, 56.5, y_net + 4.5], NET_STYLE)
+    ax.add_patch(FancyArrowPatch((x_net, y_net - 4.5), (x_net, 21),
+                                 arrowstyle="-|>", mutation_scale=6, lw=1.4,
+                                 color="black"))
+    ax.text(x_net, 20, "к другим\nузлам", ha="center", va="top", fontsize=6.5)
+
+    # Легенда
+    items = [("NVLink", NVL), ("PCIe", PCIE), ("межпроцессорный\nинтерфейс", UPI),
+             ("InfiniBand /\nEthernet", NET_STYLE)]
+    for x, (label, style) in zip((2, 24, 44, 78), items):
+        line([x, x + 7], [4, 4], style)
+        ax.text(x + 8.5, 4, label, ha="left", va="center", fontsize=6.5)
+    save(fig, "arch", tight=False)
+
+
 if __name__ == "__main__":
     # Графики среды host и порогов для NVLink в статью не вошли, их цифры
     # приведены в тексте. Функции оставлены для отдельного построения.
+    fig_arch()
     fig_paths()
     fig_thresh("ib", "thresh_ib")
     fig_speedup()

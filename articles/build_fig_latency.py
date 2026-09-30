@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
 
-RESULTS = Path(__file__).resolve().parents[1] / "src" / "gpu_tests" / "results_1_to_1"
+RESULTS = Path(__file__).resolve().parent / "ASVK" / "data" / "results_1_to_1"
 ENV = sys.argv[1] if len(sys.argv) > 1 else "auto"
 # Порог UCX_RNDV_THRESH: default — не задан, 0 и 32M — задан при запуске.
 # Прогон 30.09.2026: G5500 V7 — узлы g5500-1 и g5500-2, G8600 V7 — g8600-1.

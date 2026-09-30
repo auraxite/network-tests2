@@ -1,0 +1,45 @@
+Env: auto
+Mode: one_to_one
+Transport: mpi_ucx
+Timer: mpi
+Bytes: 512000
+Warmup: 5
+Iters: 2000
+Ranks: 4, total visible GPUs: 16
+Rank map:
+  r0 hostname=g8600-1.hpc.frccsc.ru local_gpu=0 visible_gpus=4 pci=0000:1A:00.0 nic=mlx5_3
+  r1 hostname=g8600-1.hpc.frccsc.ru local_gpu=1 visible_gpus=4 pci=0000:1E:00.0 nic=mlx5_3
+  r2 hostname=g8600-1.hpc.frccsc.ru local_gpu=2 visible_gpus=4 pci=0000:49:00.0 nic=mlx5_7
+  r3 hostname=g8600-1.hpc.frccsc.ru local_gpu=3 visible_gpus=4 pci=0000:4D:00.0 nic=mlx5_7
+CUDA-aware MPI: yes
+UCX config (effective after MPI_Init):
+  UCX_TLS = cuda_copy,cuda_ipc,rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5,cma,sm,self
+  UCX_RNDV_THRESH = 0
+  UCX_IB_GPU_DIRECT_RDMA = y
+  UCX_RNDV_SCHEME = auto
+  UCX_MEMTYPE_CACHE = <not set>
+  UCX_NET_DEVICES = mlx5_3:1
+  UCX_LOG_LEVEL = <not set>
+Route:
+  intra-node: UCX-auto         (UCX may use CUDA IPC or NVLink if available)
+  inter-node: UCX rendezvous   (forced for all sizes by UCX_RNDV_THRESH=0)
+                 WARNING: rendezvous для мелких сообщений даёт
+                 лишнюю латентность — auto проиграет host на
+                 малых размерах. Убери UCX_RNDV_THRESH=0.
+pair 1.0 -> 1.0 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 1.0 -> 1.1 avg_us=19.611 med_us=19.419 min_us=16.118 max_us=44.695 var_us=6.896 std_us=2.626
+pair 1.0 -> 1.2 avg_us=15.396 med_us=15.170 min_us=14.332 max_us=30.020 var_us=0.980 std_us=0.990
+pair 1.0 -> 1.3 avg_us=15.373 med_us=15.127 min_us=14.066 max_us=26.675 var_us=1.041 std_us=1.020
+pair 1.1 -> 1.0 avg_us=15.530 med_us=15.254 min_us=14.142 max_us=25.822 var_us=1.195 std_us=1.093
+pair 1.1 -> 1.1 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 1.1 -> 1.2 avg_us=15.627 med_us=15.423 min_us=14.439 max_us=34.738 var_us=0.994 std_us=0.997
+pair 1.1 -> 1.3 avg_us=15.707 med_us=15.503 min_us=14.252 max_us=42.704 var_us=1.431 std_us=1.196
+pair 1.2 -> 1.0 avg_us=16.118 med_us=15.842 min_us=15.056 max_us=43.722 var_us=1.563 std_us=1.250
+pair 1.2 -> 1.1 avg_us=16.190 med_us=16.006 min_us=15.253 max_us=23.848 var_us=0.797 std_us=0.893
+pair 1.2 -> 1.2 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+pair 1.2 -> 1.3 avg_us=16.779 med_us=16.061 min_us=14.903 max_us=1033.506 var_us=518.632 std_us=22.774
+pair 1.3 -> 1.0 avg_us=17.463 med_us=17.183 min_us=15.622 max_us=65.255 var_us=2.873 std_us=1.695
+pair 1.3 -> 1.1 avg_us=17.611 med_us=17.391 min_us=15.996 max_us=35.118 var_us=1.376 std_us=1.173
+pair 1.3 -> 1.2 avg_us=17.615 med_us=17.349 min_us=15.989 max_us=44.937 var_us=1.973 std_us=1.405
+pair 1.3 -> 1.3 avg_us=0.000 med_us=0.000 min_us=0.000 max_us=0.000 var_us=0.000 std_us=0.000
+TotalTimeSec: 0.502
