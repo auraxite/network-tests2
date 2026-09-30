@@ -1,3 +1,0 @@
-matplotlib>=3.5
-numpy>=1.20
-netCDF4>=1.6

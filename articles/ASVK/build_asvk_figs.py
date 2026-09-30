@@ -59,11 +59,11 @@ plt.rcParams.update({
 BLACK, DARK, MID = "0.0", "0.3", "0.5"
 
 LINKS = [
-    ("ib", "PCIe + InfiniBand, между узлами G5500 V7",
+    ("ib", "между узлами G5500 V7",
      dict(color=BLACK, ls="-", marker="o", mfc=BLACK)),
-    ("pcie", "PCIe, внутри узла G5500 V7",
+    ("pcie", "внутри узла G5500 V7",
      dict(color=DARK, ls="--", marker="s", mfc="white")),
-    ("nvlink", "NVLink, внутри узла G8600 V7",
+    ("nvlink", "внутри узла G8600 V7",
      dict(color=MID, ls="-.", marker="^", mfc=MID)),
 ]
 # Кривая порога по умолчанию до 256 КБ совпадает с кривой порога выше 16 МБ,
