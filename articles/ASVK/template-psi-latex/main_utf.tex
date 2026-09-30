@@ -1,0 +1,203 @@
+%% ---------------------------------------------------------------------------
+\documentclass[openany, twoside, a5paper, 10pt]{extbook}
+%% ---------------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[english, russian]{babel}
+%% ---------------------------------------------------------------------------
+\usepackage{indentfirst}
+\frenchspacing
+\raggedbottom
+%% ---------------------------------------------------------------------------
+\usepackage{url}
+%% ---------------------------------------------------------------------------
+\usepackage{ifpdf}
+\ifpdf
+\usepackage[pdftex]{graphicx}
+\usepackage{cmap}
+\pdfcompresslevel=9
+\DeclareGraphicsExtensions{.pdf,.png,.jpg}
+\else
+\usepackage[dvips]{graphicx}
+\DeclareGraphicsExtensions{.eps}
+\fi
+% \graphicspath{ {./images/} }
+%% ---------------------------------------------------------------------------
+\usepackage{float}
+\restylefloat{table}
+\usepackage{multirow}
+%% ---------------------------------------------------------------------------
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{chngcntr}
+\usepackage{amscd}
+\usepackage{bm}
+\usepackage{caption}
+\usepackage{makecell}
+\usepackage{nameref}
+\usepackage{array}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\usepackage{import}
+\usepackage{listings}
+\usepackage[section]{placeins}
+\usepackage{ragged2e}
+\usepackage{varwidth}
+\usepackage{adjustbox}
+\hypersetup{breaklinks=true} % set automatically by hyperref?
+%% ---------------------------------------------------------------------------
+\usepackage[nobottomtitles*]{titlesec}
+\counterwithout{equation}{chapter} % remove the chapter number
+\makeatletter
+\@addtoreset{equation}{chapter} % reset quation number every chapter
+\makeatother
+%% ---------------------------------------------------------------------------
+\titleformat{\section}[block]{\rmfamily\Large\bfseries\filcenter}{\thesection.}{1em}{}
+%% ---------------------------------------------------------------------------
+\sloppy
+%% ---------------------------------------------------------------------------
+% a5paper: 148 x 210
+% print area: 110 x 180
+% top = bottom = (210 - 180) / 2 = 15
+% left = right = (148 - 110) / 2 = 19
+%\usepackage[% a4paper settings
+%left=5cm,%
+%top=5.85cm,%
+%right=5cm,%
+%bottom=5.85cm,%
+%headsep=0.2cm,%
+%footskip=1cm,%
+%]{geometry}
+%% ---------------------------------------------------------------------------
+% a4paper: 210 x 298
+% a5paper: 148 x 210
+% diff:    62  x 88
+\usepackage[% a5paper settings
+left=1.9cm,%
+top=1.45cm,%
+right=1.9cm,%
+bottom=1.45cm,%
+headsep=0.2cm,%
+footskip=1cm,%
+]{geometry}
+%% ---------------------------------------------------------------------------
+\newpagestyle{lvkpagestyle}{
+    \sethead{}{}{}
+    \setfoot{}{\usepage}{}
+}
+\pagestyle{lvkpagestyle}
+%% ---------------------------------------------------------------------------
+\makeatletter
+\newcommand\Title[2]{%
+    %\par
+    \begin{centering}
+        \medskip
+        {
+            \textbf{#1} \\
+        }
+        {
+            \Large
+            \textbf{\textsc{#2}} \\
+        }
+        \bigskip
+    \end{centering}
+    \@afterheading
+}
+\makeatother
+%% ---------------------------------------------------------------------------
+\makeatletter
+\newcommand{\References}{
+    \medskip
+    \section*{Литература}
+    \nopagebreak
+    \medskip
+    \@afterheading
+}
+\makeatother
+
+\makeatletter
+\newcommand{\ReferencesEng}{
+    \medskip
+    \section*{References}
+    \nopagebreak
+    \medskip
+    \@afterheading
+}
+\makeatother
+%% ---------------------------------------------------------------------------
+\makeatletter
+\newcommand{\unchapter}[1]{%
+    \begingroup
+    \let\@makechapterhead\@gobble % make \@makechapterhead do nothing
+    \chapter{#1}
+    \endgroup
+}
+\makeatother
+%% ---------------------------------------------------------------------------
+\makeatletter
+\newcommand{\unchaptern}[1]{%
+    \begingroup
+    \let\@makechapterhead\@gobble % make \@makechapterhead do nothing
+    \chapter{#1}
+    \endgroup
+}
+\makeatother
+%% ---------------------------------------------------------------------------
+\makeatletter
+\newcommand{\startgroup}[1]{\addtocontents{toc}{\contentsline{chapter}{#1}}}
+\makeatother
+%% ---------------------------------------------------------------------------
+\renewcommand*\thesection{\arabic{section}}
+\newcommand{\AddRefPrefix}[1]{
+    \renewcommand{\PageRef}[1]{\pageref{#1##1}}
+    \renewcommand{\LabelRef}[1]{\ref{#1##1}}
+    \renewcommand{\Label}[1]{\label{#1##1}}
+}
+%\newcommand{\CiteRef}[1]{[\LabelRef{#1}]} 
+\newcommand{\LabelRef}[1]{\ref{#1}}
+\newcommand{\PageRef}[1]{\pageref{#1}}
+\newcommand{\Label}[1]{\label{#1}}
+\newcommand{\CiteRef}[1]{%
+    \begingroup
+    \newtoggle{citefirst}
+    \toggletrue{citefirst}%
+    \newcommand{\helper}[1]{%
+        \iftoggle{citefirst}
+            {\togglefalse{citefirst}}
+            {, }%
+        \LabelRef{##1}%
+    }%
+    [\forcsvlist{\helper}{#1}]%
+    \endgroup
+}
+%% ---------------------------------------------------------------------------
+\renewcommand{\thetable}{\arabic{table}}
+\renewcommand{\thefigure}{\arabic{figure}}
+%% ---------------------------------------------------------------------------
+\usepackage{pdfpages}
+%% ---------------------------------------------------------------------------
+\begin{document}
+    \renewcommand{\thelstlisting}{\arabic{lstlisting}}
+    \setcounter{page}{3}
+    \setcounter{tocdepth}{0}
+    \tableofcontents
+    \newpage
+    %% ---------------------------------------------------------------------------
+
+    \import{auxiliary/}{ot_redcollegii}
+    %% ---------------------------------------------------------------------------
+
+    % Stretch document to width
+    \justifying
+    \tolerance=1
+    \emergencystretch=\maxdimen
+    \hyphenpenalty=10000
+    \hbadness=10000
+    %% ---------------------------------------------------------------------------
+
+    \unchapter{\textnormal{\textit{Иванов~И.И.}} Первая статья в сборнике}
+    \AddRefPrefix{th1}
+    \import{articles/01-Ivanov/}{article.tex}
+
+
+\end{document}
+%% ---------------------------------------------------------------------------

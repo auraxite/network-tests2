@@ -1,0 +1,15 @@
+# Текстовые файлы хранятся и выкачиваются с LF на всех платформах.
+* text=auto eol=lf
+
+# cmd.exe не запускает .bat с LF-окончаниями.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.pdf binary
+*.eps binary
+*.png binary
+*.jpg binary
+*.doc binary
+*.docx binary
+*.zip binary
+*.nc binary

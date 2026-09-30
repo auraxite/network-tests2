@@ -70,5 +70,6 @@ wire_journal_48_53.xlsx
 *.fdb_latexmk
 *.synctex.gz
 *.sif
+*.codex
 
 src/gpu_tests/results

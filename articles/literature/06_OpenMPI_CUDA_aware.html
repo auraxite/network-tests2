@@ -1,0 +1,1800 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="keywords" content="MPI, Open MPI, Open-MPI, OpenMPI, parallel computing, HPC, high performance computing, beowulf, linux, cluster, parallel, distributed">
+  <link rel="shortcut icon" href="../favicon.ico" />
+<style type="text/css">
+BODY          {	background		: white ;
+		color			: black ;
+		font-family		: verdana,arial,helvetica ;
+		font-size		: 12px ; }
+
+td	      { background-color	: white ;
+		color			: black ;
+		font-family		: verdana,arial,helvetica ; }
+
+td.buttonbox  {	font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white;
+		background              : url(../images/open-mpi-button-bg.gif); }
+
+td.navbarbox  {	font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white ;
+		background-color	: #E0E0E0 ; }
+
+td.navbartop  {	font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white ;
+		background-color	: #E0E0E0 ; }
+
+td.navbartopabout {
+		height			: 17px ;
+                font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white ;
+ 		background-color	: #009000;
+		background-image        : url(../images/green-button.gif) ;
+}
+
+td.navbartopusing {
+		height			: 17px ;
+                font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white ;
+		background-color	: #b08000;
+		background-image        : url(../images/yellow-button.gif) ;
+}
+td.navbartopinstalling {
+		height			: 17px ;
+                font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white ;
+		background-color	: #a00000;
+		background-image        : url(../images/red-button.gif) ;
+}
+td.navbartopcommunity {
+		height			: 17px ;
+                font-size		: 11px ;
+                font-weight		: bold ;
+		color			: white ;
+		background-color	: #0000a0;
+		background-image        : url(../images/blue-button.gif) ;
+}
+
+td.glanceitemsysadmin {
+		background-color	: #b0e0a0;
+}
+td.glanceitemprogrammers {
+		background-color	: #f0e080;
+}
+td.glanceitemusers {
+		background-color	: #ffa080;
+}
+td.glanceitemresearchers {
+		background-color	: #a0b0ff;
+}
+td.glanceitemall {
+  		background-color	: black ;
+		color			: #ffffff;
+}
+
+td.navbarsub  { font-size		: 11px ;
+                color			: black ;
+                background-color	: #F8F8F8 ; }
+td.navbarsub2 {	font-size		: 11px ;
+		font-weight		: normal;
+		color			: black ;
+                background-color	: #F8F8F8 ; }
+td.navbarsub2b {	font-size		: 11px ;
+		font-weight		: bold;
+		color			: black ;
+                background-color	: #F8F8F8 ; }
+td.navbarsub3 {	font-size		: 11px ;
+		font-weight		: normal;
+		color			: black ;
+                background-color	: #F8F8F8 ; }
+td.quickbar   { font-size		: 11px ;
+		font-weight		: bold ;
+		color			: black ;
+		background-color	: #E0E0E0 ; }
+td.footer     { font-size		: 11px ;
+		font-weight		: bold ;
+		color			: black ;
+		background-color	: #E0E0E0 ; }
+
+
+a.navbartop   { text-decoration : none ; color: white ; }
+a.glancetitle { text-decoration : none ; color: black ; }
+a.glanceitem  { text-decoration : none ; color: black ; }
+a.glancetext  { text-decoration : none ; color: black ; }
+a.navbarsub   { text-decoration : none ; color: black ; }
+a.navbarsub2  { text-decoration : none ; color: black ; }
+a.navbarsub2b { text-decoration : none ; color: black ; }
+a.navbarsub3  { text-decoration : none ; color: black ; }
+a.quickbar    { text-decoration : none ; color: black ; }
+
+a.glanceitemsysadmin  { text-decoration : none ; color: black ; }
+a.glanceitemprogrammers  { text-decoration : none ; color: black ; }
+a.glanceitemusers  { text-decoration : none ; color: black ; }
+a.glanceitemresearchers  { text-decoration : none ; color: black ; }
+a.glanceitemall  { text-decoration : none ; color: white ; }
+
+td.logobox  { background          : white ;
+              color               : #FF2222 ; }
+
+td.titlebox { background          : white ;
+              color               : black ; }
+
+td.newsbar   { background-color   : #E0E0E0 ;
+               text-align         : center ;  }
+td.newstitle { background-color   : #DD3333 ;
+               color              : white ;
+               text-align         : center ;  }
+td.newstext  { font-size          : small ;
+               color              : #333333 ; }
+
+.newstitle {   	color           : #333333 ;
+		font-weight	: bold ;
+		font-size 	: 12px ; }
+.newstext {   	color           : black;
+		font-weight	: normal ;
+		font-size 	: 11px ; }
+
+.glancetitle { font-size	: 14px ;
+		 font-weight	: bold ;
+ 		 background-color   : #A00000 ;
+                 color              : black ;
+                 text-align         : center ;  }
+
+td.glancebox  {	font-size		: 11px ;
+                font-weight		: bold ;
+		color			: black ;
+		background-color	: #F8F8F8 ; }
+
+td.glancetitle { font-size	: 14px ;
+		 font-weight	: bold ;
+                 color              : black ;
+ 		 background-color   : #F8F8F8 ;
+                 text-align         : left ; }
+
+td.glanceitem {  font-size	: 11px ;
+		 font-weight	: bold ;
+                 color              : black ;
+                 background-color   : #E0E0E0 ;
+                 text-align         : left ;  }
+
+td.glancetext  { font-size          : 11px ;
+		 font-weight		: normal ;
+                 color              : black ;
+                 background-color   : #F8F8F8 ; }
+
+p.small        { font-size           : small                ;
+                 font-family         : verdana,arial,helvetica ; }
+
+h1.doctitle   { text-align		: left ; }
+
+h3.frontpage    {	margin-bottom : 6px ;
+		margin-top : 6px ;
+		font-size: 16px;
+		font-weight: bold;
+}
+h4.frontpage    {	margin-bottom : 3px ;
+		margin-top : 3px ;
+		font-size: 14px;
+		font-weight: bold;
+}
+
+td.copyright  { font-size		: 11px ;
+		font-weight		: bold ;
+		color			: #333333   ;
+		background-color	: #E0E0E0 ; }
+
+td.mirror     { font-size		: 11px ;
+		font-weight		: bold ;
+		color			: #333333   ;
+		background-color	: #E0E0E0 ; }
+
+td.faq_question { font-weight		: bold ;
+		color			: #333333   ;
+		background-color	: #C0C0C0 ; }
+
+.faq_applies  {	color		: #777777 ;
+		font-weight     : normal; }
+
+.faq_title    { font-weight		: normal ;
+		color			: #333333   ; }
+
+.divider    {	color		: #777777 ;
+		font-family	: Verdana, Arial, sans-serif ;
+		font-size	: 10px ;
+		font-weight     : normal; }
+
+input.medium  { width		: 96px ;
+		height		: 15px ;
+		font-size	: 10px ;
+		text-align	: left ;
+		text-valign	: middle ;
+		padding-top	: 0px ;
+		margin-top	: 0px ;
+		margin-bottom	: 0px ; }
+
+input.buttonred{background	: #C0C0C0 ;
+		cursor		: hand ;
+		color		: #FFFFFF ;
+		height		: 1.3em ;
+		font-weight	: bold ;
+		padding		: 0px ;
+		margin		: 0px ;
+		border		: 0px none #000; }
+
+.quotelev1 {color : #990099}
+.quotelev2 {color : #ff7700}
+.quotelev3 {color : #007799}
+.quotelev4 {color : #95c500}
+
+td.example { background-color : #E0E0E0; }
+
+pre, .geshicode {
+    border: 1px solid #c0e6ff;
+    background-color: #e0e0e0;
+    color: #002;
+    margin:0;
+    font-size: 12px;
+    width:100%;
+}
+.geshicode pre {
+    border:none;
+    background-color:#e0e0e0;
+    font-weight:bold;
+}
+.geshicode .li2 td {
+    background-color:#e0e0e0;
+}
+.geshicode .li1 td {
+    background-color:#e0e0e0;
+}
+.geshicode td td {
+    padding:0 2px;
+}
+.geshicode td, .geshicode table {
+    width: 100%;
+}
+.geshicode td.ln {
+    border-right:2px solid #e0e8ef;
+}
+.geshicode .head {
+    text-align:center;
+    font-weight:bold;
+}
+td.ln {
+    background-color: #e0e0e0;
+}
+pre.de1 {
+    background-color: #e0e0e0;
+}
+/**
+ * GeSHi (C) 2004 - 2007 Nigel McNie, 2007 - 2014 Benny Baumann
+ * (http://qbnz.com/highlighter/ and http://geshi.org/)
+ */
+.bash .de1, .bash .de2 {font: normal normal 1em/1.2em monospace; margin:0; padding:0; background:none; vertical-align:top;}
+.bash  {font-family:monospace;}
+.bash .imp {font-weight: bold; color: red;}
+.bash li, .bash .li1 {font-weight: normal; vertical-align:top;}
+.bash .ln {width:1px;text-align:right;margin:0;padding:0 2px;vertical-align:top;}
+.bash .kw1 {color: #000000; font-weight: bold;}
+.bash .kw2 {color: #c20cb9; font-weight: bold;}
+.bash .kw3 {color: #7a0874; font-weight: bold;}
+.bash .co0 {color: #666666; font-style: italic;}
+.bash .co1 {color: #800000;}
+.bash .co2 {color: #cc0000; font-style: italic;}
+.bash .co3 {color: #000000; font-weight: bold;}
+.bash .co4 {color: #666666;}
+.bash .es1 {color: #000099; font-weight: bold;}
+.bash .es2 {color: #007800;}
+.bash .es3 {color: #007800;}
+.bash .es4 {color: #007800;}
+.bash .es5 {color: #780078;}
+.bash .es_h {color: #000099; font-weight: bold;}
+.bash .br0 {color: #7a0874; font-weight: bold;}
+.bash .sy0 {color: #000000; font-weight: bold;}
+.bash .st0 {color: #ff0000;}
+.bash .st_h {color: #ff0000;}
+.bash .nu0 {color: #000000;}
+.bash .re0 {color: #007800;}
+.bash .re1 {color: #007800;}
+.bash .re2 {color: #007800;}
+.bash .re4 {color: #007800;}
+.bash .re5 {color: #660033;}
+.bash span.xtra { display:block; }
+/**
+ * GeSHi (C) 2004 - 2007 Nigel McNie, 2007 - 2014 Benny Baumann
+ * (http://qbnz.com/highlighter/ and http://geshi.org/)
+ */
+.c .de1, .c .de2 {font: normal normal 1em/1.2em monospace; margin:0; padding:0; background:none; vertical-align:top;}
+.c  {font-family:monospace;}
+.c .imp {font-weight: bold; color: red;}
+.c li, .c .li1 {font-weight: normal; vertical-align:top;}
+.c .ln {width:1px;text-align:right;margin:0;padding:0 2px;vertical-align:top;}
+.c .kw1 {color: #b1b100;}
+.c .kw2 {color: #000000; font-weight: bold;}
+.c .kw3 {color: #000066;}
+.c .kw4 {color: #993333;}
+.c .co1 {color: #666666; font-style: italic;}
+.c .co2 {color: #339933;}
+.c .coMULTI {color: #808080; font-style: italic;}
+.c .es0 {color: #000099; font-weight: bold;}
+.c .es1 {color: #000099; font-weight: bold;}
+.c .es2 {color: #660099; font-weight: bold;}
+.c .es3 {color: #660099; font-weight: bold;}
+.c .es4 {color: #660099; font-weight: bold;}
+.c .es5 {color: #006699; font-weight: bold;}
+.c .br0 {color: #009900;}
+.c .sy0 {color: #339933;}
+.c .st0 {color: #ff0000;}
+.c .nu0 {color: #0000dd;}
+.c .nu6 {color: #208080;}
+.c .nu8 {color: #208080;}
+.c .nu12 {color: #208080;}
+.c .nu16 {color:#800080;}
+.c .nu17 {color:#800080;}
+.c .nu18 {color:#800080;}
+.c .nu19 {color:#800080;}
+.c .me1 {color: #202020;}
+.c .me2 {color: #202020;}
+.c span.xtra { display:block; }
+/**
+ * GeSHi (C) 2004 - 2007 Nigel McNie, 2007 - 2014 Benny Baumann
+ * (http://qbnz.com/highlighter/ and http://geshi.org/)
+ */
+.make .de1, .make .de2 {font: normal normal 1em/1.2em monospace; margin:0; padding:0; background:none; vertical-align:top;}
+.make  {font-family:monospace;}
+.make .imp {font-weight: bold; color: red;}
+.make li, .make .li1 {font-weight: normal; vertical-align:top;}
+.make .ln {width:1px;text-align:right;margin:0;padding:0 2px;vertical-align:top;}
+.make .kw1 {color: #666622; font-weight: bold;}
+.make .kw2 {color: #990000;}
+.make .co1 {color: #339900; font-style: italic;}
+.make .co2 {color: #000099; font-weight: bold;}
+.make .es0 {color: #000099; font-weight: bold;}
+.make .br0 {color: #004400;}
+.make .sy0 {color: #004400;}
+.make .st0 {color: #CC2200;}
+.make .nu0 {color: #CC2200;}
+.make .re0 {color: #000088; font-weight: bold;}
+.make .re1 {color: #0000CC; font-weight: bold;}
+.make .re2 {color: #000088;}
+.make span.xtra { display:block; }
+/**
+ * GeSHi (C) 2004 - 2007 Nigel McNie, 2007 - 2014 Benny Baumann
+ * (http://qbnz.com/highlighter/ and http://geshi.org/)
+ */
+.text .de1, .text .de2 {font: normal normal 1em/1.2em monospace; margin:0; padding:0; background:none; vertical-align:top;}
+.text  {font-family:monospace;}
+.text .imp {font-weight: bold; color: red;}
+.text li, .text .li1 {font-weight: normal; vertical-align:top;}
+.text .ln {width:1px;text-align:right;margin:0;padding:0 2px;vertical-align:top;}
+.text span.xtra { display:block; }
+/**
+ * GeSHi (C) 2004 - 2007 Nigel McNie, 2007 - 2014 Benny Baumann
+ * (http://qbnz.com/highlighter/ and http://geshi.org/)
+ */
+.diff .de1, .diff .de2 {font: normal normal 1em/1.2em monospace; margin:0; padding:0; background:none; vertical-align:top;}
+.diff  {font-family:monospace;}
+.diff .imp {font-weight: bold; color: red;}
+.diff li, .diff .li1 {font-weight: normal; vertical-align:top;}
+.diff .ln {width:1px;text-align:right;margin:0;padding:0 2px;vertical-align:top;}
+.diff .kw1 {color: #aaaaaa; font-style: italic;}
+.diff .re0 {color: #440088;}
+.diff .re1 {color: #991111;}
+.diff .re2 {color: #00b000;}
+.diff .re3 {color: #888822;}
+.diff .re4 {color: #888822;}
+.diff .re5 {color: #0011dd;}
+.diff .re6 {color: #440088;}
+.diff .re7 {color: #991111;}
+.diff .re8 {color: #00b000;}
+.diff .re9 {color: #888822;}
+.diff span.xtra { display:block; }
+
+
+s</style>
+  <title>FAQ:
+Running CUDA-aware Open MPI</title>
+<meta name="google-site-verification" content="Mo383nPcTIxtCpIPubkJdwBNmCY8iwPIrkxy4n9qBwY" /><script language="JavaScript" type="text/JavaScript">
+<!--
+function contact(host, user, fullname) {
+    var atchar = '@';
+    var thingy = user+atchar+host;
+
+    document.write('<a hre' + 'f=' + "mai" + "lto:" + thingy + ' onClick="_gaq.push([\"_trackEvent\", \"Mails\", \"Click\", "' + thingy + '\"])">' + fullname + '</a>');
+}
+//-->
+</script>
+<bogus not_found=1 />
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.5/jquery.min.js"></script>
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+        (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+                                                                     m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+                                                                                                                          })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+ga('create', 'UA-2081892-1', 'auto');
+ga('send', 'pageview');
+
+</script></head>
+<body>
+<a name="top"></A>
+
+<!-- START MAIN TABLE -->
+<table width="98%" border="0" cellspacing="0" cellpadding="0">
+<colgroup>
+  <col width="10%">
+  <col>
+
+  <!-- Title area -->
+  <tr>
+    <td class="logobox" valign="center" align="center" rowspan="2" width="10%">
+      <a href="../"><img src="../images/open-mpi-logo.png" width="129" height="128" alt="Open MPI logo" border="0"></A>
+    </td>
+    <td valign="center" width="90%" >
+      <h1 class="doctitle">FAQ:<br />
+Running CUDA-aware Open MPI</H1>
+    </td>
+  </tr>
+
+  <!-- Quick bar -->
+  <tr>
+    <!-- one td taken by logo -->
+    <td height="1" valign="BOTTOM" width="90%" >
+    <table width="100%" border="0" cellspacing="0" cellpadding="0">
+    <tr>
+
+    <td class="quickbar"  valign="top" align="left" height=16 width="1">
+     <img src="../images/left-e0-2.gif">
+    </td>
+
+    <td>
+    <table width="100%" border="0" cellspacing="0" cellpadding="5">
+      <tr>
+        <form action="../includes/do-search.php" topurl=".." method="post">
+        <td class="quickbar" valign="center" align="right">
+	<span class="divider">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+	<a href="../" class="quickbar">Home</A>
+	<span class="divider">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+	<a href="../community/help/" class="quickbar"><font color=red>Support</font></A>
+	<span class="divider">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+	<a href="../faq/" class="quickbar">FAQ</A>
+	<span class="divider">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+	<input type=hidden name=site value="www.open-mpi.org">
+<input name="data" type="text" class="medium" size="10" onFocus="if( this.value==this.defaultValue ) this.value='';" value="Search" />
+<input type=radio name=restrict value=all>all&nbsp;<input type=radio name=restrict value="/faq/" checked>just the FAQ
+<input id="searchbttn" type="submit" border="0" class="buttonred" value="&nbsp;&raquo;&nbsp;" onmouseover="this.style.color='#fbe249';" onmouseout="this.style.color='#FFF';" />
+       </td>
+       </form>
+      </tr>
+    </table>
+    </td>
+
+    <td class="quickbar"  valign="top" align="right" height=16 width="1">
+     <img src="../images/right-e0-2.gif">
+    </td>
+
+    </tr>
+    </table>
+    </td>
+  </tr>
+
+  <!-- Main row -->
+  <tr>
+    <!-- Navigation bar -->
+    <td valign="top" class="navbarbox" width="10%">
+      <table width="100%" border="0" cellpadding="1" cellspacing="0">
+        <tr>
+          <td class="navbarbox">
+            <table width="168px" border="0" cellpadding="1" cellspacing="1">
+
+<tr><td class="buttonbox">&nbsp;About</td></tr>
+
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../papers/" class="navbarsub" >Presentations</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="https://github.com/open-mpi/ompi/graphs/contributors" class="navbarsub" >Open MPI Team</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../faq/" class="navbarsub" >FAQ</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2">
+                  &nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=all" class="navbarsub2">Rollup/ALL</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;General information
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=general" class="navbarsub3">General information</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=supported-systems" class="navbarsub3">Supported systems</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=contributing" class="navbarsub3">Contributing</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=developers" class="navbarsub3">Developer information</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=sysadmin" class="navbarsub3">Sysadmin information</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=ft" class="navbarsub3">Fault Tolerance</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;Building
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=building" class="navbarsub3">Building Open MPI</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=mpi-removed" class="navbarsub3">Removed MPI constructs</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=mpi-apps" class="navbarsub3">Compiling MPI apps</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;Running Jobs
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=running" class="navbarsub3">Running MPI jobs</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=troubleshooting" class="navbarsub3">Troubleshooting</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=debugging" class="navbarsub3">Parallel debugging</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=rsh" class="navbarsub3">rsh/ssh</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=bproc" class="navbarsub3">BProc</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=tm" class="navbarsub3">Torque / PBS Pro</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=slurm" class="navbarsub3">Slurm</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=sge" class="navbarsub3">SGE</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=large-clusters" class="navbarsub3">Large clusters</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;Tuning
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=tuning" class="navbarsub3">General tuning</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=sm" class="navbarsub3">Shared memory (Vader)</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=tcp" class="navbarsub3">TCP</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=openfabrics" class="navbarsub3">IB, RoCE, iWARP</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=opa" class="navbarsub3">Omni-Path</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=perftools" class="navbarsub3">Performance tools</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=ompio" class="navbarsub3">OMPIO</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=udapl" class="navbarsub3">UDAPL</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=myrinet" class="navbarsub3">Myrinet</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;Platform
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=osx" class="navbarsub3">OS X</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=aix" class="navbarsub3">AIX (unsupported)</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;Contrib
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=vampirtrace" class="navbarsub3">VampirTrace</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;Languages
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=java" class="navbarsub3">Java</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub2b">
+                  &nbsp;&nbsp;&nbsp;&nbsp;CUDA-aware
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=buildcuda" class="navbarsub3">Building CUDA-aware</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub3">
+                  &nbsp;&nbsp;&nbsp;&nbsp&nbsp;&nbsp;&nbsp;&nbsp;<a href="./?category=runcuda" class="navbarsub3">Running CUDA-aware</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../video/" class="navbarsub" >Videos</A>
+                </td>
+              </tr>
+<tr><td class="buttonbox">&nbsp;Open MPI Software</td></tr>
+
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../software/" class="navbarsub" >Download</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../doc/" class="navbarsub" >Documentation</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../source/" class="navbarsub" >Source Code Access</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="https://github.com/open-mpi/ompi/issues" class="navbarsub" >Bug Tracking</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="https://mtt.open-mpi.org/" class="navbarsub" >Regression Testing</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="https://docs.open-mpi.org/en/v5.0.x/version-numbering.html" class="navbarsub" >Version Information</A>
+                </td>
+              </tr>
+<tr><td class="buttonbox">&nbsp;Sub-Projects</td></tr>
+
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../projects/hwloc/" class="navbarsub" >Hardware Locality</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../projects/netloc/" class="navbarsub" >Network Locality</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../projects/mtt/" class="navbarsub" >MPI Testing Tool</A>
+                </td>
+              </tr>
+<tr><td class="buttonbox">&nbsp;Community</td></tr>
+
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../community/lists/" class="navbarsub" >Mailing Lists</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="https://docs.open-mpi.org/en/v5.0.x/getting-help.html" class="navbarsub" ><font color=red>Getting Help/Support</font></A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../community/contribute/" class="navbarsub" >Contribute</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../community/contact.php" class="navbarsub" >Contact</A>
+                </td>
+              </tr>
+              <tr>
+                <td class="navbarsub">
+                  &nbsp;&nbsp;<a href="../community/license.php" class="navbarsub" >License</A>
+                </td>
+              </tr>
+<tr><td class="buttonbox">&nbsp;</td></tr>
+
+            </table>
+          </td>
+        </td>
+      </table>
+    </td>
+
+    <!-- Main text box -->
+    <td valign="top" width="90%" >
+      <table width="100%" border="0" cellpadding="6" cellspacing="0">
+        <tr>
+          <td>
+      <table width="100%" border="0" cellpadding="4" cellspacing="0">
+      <colgroup>
+      <col>
+        <tr>
+          <td>
+          <!-- BEGIN MAIN TEXT -->
+<script language="JavaScript" type="text/JavaScript">
+<!--
+function contact(host, user, fullname) {
+    var atchar = '@';
+    var thingy = user+atchar+host;
+
+    document.write('<a hre' + 'f=' + "mai" + "lto:" + thingy + ' onClick="_gaq.push([\"_trackEvent\", \"Mails\", \"Click\", "' + thingy + '\"])">' + fullname + '</a>');
+}
+//-->
+</script>
+<script language="javascript">contact("example.com", "bogus", "");</script><font size=+2><font color="red">This FAQ is for Open MPI v4.x and earlier.</font><br />
+If you are looking for documentation for Open MPI v5.x and later, please visit <a href="https://docs.open-mpi.org/">docs.open-mpi.org</a>.</font>
+
+<p><p>Table of contents:</p>
+<p>
+<ol>
+<li><a href="#mpi-cuda-support">What kind of CUDA support exists in Open MPI?</a>
+<li><a href="#mpi-cuda-dev">How do I develop CUDA-aware Open MPI applications?</a>
+<li><a href="#mpi-apis-cuda">Which MPI APIs work with CUDA-aware?</a>
+<li><a href="#mpi-apis-no-cuda">Which MPI APIs do NOT work with CUDA-aware?</a>
+<li><a href="#run-ompi-cuda-ucx">How do I use CUDA-aware UCX for Open MPI?</a>
+<li><a href="#mpi-apis-cuda-ucx">Which MPI APIs work with CUDA-aware UCX?</a>
+<li><a href="#mpi-apis-no-cuda-ucx">Which MPI APIs do NOT work with CUDA-aware UCX?</a>
+<li><a href="#mpi-cuda-aware-support">Can I tell at compile time or runtime whether I have CUDA-aware support?</a>
+<li><a href="#mpi-cuda-limit-ipc">How do I limit how much CUDA IPC memory is held in the registration cache?</a>
+<li><a href="#mpi-cuda-dev-opa">What are some guidelines for using CUDA and Open MPI with Omni-Path?</a>
+<li><a href="#mpi-cuda-dev-selection">When do I need to select a CUDA device?</a>
+</ol>
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-cuda-support"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">1. What kind of CUDA support exists in Open MPI?</td></tr>
+</table>
+</p>
+
+<p>Since Open MPI v1.7.0, there is support for sending and receiving CUDA device
+memory directly.  Prior to this support, the programmer would first
+have to stage the data in host memory prior to making the MPI calls.
+Now, the Open MPI library will automatically detect that the pointer
+being passed in is a CUDA device memory pointer and do the right
+thing.   This is referred to as CUDA-aware support.
+
+<p>The use of device pointers is supported in all of the send and receive
+APIs as well as the blocking collective APIs.  Neither the nonblocking
+collective APIs nor the accumulate one-sided APIs are supported.
+
+<p>See <a href="?category=runcuda#mpi-apis-cuda">this FAQ entry</a>
+for more details on which APIs are supported.
+
+<p>Open MPI depends on various features of CUDA 4.0, so one needs to
+have at least the CUDA 4.0 driver and toolkit.  The new features of interest
+are the Unified Virtual Addressing (UVA) so that all pointers within a
+program have unique addresses.  In addition, there is a new API that
+allows one to determine if a pointer is a CUDA device pointer or host
+memory pointer.  This API is used by the library to decide what needs
+to be done with each buffer.  In addition, CUDA 4.1 also provides the
+ability to register host memory with the CUDA driver, which can improve
+performance.  CUDA 4.1 also added CUDA IPC support for fast communication
+between GPUs on the same node.
+
+<p>Note that derived datatypes, both contiguous and non-contiguous, are supported.
+However, the non-contiguous datatypes currently have high overhead
+because of the many calls to <code>cuMemcpy</code> to copy all the pieces of the
+buffer into the intermediate buffer.
+
+<p>CUDA-aware support is available in the sm, smcuda, tcp, and openib BTLs.
+The smcuda BTL is an optimized version of the sm BTL that takes advantage
+of the CUDA IPC support for fast GPU transfers.  Much of the other
+optimizations are built in to the openib BTL.
+
+<p>CUDA-aware support is present in PSM2 MTL.
+When running CUDA-aware Open MPI on Intel Omni-path, the PSM2 MTL will
+automatically set PSM2_CUDA environment variable which enables PSM2 to handle
+GPU buffers. If the user wants to use host buffers with a CUDA-aware Open MPI,
+it is recommended to set PSM2_CUDA to 0 in the execution environment. PSM2 also
+has support for the NVIDIA GPUDirect support feature. To enable this, users will
+need to set PSM2_GPUDIRECT to 1 in the execution environment.
+
+<p>Note: The PSM2 library and hfi1 driver with CUDA support are requirements to use
+GPUDirect support on Intel Omni-Path. The minimum PSM2 build version required
+is <a href="https://github.com/01org/opa-psm2/releases/tag/PSM2_10.2-175">PSM2 10.2.175.</a> 
+
+<p>For more information refer to the
+<a href="https://www.intel.com/content/www/us/en/support/articles/000016242/network-and-i-o/fabric-products.html">
+Intel Omni-Path documentation.</a>
+
+<p><strong>Open MPI v1.7.0, Open MPI v1.7.1, Open MPI v1.7.2</strong>
+<ul>
+<li> Basic GPUDirect support
+<li> Support for CUDA IPC between GPUs on a node, but will get an error if
+the GPUs do not support CUDA IPC
+</ul>
+
+<p><strong>Open MPI v1.7.3 New Features</strong>
+<ul>
+<li> Support for asynchronous copies of larger GPU buffers over
+the openib BTL
+<li> Dynamically loads the <code>libcuda.so</code> library so you can configure
+with CUDA-aware support, but run on machines that do not have CUDA installed
+</ul>
+
+<p><strong>Open MPI v1.7.4 New Features</strong>
+<ul>
+<li> Removed synchronize point in CUDA IPC when running with CUDA 6.0 or later
+<li> Utilizes GPUDirect RDMA if it is available (requires CUDA 6.0 or later)
+<li> Dynamically enable CUDA IPC support between GPUs and back off to copy through
+host memory if it is not available
+</ul>
+
+<p><strong>Open MPI v1.8.0 - v1.8.4 New Features</strong>
+<ul>
+<li> Minor error handling fixes
+<li> Better cleanup of CUDA resources
+</ul>
+
+<p><strong>Open MPI v1.8.5 New Features</strong>
+<ul>
+<li> Improved on-node GPU to GPU transfers even when CUDA IPC is not supported between the two GPUs
+<li> Properly handle Unified Memory.  This is done by disabling CUDA IPC and GPUDirect RDMA optimizations on Unified Memory buffers.
+<li> Support for blocking reduction MPI APIs
+</ul>
+
+<p><strong>Open MPI v2.0.0 New Features</strong>
+<ul>
+<li> CUDA support through UCX
+<li> Improved on-node Host to GPU transfers using gdrcopy for improved Send/Recv performance.
+</ul>
+
+<p>*For best results, it is recommended that you use the latest version
+ of Open MPI which as of this writing was Open MPI v1.10.1.*
+
+<p><strong>Additional Information about CUDA-aware support</strong>
+
+<p>Here are some relevant MCA parameters to extract extra information if you
+are having issues. For Open MPI v1.7.3 and later, you can see if the library
+was built with CUDA-aware support.
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">ompi_info</span> <span class="re5">--parsable</span> <span class="re5">--all</span> <span class="sy0">|</span> <span class="kw2">grep</span> mpi_built_with_cuda_support:value
+mca:mpi:base:param:mpi_built_with_cuda_support:value:true</pre></td></tr></tbody></table></div>
+
+<p>To get some extra information, there are some verbose flags.  The
+<code>opal_cuda_verbose</code> parameter has only one level of verbosity.  (Works on all
+versions.)
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> opal_cuda_verbose <span class="nu0">10</span> ...</pre></td></tr></tbody></table></div>
+
+<p>This <code>mpi_common_cuda_verbose</code> parameter provides additional information
+about CUDA-aware related activities.  This can be set to a variety of
+different values.  There is really no need to use these unless you
+have strange problems.  (Works on all versions).
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+3
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> mpi_common_cuda_verbose <span class="nu0">10</span> ...
+<span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> mpi_common_cuda_verbose <span class="nu0">20</span> ...
+<span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> mpi_common_cuda_verbose <span class="nu0">100</span> ...</pre></td></tr></tbody></table></div>
+
+<p>There are three new MCA parameters introduced with Open MPI v1.7.4
+related to the use of CUDA IPC.  By default, CUDA IPC is used where
+possible.  But the user can now turn it off if they want.
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> btl_smcuda_use_cuda_ipc <span class="nu0">0</span> ...</pre></td></tr></tbody></table></div>
+
+<p>In addition, it is assumed that CUDA IPC is possible when running on
+the same GPU, and this is typically true.  However, there is the
+ability to turn it off.
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> btl_smcuda_use_cuda_ipc_same_gpu <span class="nu0">0</span> ...</pre></td></tr></tbody></table></div>
+
+<p>Last, to get some insight into whether CUDA IPC is being used, you
+can turn on some verbosity that shows whether CUDA IPC gets enabled
+between two GPUs.
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> btl_smcuda_cuda_ipc_verbose <span class="nu0">100</span> ...</pre></td></tr></tbody></table></div>
+
+<p><strong>GPUDirect RDMA Information</strong>
+
+<p>Open MPI v1.7.4 and later have added some support to take advantage of
+GPUDirect RDMA on Mellanox cards.  All the details about Mellanox
+hardware as well as software needed to get things to work can be found
+at the <a
+href="http://www.mellanox.com/page/products_dyn?product_family=116&mtag=gpudirect">
+Mellanox web site.</a> Note that to get GPUDirect RDMA support, you
+also need to configure your Open MPI library with CUDA 6.0.
+
+<p>To see if you have GPUDirect RDMA compiled into your library, you can
+check like this:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">ompi_info</span> <span class="re5">--all</span> <span class="sy0">|</span> <span class="kw2">grep</span> btl_openib_have_cuda_gdr
+&nbsp; &nbsp;MCA btl: informational <span class="st0">&quot;btl_openib_have_cuda_gdr&quot;</span> <span class="br0">&#40;</span>current value: <span class="st0">&quot;true&quot;</span>, data source: default, level: <span class="nu0">4</span> tuner<span class="sy0">/</span>basic, type: bool<span class="br0">&#41;</span></pre></td></tr></tbody></table></div>
+
+<p>To see if your OFED stack has GPUDirect RDMA support, you can check
+like this:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">ompi_info</span> <span class="re5">--all</span> <span class="sy0">|</span> <span class="kw2">grep</span> btl_openib_have_driver_gdr
+&nbsp; &nbsp;MCA btl: informational <span class="st0">&quot;btl_openib_have_driver_gdr&quot;</span> <span class="br0">&#40;</span>current value: <span class="st0">&quot;true&quot;</span>, data source: default, level: <span class="nu0">4</span> tuner<span class="sy0">/</span>basic, type: bool<span class="br0">&#41;</span></pre></td></tr></tbody></table></div>
+
+<p>To run with GPUDirect RDMA support, you have to enable it as it is
+off by default:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> btl_openib_want_cuda_gdr <span class="nu0">1</span> ...</pre></td></tr></tbody></table></div>
+
+<p><strong>GPUDirect RDMA Implementation Details</strong>
+
+<p>With GPUDirect RDMA support selected, the eager protocol is unused.
+This is done to avoid the penalty of copying unexpected GPU messages
+into host memory.  Instead, a rendezvous protocol is used where the
+sender and receiver both register their GPU buffers and make use of
+GPUDirect RDMA support to transfer the data.  This is done for all
+messages that are less than 30,000 bytes in size.  For larger
+messages, the openib BTL switches to using pipelined buffers as that
+has better performance at larger message sizes.  So, by default, with
+GPUDirect RDMA enabled, the underlying protocol usage is like this:
+
+<div class="geshicode"><table class="text"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+</pre></td><td class="de1"><pre class="de1">0 &nbsp; &nbsp; &nbsp;&lt; message size &lt; 30,000 &nbsp; &nbsp; &nbsp;GPUDirect RDMA
+30,000 &lt; message size &lt; infinity &nbsp; &nbsp;Asynchronous copies through host memory</pre></td></tr></tbody></table></div>
+
+<p>You can adjust the point where we switch to asynchronous copies with
+the <code>--mca btl_openib_cuda_rdma_limit</code> value.  For example, if you
+want to increase the switchover point to 100,000 bytes, then set it
+like this:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">--mca</span> btl_openib_cuda_rdma_limit <span class="nu0">100000</span> ...</pre></td></tr></tbody></table></div>
+
+<p>By default, if we have GPUDirect RDMA, we use it for 1 byte messages
+on up to the <code>btl_openib_cuda_rdma_limit</code> value.  However, you could
+use the eager protocol for the smallest messages by setting [--mca
+btl_openib_cuda_eager_limit] value.  _Note: The
+<code>btl_openib_cuda_eager_limit</code> value includes some overhead so you
+cannot just set it to the payload value.  It has to be set to the
+payload plus the extra upper layer extra bytes.  Currently, in Open
+MPI v1.7.4, this overhead is 44 bytes, so that has to be the minimum
+value.  In the table below we are just referring to the size of the
+payload._
+
+<p>This table tries to show how the various run-time parameters affect
+what protocols are used in a GPUDirect RDMA.
+
+<p><p>
+<center>
+<table border=1 cellpadding=5>
+<tr>
+<th>Message Size Limits</th>
+<th>Protocol</th>
+</tr>
+
+<p><tr>
+<td>0 < message size < btl_openib_cuda_eager_limit (default=0)</td>
+<td> eager protocol (not used by default)
+</tr>
+
+<p><tr>
+<td>btl_openib_cuda_eager_limit (default=0) < message size < btl_openib_cuda_rdma_limit (default=30,000)</td>
+<td> rendezvous protocol utilizing GPUDirect RDMA</td>
+</tr>
+
+<p><tr>
+<td>btl_openib_cuda_rdma_limit (default=30,000) < message size < infinity</td>
+<td> pipelined transfers of size 128KB through host memory</td>
+</tr>
+
+<p></table>
+</center>
+
+<p><strong>Performance Note</strong>
+The cost of registering the GPU memory with the Mellanox driver is
+expensive so it is best to reuse the same GPU buffer for
+communication.
+
+<p><a name="mpi-cuda-numa-issues"></a><strong>NUMA Node Issues</strong>
+When running on a node that has multiple GPUs, you may want to select
+the GPU that is closest to the process you are running on.  One way to
+do this is to make use of the <code>hwloc</code> library.  Following is a code
+snippet that can be used in your application to select a GPU that is
+close.  It will determine which CPU it is running on and then look for
+the closest GPU.  There could be multiple GPUs that are the same
+distance away.  This is dependent on having <code>hwloc</code> somewhere on your
+system.
+
+<div class="geshicode"><table class="c"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+</pre></td><td class="de1"><pre class="de1"><span class="coMULTI">/**</span>
+<span class="coMULTI">&nbsp;* Test program to show the use of hwloc to select the GPU closest to the CPU</span>
+<span class="coMULTI">&nbsp;* that the MPI program is running on. &nbsp;Note that this works even without</span>
+<span class="coMULTI">&nbsp;* any libpciacces or libpci support as it keys off the NVIDIA vendor ID.</span>
+<span class="coMULTI">&nbsp;* There may be other ways to implement this but this is one way.</span>
+<span class="coMULTI">&nbsp;* January 10, 2014</span>
+<span class="coMULTI">&nbsp;*/</span>
+<span class="co2">#include &lt;assert.h&gt;</span>
+<span class="co2">#include &lt;stdio.h&gt;</span>
+<span class="co2">#include &quot;cuda.h&quot;</span>
+<span class="co2">#include &quot;mpi.h&quot;</span>
+<span class="co2">#include &quot;hwloc.h&quot;</span>
+&nbsp;
+<span class="co2">#define ABORT_ON_ERROR(func) &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;\</span>
+<span class="co2">&nbsp; { CUresult res; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; \</span>
+<span class="co2">&nbsp; &nbsp; res = func; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; \</span>
+<span class="co2">&nbsp; &nbsp; if (CUDA_SUCCESS != res) { &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;\</span>
+<span class="co2">&nbsp; &nbsp; &nbsp; &nbsp; printf(&quot;%s returned error=%d\n&quot;, #func, res); \</span>
+<span class="co2">&nbsp; &nbsp; &nbsp; &nbsp; abort(); &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;\</span>
+<span class="co2">&nbsp; &nbsp; } &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; \</span>
+<span class="co2">&nbsp; }</span>
+<span class="kw4">static</span> hwloc_topology_t topology <span class="sy0">=</span> NULL<span class="sy0">;</span>
+<span class="kw4">static</span> <span class="kw4">int</span> gpuIndex <span class="sy0">=</span> <span class="nu0">0</span><span class="sy0">;</span>
+<span class="kw4">static</span> hwloc_obj_t gpus<span class="br0">&#91;</span><span class="nu0">16</span><span class="br0">&#93;</span> <span class="sy0">=</span> <span class="br0">&#123;</span><span class="nu0">0</span><span class="br0">&#125;</span><span class="sy0">;</span>
+&nbsp;
+<span class="coMULTI">/**</span>
+<span class="coMULTI">&nbsp;* This function searches for all the GPUs that are hanging off a NUMA</span>
+<span class="coMULTI">&nbsp;* node. &nbsp;It walks through each of the PCI devices and looks for ones</span>
+<span class="coMULTI">&nbsp;* with the NVIDIA vendor ID. &nbsp;It then stores them into an array.</span>
+<span class="coMULTI">&nbsp;* Note that there can be more than one GPU on the NUMA node.</span>
+<span class="coMULTI">&nbsp;*/</span>
+&nbsp;
+<span class="kw4">static</span> <span class="kw4">void</span> find_gpus<span class="br0">&#40;</span>hwloc_topology_t topology<span class="sy0">,</span> hwloc_obj_t parent<span class="sy0">,</span> hwloc_obj_t child<span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; hwloc_obj_t pcidev<span class="sy0">;</span>
+&nbsp; &nbsp; pcidev <span class="sy0">=</span> hwloc_get_next_child<span class="br0">&#40;</span>topology<span class="sy0">,</span> parent<span class="sy0">,</span> child<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw1">if</span> <span class="br0">&#40;</span>NULL <span class="sy0">==</span> pcidev<span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <span class="kw1">return</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span> <span class="kw1">else</span> <span class="kw1">if</span> <span class="br0">&#40;</span><span class="nu0">0</span> <span class="sy0">!=</span> pcidev<span class="sy0">-&gt;</span>arity<span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <span class="coMULTI">/* This device has children so need to look recursively at them */</span>
+&nbsp; &nbsp; &nbsp; &nbsp; find_gpus<span class="br0">&#40;</span>topology<span class="sy0">,</span> pcidev<span class="sy0">,</span> NULL<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; find_gpus<span class="br0">&#40;</span>topology<span class="sy0">,</span> parent<span class="sy0">,</span> pcidev<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span> <span class="kw1">else</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <span class="kw1">if</span> <span class="br0">&#40;</span>pcidev<span class="sy0">-&gt;</span>attr<span class="sy0">-&gt;</span>pcidev.<span class="me1">vendor_id</span> <span class="sy0">==</span> <span class="nu12">0x10de</span><span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; gpus<span class="br0">&#91;</span>gpuIndex<span class="sy0">++</span><span class="br0">&#93;</span> <span class="sy0">=</span> pcidev<span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <span class="br0">&#125;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; find_gpus<span class="br0">&#40;</span>topology<span class="sy0">,</span> parent<span class="sy0">,</span> pcidev<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+<span class="br0">&#125;</span>
+<span class="kw4">int</span> main<span class="br0">&#40;</span><span class="kw4">int</span> argc<span class="sy0">,</span> <span class="kw4">char</span> <span class="sy0">*</span>argv<span class="br0">&#91;</span><span class="br0">&#93;</span><span class="br0">&#41;</span>
+<span class="br0">&#123;</span>
+&nbsp; &nbsp; <span class="kw4">int</span> rank<span class="sy0">,</span> retval<span class="sy0">,</span> length<span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw4">char</span> procname<span class="br0">&#91;</span>MPI_MAX_PROCESSOR_NAME<span class="sy0">+</span><span class="nu0">1</span><span class="br0">&#93;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw4">const</span> <span class="kw4">unsigned</span> <span class="kw4">long</span> flags <span class="sy0">=</span> HWLOC_TOPOLOGY_FLAG_IO_DEVICES <span class="sy0">|</span> HWLOC_TOPOLOGY_FLAG_IO_BRIDGES<span class="sy0">;</span>
+&nbsp; &nbsp; hwloc_cpuset_t newset<span class="sy0">;</span>
+&nbsp; &nbsp; hwloc_obj_t node<span class="sy0">,</span> bridge<span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw4">char</span> pciBusId<span class="br0">&#91;</span><span class="nu0">16</span><span class="br0">&#93;</span><span class="sy0">;</span>
+&nbsp; &nbsp; CUdevice dev<span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw4">char</span> devName<span class="br0">&#91;</span><span class="nu0">256</span><span class="br0">&#93;</span><span class="sy0">;</span>
+&nbsp;
+&nbsp; &nbsp; MPI_Init<span class="br0">&#40;</span><span class="sy0">&amp;</span>argc<span class="sy0">,</span> <span class="sy0">&amp;</span>argv<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; MPI_Comm_rank<span class="br0">&#40;</span>MPI_COMM_WORLD<span class="sy0">,</span> <span class="sy0">&amp;</span>rank<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw1">if</span> <span class="br0">&#40;</span>MPI_SUCCESS <span class="sy0">!=</span> MPI_Get_processor_name<span class="br0">&#40;</span>procname<span class="sy0">,</span> <span class="sy0">&amp;</span>length<span class="br0">&#41;</span><span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/strcpy.html"><span class="kw3">strcpy</span></a><span class="br0">&#40;</span>procname<span class="sy0">,</span> <span class="st0">&quot;unknown&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+&nbsp;
+&nbsp; &nbsp; <span class="coMULTI">/* Now decide which GPU to pick. &nbsp;This requires hwloc to work properly.</span>
+<span class="coMULTI">&nbsp; &nbsp; &nbsp;* We first see which CPU we are bound to, then try and find a GPU nearby.</span>
+<span class="coMULTI">&nbsp; &nbsp; &nbsp;*/</span>
+&nbsp; &nbsp; retval <span class="sy0">=</span> hwloc_topology_init<span class="br0">&#40;</span><span class="sy0">&amp;</span>topology<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/assert.html"><span class="kw3">assert</span></a><span class="br0">&#40;</span>retval <span class="sy0">==</span> <span class="nu0">0</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; retval <span class="sy0">=</span> hwloc_topology_set_flags<span class="br0">&#40;</span>topology<span class="sy0">,</span> flags<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/assert.html"><span class="kw3">assert</span></a><span class="br0">&#40;</span>retval <span class="sy0">==</span> <span class="nu0">0</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; retval <span class="sy0">=</span> hwloc_topology_load<span class="br0">&#40;</span>topology<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/assert.html"><span class="kw3">assert</span></a><span class="br0">&#40;</span>retval <span class="sy0">==</span> <span class="nu0">0</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; newset <span class="sy0">=</span> hwloc_bitmap_alloc<span class="br0">&#40;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; retval <span class="sy0">=</span> hwloc_get_last_cpu_location<span class="br0">&#40;</span>topology<span class="sy0">,</span> newset<span class="sy0">,</span> <span class="nu0">0</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/assert.html"><span class="kw3">assert</span></a><span class="br0">&#40;</span>retval <span class="sy0">==</span> <span class="nu0">0</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp;
+&nbsp; &nbsp; <span class="coMULTI">/* Get the object that contains the cpuset */</span>
+&nbsp; &nbsp; node <span class="sy0">=</span> hwloc_get_first_largest_obj_inside_cpuset<span class="br0">&#40;</span>topology<span class="sy0">,</span> newset<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp;
+&nbsp; &nbsp; <span class="coMULTI">/* Climb up from that object until we find the HWLOC_OBJ_NODE */</span>
+&nbsp; &nbsp; <span class="kw1">while</span> <span class="br0">&#40;</span>node<span class="sy0">-&gt;</span>type <span class="sy0">!=</span> HWLOC_OBJ_NODE<span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; node <span class="sy0">=</span> node<span class="sy0">-&gt;</span>parent<span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+&nbsp;
+&nbsp; &nbsp; <span class="coMULTI">/* Now look for the HWLOC_OBJ_BRIDGE. &nbsp;All PCI busses hanging off the</span>
+<span class="coMULTI">&nbsp; &nbsp; &nbsp;* node will have one of these */</span>
+&nbsp; &nbsp; bridge <span class="sy0">=</span> hwloc_get_next_child<span class="br0">&#40;</span>topology<span class="sy0">,</span> node<span class="sy0">,</span> NULL<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw1">while</span> <span class="br0">&#40;</span>bridge<span class="sy0">-&gt;</span>type <span class="sy0">!=</span> HWLOC_OBJ_BRIDGE<span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; bridge <span class="sy0">=</span> hwloc_get_next_child<span class="br0">&#40;</span>topology<span class="sy0">,</span> node<span class="sy0">,</span> bridge<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+&nbsp;
+&nbsp; &nbsp; <span class="coMULTI">/* Now find all the GPUs on this NUMA node and put them into an array */</span>
+&nbsp; &nbsp; find_gpus<span class="br0">&#40;</span>topology<span class="sy0">,</span> bridge<span class="sy0">,</span> NULL<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp;
+&nbsp; &nbsp; ABORT_ON_ERROR<span class="br0">&#40;</span>cuInit<span class="br0">&#40;</span><span class="nu0">0</span><span class="br0">&#41;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="coMULTI">/* Now select the first GPU that we find */</span>
+&nbsp; &nbsp; <span class="kw1">if</span> <span class="br0">&#40;</span>gpus<span class="br0">&#91;</span><span class="nu0">0</span><span class="br0">&#93;</span> <span class="sy0">==</span> <span class="nu0">0</span><span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;No GPU found<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/exit.html"><span class="kw3">exit</span></a><span class="br0">&#40;</span><span class="nu0">1</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span> <span class="kw1">else</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/sprintf.html"><span class="kw3">sprintf</span></a><span class="br0">&#40;</span>pciBusId<span class="sy0">,</span> <span class="st0">&quot;%.2x:%.2x:%.2x.%x&quot;</span><span class="sy0">,</span> gpus<span class="br0">&#91;</span><span class="nu0">0</span><span class="br0">&#93;</span><span class="sy0">-&gt;</span>attr<span class="sy0">-&gt;</span>pcidev.<span class="me1">domain</span><span class="sy0">,</span> gpus<span class="br0">&#91;</span><span class="nu0">0</span><span class="br0">&#93;</span><span class="sy0">-&gt;</span>attr<span class="sy0">-&gt;</span>pcidev.<span class="me1">bus</span><span class="sy0">,</span>
+&nbsp; &nbsp; &nbsp; &nbsp; gpus<span class="br0">&#91;</span><span class="nu0">0</span><span class="br0">&#93;</span><span class="sy0">-&gt;</span>attr<span class="sy0">-&gt;</span>pcidev.<span class="me1">dev</span><span class="sy0">,</span> gpus<span class="br0">&#91;</span><span class="nu0">0</span><span class="br0">&#93;</span><span class="sy0">-&gt;</span>attr<span class="sy0">-&gt;</span>pcidev.<span class="me1">func</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; ABORT_ON_ERROR<span class="br0">&#40;</span>cuDeviceGetByPCIBusId<span class="br0">&#40;</span><span class="sy0">&amp;</span>dev<span class="sy0">,</span> pciBusId<span class="br0">&#41;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; ABORT_ON_ERROR<span class="br0">&#40;</span>cuDeviceGetName<span class="br0">&#40;</span>devName<span class="sy0">,</span> <span class="nu0">256</span><span class="sy0">,</span> dev<span class="br0">&#41;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;rank=%d (%s): Selected GPU=%s, name=%s<span class="es1">\n</span>&quot;</span><span class="sy0">,</span> rank<span class="sy0">,</span> procname<span class="sy0">,</span> pciBusId<span class="sy0">,</span> devName<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+&nbsp;
+&nbsp; &nbsp; MPI_Finalize<span class="br0">&#40;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="kw1">return</span> <span class="nu0">0</span><span class="sy0">;</span>
+<span class="br0">&#125;</span></pre></td></tr></tbody></table></div>
+
+<p>See <a href="?category=buildcuda">this FAQ entry</a>
+for details on how to configure the CUDA support into the library.
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-cuda-dev"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">2. How do I develop CUDA-aware Open MPI applications?</td></tr>
+</table>
+</p>
+
+<p>Developing CUDA-aware applications is a complex topic, and beyond
+the scope of this document. CUDA-aware applications often have to take 
+machine-specific considerations into account, including the number of GPUs
+installed on each node and how the GPUs are connected to the CPUs and to each
+other. Often, when using a particular transport layer (such as OPA/PSM2)
+there will be run-time decisions to make about which CPU cores will be used
+with which GPUs.
+
+<p>A good place to start is the <a href="https://docs.nvidia.com/cuda/">nVidia
+CUDA Toolkit Documentation</a>, including the
+<a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html">Programming Guide</a>
+and the <a href="https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html">Best Practices Guide</a>.
+For examples of how to write CUDA-aware MPI applications, the
+<a href="https://github.com/NVIDIA-developer-blog/code-samples/tree/master/posts/cuda-aware-mpi-example">nVidia developers blog</a>
+offers examples and the <a href="http://mvapich.cse.ohio-state.edu/benchmarks/">OSU
+Micro-Benchmarks</a> offer an excellent example of how to write CUDA-aware MPI
+applications.</p>
+
+<!--------------------------------------- -->
+<a name="mpi-apis-cuda"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">3. Which MPI APIs work with CUDA-aware?</td></tr>
+</table>
+</p>
+
+<p>
+
+<p><p>
+<center>
+<table border=1 cellpadding=5>
+<tr>
+<th>MPI API</th>
+<th>Support Added In Version</th>
+</tr>
+
+<p><tr>
+<td>MPI_Send, MPI_Bsend, MPI_Ssend, MPI_Rsend, MPI_Isend, MPI_Ibsend,
+ MPI_Issend, MPI_Irsend, MPI_Send_init, MPI_Bsend_init, MPI_Ssend_init,
+ MPI_Rsend_init, MPI_Recv, MPI_Irecv, MPI_Recv_init, MPI_Sendrecv,
+ MPI_Bcast, MPI_Gather, MPI_Gatherv, MPI_Allgather,
+ MPI_Allgatherv, MPI_Alltoall, MPI_Alltoallv, MPI_Alltoallw, MPI_Scatter, MPI_Scatterv
+</td>
+<td>Open MPI v1.7.0</td>
+</tr>
+
+<p><td>MPI_Win_create, MPI_Put, MPI_Get</td>
+<td>Open MPI v1.8.0</td>
+</tr>
+
+<p><td>MPI_Reduce, MPI_Allreduce, MPI_Scan, MPI_Exscan, MPI_Reduce_scatter,
+    MPI_Reduce_scatter_block</td>
+<td>Open MPI v1.8.5</td>
+</tr>
+
+<p></table>
+</center>
+
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-apis-no-cuda"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">4. Which MPI APIs do NOT work with CUDA-aware?</td></tr>
+</table>
+</p>
+
+<p>
+
+<p><p>
+<table border=1 cellpadding=5>
+<tr>
+<th>MPI API</th>
+<th>Expected Support</th>
+</tr>
+
+<p><tr>
+<td>MPI_Accumulate, MPI_Rget, MPI_Rput, MPI_Get_Accumulate, MPI_Fetch_and_op,
+    MPI_Compare_and_swap
+</td>
+<td>Future</td>
+</tr>
+
+<p><tr>
+<td>MPI_Iallgather, MPI_Iallgatherv, MPI_Iallreduce, MPI_Ialltoall,
+    MPI_Iialltoallv, MPI_Ialltoallw, MPI_Ibcast, MPI_Iexscan
+</td>
+<td>Future</td>
+</tr>
+
+<p></table>
+
+</p>
+
+<!--------------------------------------- -->
+<a name="run-ompi-cuda-ucx"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">5. How do I use CUDA-aware UCX for Open MPI?</td></tr>
+</table>
+</p>
+
+<p>
+
+<p>Example of running osu_latency from
+<a href="http://mvapich.cse.ohio-state.edu/benchmarks">OSU benchmarks</a>
+with CUDA buffers using Open MPI and UCX CUDA support:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">-np</span> <span class="nu0">2</span> <span class="re5">--mca</span> pml ucx <span class="re5">-x</span> <span class="re2">UCX_TLS</span>=rc,sm,cuda_copy,gdr_copy,cuda_ipc .<span class="sy0">/</span>osu_latency D D</pre></td></tr></tbody></table></div>
+
+
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-apis-cuda-ucx"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">6. Which MPI APIs work with CUDA-aware UCX?</td></tr>
+</table>
+</p>
+
+<p>
+
+<p><p>
+<center>
+<table border=1 cellpadding=5>
+<tr>
+<th>MPI API</th>
+<th>Support Added In Version</th>
+</tr>
+
+<p><tr>
+<td>MPI_Send, MPI_Bsend, MPI_Ssend, MPI_Rsend, MPI_Isend, MPI_Ibsend,
+ MPI_Issend, MPI_Irsend, MPI_Send_init, MPI_Bsend_init, MPI_Ssend_init,
+ MPI_Rsend_init, MPI_Recv, MPI_Irecv, MPI_Recv_init, MPI_Sendrecv,
+ MPI_Bcast, MPI_Gather, MPI_Gatherv, MPI_Allgather, MPI_Reduce,
+ MPI_Reduce_scatter, MPI_Reduce_scatter_block, MPI_Allreduce, MPI_Scan, MPI_Exscan,
+ MPI_Allgatherv, MPI_Alltoall, MPI_Alltoallv, MPI_Alltoallw, MPI_Scatter, MPI_Scatterv,
+ MPI_Iallgather, MPI_Iallgatherv, MPI_Ialltoall, MPI_Iialltoallv,
+ MPI_Ialltoallw, MPI_Ibcast, MPI_Iexscan
+</td>
+<td>UCX v1.4</td>
+
+<p></table>
+</center>
+
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-apis-no-cuda-ucx"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">7. Which MPI APIs do NOT work with CUDA-aware UCX?</td></tr>
+</table>
+</p>
+
+<p>
+
+<p><p>
+<table border=1 cellpadding=5>
+<tr>
+<th>MPI API</th>
+<th>Expected Support</th>
+</tr>
+
+<p><tr>
+<td>One-sided operations such as MPI_Put, MPI_Get, MPI_Accumulate, MPI_Rget, MPI_Rput,
+    MPI_Get_Accumulate, MPI_Fetch_and_op, MPI_Compare_and_swap, etc
+</td>
+<td>Future</td>
+</tr>
+
+<p><tr>
+<td>Window creation calls such as MPI_Win_create
+</td>
+<td>Future</td>
+</tr>
+
+<p><tr>
+<td>Non-blocking reduction collectives like MPI_Ireduce, MPI_Iallreduce, etc
+</td>
+<td>Future</td>
+</tr>
+
+<p></table>
+
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-cuda-aware-support"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">8. Can I tell at compile time or runtime whether I have CUDA-aware support?</td></tr>
+</table>
+</p>
+
+<p>
+New with Open MPI v2.0.0, we have added a compile time check and a
+run-time check.  You can use whichever is the most convenient for your
+program.  To access them, you need to include <code>mpi-ext.h</code>. Note that
+<code>mpi-ext.h</code> has been around for several releases so you can just add it
+to your include list. The following program shows an example of using
+the CUDA-aware macro and run-time check.
+
+<div class="geshicode"><table class="c"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+</pre></td><td class="de1"><pre class="de1"><span class="coMULTI">/*</span>
+<span class="coMULTI">&nbsp;* Program that shows the use of CUDA-aware macro and runtime check.</span>
+<span class="coMULTI">&nbsp;* Requires Open MPI v2.0.0 or later.</span>
+<span class="coMULTI">&nbsp;*/</span>
+<span class="co2">#include &lt;stdio.h&gt;</span>
+<span class="co2">#include &quot;mpi.h&quot;</span>
+&nbsp;
+<span class="co2">#ifdef</span>
+<span class="co2">#include &quot;mpi-ext.h&quot; /* Needed for CUDA-aware check */</span>
+<span class="co2">#endif</span>
+&nbsp;
+<span class="kw4">int</span> main<span class="br0">&#40;</span><span class="kw4">int</span> argc<span class="sy0">,</span> <span class="kw4">char</span> <span class="sy0">*</span>argv<span class="br0">&#91;</span><span class="br0">&#93;</span><span class="br0">&#41;</span>
+<span class="br0">&#123;</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;Compile time check:<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+<span class="co2">#if defined(MPIX_CUDA_AWARE_SUPPORT) &amp;&amp; MPIX_CUDA_AWARE_SUPPORT</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;This MPI library has CUDA-aware support.<span class="es1">\n</span>&quot;</span><span class="sy0">,</span> MPIX_CUDA_AWARE_SUPPORT<span class="br0">&#41;</span><span class="sy0">;</span>
+<span class="co2">#elif defined(MPIX_CUDA_AWARE_SUPPORT) &amp;&amp; !MPIX_CUDA_AWARE_SUPPORT</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;This MPI library does not have CUDA-aware support.<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+<span class="co2">#else</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;This MPI library cannot determine if there is CUDA-aware support.<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+<span class="co2">#endif /* MPIX_CUDA_AWARE_SUPPORT */</span>
+&nbsp;
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;Run time check:<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+<span class="co2">#if defined(MPIX_CUDA_AWARE_SUPPORT)</span>
+&nbsp; &nbsp; <span class="kw1">if</span> <span class="br0">&#40;</span><span class="nu0">1</span> <span class="sy0">==</span> MPIX_Query_cuda_support<span class="br0">&#40;</span><span class="br0">&#41;</span><span class="br0">&#41;</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;This MPI library has CUDA-aware support.<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span> <span class="kw1">else</span> <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;This MPI library does not have CUDA-aware support.<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+<span class="co2">#else /* !defined(MPIX_CUDA_AWARE_SUPPORT) */</span>
+&nbsp; &nbsp; <a href="http://www.opengroup.org/onlinepubs/009695399/functions/printf.html"><span class="kw3">printf</span></a><span class="br0">&#40;</span><span class="st0">&quot;This MPI library cannot determine if there is CUDA-aware support.<span class="es1">\n</span>&quot;</span><span class="br0">&#41;</span><span class="sy0">;</span>
+<span class="co2">#endif /* MPIX_CUDA_AWARE_SUPPORT */</span>
+&nbsp;
+&nbsp; &nbsp; <span class="kw1">return</span> <span class="nu0">0</span><span class="sy0">;</span>
+<span class="br0">&#125;</span>
+&nbsp;</pre></td></tr></tbody></table></div>
+
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-cuda-limit-ipc"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">9. How do I limit how much CUDA IPC memory is held in the registration cache?</td></tr>
+</table>
+</p>
+
+<p>
+As mentioned earlier, the Open MPI library will make use of CUDA IPC support where
+possible to move the GPU data quickly between GPUs that are on the same node and
+same PCI root complex. The library holds on to registrations even after the data
+transfer is complete as it is expensive to make some of the CUDA IPC registration
+calls. If you want to limit how much memory is registered, you can use the
+<code>mpool_rgpusm_rcache_size_limit</code> MCA parameter. For example, this sets the limit
+to 1000000 bytes:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="re5">--mca</span> mpool_rgpusm_rcache_size_limit <span class="nu0">1000000</span></pre></td></tr></tbody></table></div>
+
+<p>When the cache reaches this size, it will kick out the least recently used until
+it can fit the new registration in.  
+
+<p>In Open MPI 1.10.2 and later, there also is the ability to have the cache empty
+itself out when the limit is reached. To do this, just set the MCA parameter as
+shown in this example:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="re5">--mca</span> mpool_rgpusm_rcache_empty_cache <span class="nu0">1</span></pre></td></tr></tbody></table></div>
+</p>
+
+<!--------------------------------------- -->
+<a name="mpi-cuda-dev-opa"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">10. What are some guidelines for using CUDA and Open MPI with Omni-Path?</td></tr>
+</table>
+</p>
+
+<p>When developing CUDA-aware Open MPI applications for OPA-based
+fabrics, the PSM2 transport is preferred and a CUDA-aware version of PSM2
+is provided with all versions of the Intel Omni-Path IFS software suite.
+
+<p>The PSM2 library provides a number of settings that will govern how it
+will interact with CUDA, including <b>PSM2_CUDA</b> and <b>PSM2_GPUDIRECT</b>,
+which should be set in the environment before <code>MPI_Init()</code> is called. For
+example:
+
+<div class="geshicode"><table class="bash"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+</pre></td><td class="de1"><pre class="de1"><span class="co4">shell$ </span><span class="kw2">mpirun</span> <span class="re5">-x</span> <span class="re2">PSM2_CUDA</span>=<span class="nu0">1</span> <span class="re5">-x</span> <span class="re2">PSM2_GPUDIRECT</span>=<span class="nu0">1</span> <span class="re5">--mca</span> mtl psm2 mpi_hello</pre></td></tr></tbody></table></div>
+
+<p>In addition, each process of the application should select a specific GPU card to
+use before calling <code>MPI_Init()</code>, by using <code>cudaChooseDevice()</code>,
+<code>cudaSetDevice()</code> and similar. The chosen GPU should be within the same
+NUMA node as the CPU the MPI process is running on. You will also want to use
+the <code>mpirun</code> <code>--bind-to-core</code> or <code>--bind-to-socket</code> option to ensure that
+MPI processes do not move between NUMA nodes. (See the section on
+<strong>NUMA Node Issues</strong>, <a href="#mpi-cuda-numa-issues">above</a>, for more information.)
+
+<p>For more information see the <b>Intel Performance Scaled Messaging 2 (PSM2)
+Programmer's Guide</b> and the <b>Intel Omni-Path Performance Tuning Guide</b>, which can be found on the <a href="https://www.intel.com/omnipath/FabricSoftwarePublications">Intel Omni-Path web site</a>.</p>
+
+<!--------------------------------------- -->
+<a name="mpi-cuda-dev-selection"></a>
+<p><hr></p>
+
+<table width=100% cellpadding=5 border=0>
+<tr><td class="faq_question">11. When do I need to select a CUDA device?</td></tr>
+</table>
+</p>
+
+<p>OpenMPI requires CUDA resources allocated for internal use. These
+are allocated lazily when they are first needed, e.g. CUDA IPC mem handles
+are created when a communication routine first requires them during a
+transfer. So, the CUDA device needs to be selected before the first MPI
+call requiring a CUDA resource. MPI_Init and most communicator related
+operations do not create any CUDA resources (guaranteed for MPI_Init,
+MPI_Comm_rank, MPI_Comm_size, MPI_Comm_split_type and MPI_Comm_free). It
+is thus possible to use those routines to query rank information and use
+those to select a GPU, e.g. using
+
+<p> 
+<div class="geshicode"><table class="c"><tbody><tr class="li1"><td class="ln"><pre class="de1">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+</pre></td><td class="de1"><pre class="de1">&nbsp; &nbsp; <span class="kw4">int</span> local_rank <span class="sy0">=</span> <span class="sy0">-</span><span class="nu0">1</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#123;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; MPI_Comm local_comm<span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; MPI_Comm_split_type<span class="br0">&#40;</span>MPI_COMM_WORLD<span class="sy0">,</span> MPI_COMM_TYPE_SHARED<span class="sy0">,</span> rank<span class="sy0">,</span> MPI_INFO_NULL<span class="sy0">,</span> <span class="sy0">&amp;</span>local_comm<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; MPI_Comm_rank<span class="br0">&#40;</span>local_comm<span class="sy0">,</span> <span class="sy0">&amp;</span>local_rank<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; &nbsp; &nbsp; MPI_Comm_free<span class="br0">&#40;</span><span class="sy0">&amp;</span>local_comm<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; <span class="br0">&#125;</span>
+&nbsp; &nbsp; <span class="kw4">int</span> num_devices <span class="sy0">=</span> <span class="nu0">0</span><span class="sy0">;</span>
+&nbsp; &nbsp; cudaGetDeviceCount<span class="br0">&#40;</span><span class="sy0">&amp;</span>num_devices<span class="br0">&#41;</span><span class="sy0">;</span>
+&nbsp; &nbsp; cudaSetDevice<span class="br0">&#40;</span>local_rank <span class="sy0">%</span> num_devices<span class="br0">&#41;</span><span class="sy0">;</span></pre></td></tr></tbody></table></div>
+
+<p>MPI internal CUDA resources are released during MPI_Finalize. Thus
+it is an application error to call cudaDeviceReset before MPI_Finalize is called.</p>
+
+
+	  <!-- END MAIN TEXT -->
+	  </td>
+        </tr>
+      </table>
+          </td>
+        </td>
+      </table>
+    </td>
+  </tr>
+
+  <!-- footer row -->
+  <tr>
+  <td colspan="2">
+      <table width="100%" border="0" cellpadding="8" cellspacing="0">
+      <colgroup>
+      <col>
+      <col>
+      <col>
+        <tr>
+          <td class="footer" align="LEFT" height="36" width="33%">
+	  <table><tr><td class="footer"><a href="http://spi-inc.org/"><img height="35"
+src="../images/spi-logo.svg"></a></td>
+                 <td class="footer"><a href="http://spi-inc.org/projects/open-mpi/">Open MPI is an Associated
+Project</a><br /> of the
+<a href="http://spi-inc.org/">Software in the Public Interest</a>
+non-profit organization</td></tr></table>
+          </td>
+          <td class="footer" align="CENTER" height="36" width="33%">
+            <script language="javascript">contact("open-mpi.org", "the-web-maintainer", "Contact the Open MPI webmaster");</script>          </td>
+          <td class="footer" align="RIGHT" height="36" width="33%">
+Page last modified: 24-Feb-2022<br>
+&copy;2004-2026 The Open MPI Project
+<br>
+          </td>
+        </tr>
+      </table>
+
+    <!-- END MAIN table -->
+    </td>
+  </tr>
+</table>
+<br>
+</body>
+</html>
