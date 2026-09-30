@@ -2,6 +2,10 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"name": "SSH FS - frccsc",
+			"uri": "ssh://frccsc/home/kkibizov"
 		}
 	],
 	"settings": {}
