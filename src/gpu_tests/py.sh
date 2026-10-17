@@ -1,13 +1,10 @@
-#!/usr/bin/env sh
-set -eu
+#!/bin/bash
+# Один раз: виртуальное окружение .venv с зависимостями обработки (requirements.txt).
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cd "$SCRIPT_DIR"
+set -euo pipefail
+
+cd "$(dirname "$0")"
 
 python3 -m pip install --user virtualenv || python3 -m pip install --user --break-system-packages virtualenv
-
 python3 -m virtualenv .venv
-set +u
-. .venv/bin/activate
-set -u
-python3 -m pip install -r requirements.txt
+.venv/bin/python3 -m pip install -r requirements.txt

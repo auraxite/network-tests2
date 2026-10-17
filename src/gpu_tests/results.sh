@@ -1,4 +1,10 @@
-PY="${PWD}/.venv/bin/python3"; [ -x "$PY" ] || PY=python3
+#!/bin/bash
+# Обработка results/: теплокарты и NetCDF.
+
+set -euo pipefail
+
+cd "$(dirname "$0")"
+PY=.venv/bin/python3; [ -x "$PY" ] || PY=python3
 R=results
 
 "$PY" gpu_heatmap.py "$R" -o "$R/heatmaps"

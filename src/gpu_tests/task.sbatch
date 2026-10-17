@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=intel-a100-pci5
+# Запуск: bash submit.sh (раздел берётся из config.sh)
 #SBATCH --job-name=clustbench
 #SBATCH --time=02:00:00
 #SBATCH --output=clustbench-%j.out
@@ -94,9 +94,8 @@ ALL_TO_ALL_CASES=( # "bytes:iters:warmup"
 	"16384000:200:5"
 )
 
-OMPI_PATH="${OMPI_PATH:-$HOME/opt/openmpi-5.0.10-cuda-clean}"
-UCX_PATH="${UCX_PATH:-$HOME/opt/ucx-1.15.0}"
-CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
+# Пути к Open MPI, UCX и CUDA — общие, из config.sh в каталоге отправки
+source "${SLURM_SUBMIT_DIR:-.}/config.sh"
 
 set -eEuo pipefail
 

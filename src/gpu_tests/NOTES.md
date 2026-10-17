@@ -5,13 +5,16 @@
 
 ## Порядок сборки и запуска
 
+Раздел Slurm, версии и пути к Open MPI, UCX и CUDA задаются в одном месте —
+`config.sh`. Для другого кластера правится только он.
+
 ```
 bash build_ucx.sh       # один раз: UCX 1.15 в ~/opt
 bash build_openmpi.sh   # один раз: Open MPI 5.0.10 с UCX, CUDA и правкой pml ucx
-sh build.sh             # модуль gpu (через srun на узле с GPU)
-sh py.sh                # один раз: .venv с зависимостями обработки
-sbatch task.sbatch      # измерения, результаты в results/
-sh results.sh           # теплокарты и NetCDF
+bash build.sh           # программа gpu (через srun на узле с GPU)
+bash py.sh              # один раз: .venv с зависимостями обработки
+bash submit.sh          # измерения (task.sbatch), результаты в results/
+bash results.sh         # теплокарты и NetCDF
 ```
 
 NetCDF из исходников собирать не нужно: `gpu_netcdf.py` использует Python-пакет
