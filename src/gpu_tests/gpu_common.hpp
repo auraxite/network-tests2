@@ -21,7 +21,7 @@ enum class Env { Auto, Host };
 
 enum class StatOut { All, Avg, Med, Min, Max, Std, Var };
 
-enum class Mode { OneToOne, AllToAll };
+enum class Mode { OneToOne, AllToAll, OneToAll, AllToOne };
 
 /* ack layout (7 doubles):
      [0] avg_us  [1] med_us  [2] min_us  [3] max_us

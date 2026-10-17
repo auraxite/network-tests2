@@ -52,12 +52,13 @@ void help(int rank) {
 	if (rank != 0)
 		return;
 	std::cout
-		<< "gpu — GPU pair latency (one_to_one | all_to_all)\n"
+		<< "gpu — GPU pair latency (one_to_one | all_to_all | one_to_all | all_to_one)\n"
 		<< "  --bytes N       message size in bytes (default 4 MB)\n"
 		<< "  --warmup N      warmup iterations per pair\n"
 		<< "  --iters N       measured iterations per pair\n"
 		<< "  --env E         auto | host\n"
-		<< "  --mode M        one_to_one | all_to_all (default one_to_one)\n"
+		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
+		<< "                  (default one_to_one)\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
@@ -84,11 +85,19 @@ Mode parse_mode(const std::string &s, int rank) {
 		return Mode::OneToOne;
 	if (s == "all_to_all" || s == "alltoall" || s == "parallel")
 		return Mode::AllToAll;
-	bad_arg(rank, "unknown --mode: " + s + " (use one_to_one|all_to_all)");
+	if (s == "one_to_all") return Mode::OneToAll;
+	if (s == "all_to_one") return Mode::AllToOne;
+	bad_arg(rank, "unknown --mode: " + s +
+	              " (use one_to_one|all_to_all|one_to_all|all_to_one)");
 }
 
 const char *mode_to_string(Mode mode) {
-	return mode == Mode::AllToAll ? "all_to_all" : "one_to_one";
+	switch (mode) {
+	case Mode::AllToAll: return "all_to_all";
+	case Mode::OneToAll: return "one_to_all";
+	case Mode::AllToOne: return "all_to_one";
+	default:             return "one_to_one";
+	}
 }
 
 Env parse_env(const std::string &s, int rank) {

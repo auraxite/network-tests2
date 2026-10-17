@@ -31,7 +31,7 @@ METRIC_TITLE = {
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
 ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(
-	r"(?:^|_)(cuda_one_to_one|cuda_all_to_all|one_to_one|all_to_all)(?:_|$)", re.I
+	r"(?:^|_)(cuda_one_to_one|cuda_all_to_all|one_to_one|all_to_all|one_to_all|all_to_one)(?:_|$)", re.I
 )
 BYTES_TAG_RE = re.compile(r"(?:^|_)b(\d+)(?:_|$)", re.I)
 WARMUP_TAG_RE = re.compile(r"(?:^|_)w(\d+)(?:_|$)", re.I)

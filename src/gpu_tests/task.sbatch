@@ -68,6 +68,8 @@ ENVS=( # закомментировать лишнее
 MODES=( # закомментировать лишнее
 	one_to_one
 	all_to_all
+	one_to_all
+	all_to_one
 )
 
 ONE_TO_ONE_CASES=( # "bytes:iters:warmup"
@@ -89,6 +91,13 @@ ONE_TO_ONE_CASES=( # "bytes:iters:warmup"
 )
 
 ALL_TO_ALL_CASES=( # "bytes:iters:warmup"
+	"512000:1000:5"
+	"4096000:500:5"
+	"16384000:200:5"
+)
+
+# one_to_all и all_to_one: раунд на каждый корень, итерации на раунд
+ROOTED_CASES=( # "bytes:iters:warmup"
 	"512000:1000:5"
 	"4096000:500:5"
 	"16384000:200:5"
@@ -242,6 +251,7 @@ for ENV in "${ENVS[@]}"; do
 		case "${MODE}" in
 		one_to_one) CASES=("${ONE_TO_ONE_CASES[@]}") ;;
 		all_to_all) CASES=("${ALL_TO_ALL_CASES[@]}") ;;
+		one_to_all|all_to_one) CASES=("${ROOTED_CASES[@]}") ;;
 		*) echo "unknown mode: ${MODE}" >&2; exit 1 ;;
 		esac
 

@@ -1,4 +1,4 @@
-#include "gpu_all_to_all.hpp"
+#include "gpu_concurrent.hpp"
 #include "gpu_common.hpp"
 #include "gpu_one_to_one.hpp"
 
@@ -352,7 +352,7 @@ int main(int argc, char **argv) {
 		schedule_one_to_one(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,
 		                    rank_labels, mirror);
 	else
-		schedule_all_to_all(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks,
+		schedule_concurrent(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks,
 		                    rank_labels, mirror);
 
 	mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free");

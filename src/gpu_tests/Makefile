@@ -19,7 +19,7 @@ FILES_GPU = \
 	gpu_benchmark.o \
 	gpu_common.o \
 	gpu_one_to_one.o \
-	gpu_all_to_all.o
+	gpu_concurrent.o
 
 all: $(EXECS)
 

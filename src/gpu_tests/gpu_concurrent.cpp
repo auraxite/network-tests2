@@ -1,4 +1,4 @@
-#include "gpu_all_to_all.hpp"
+#include "gpu_concurrent.hpp"
 
 #include <iomanip>
 #include <memory>
@@ -11,14 +11,22 @@ namespace {
 int pair_tag(int src, int dst, int nproc) { return src * nproc + dst; }
 int ready_tag(int src, int dst, int nproc) { return nproc * nproc + pair_tag(src, dst, nproc); }
 
+// Идёт ли передача src -> dst в раунде с корнем root (в all_to_all root не важен).
+bool active(Mode mode, int root, int src, int dst) {
+	if (src == dst) return false;
+	if (mode == Mode::OneToAll) return src == root;
+	if (mode == Mode::AllToOne) return dst == root;
+	return true;
+}
+
 /* Замеры на этом ранге как на получателе. Возвращает строку ack по источникам:
    элемент src — статистики пары (src, rank), свой элемент помечен valid = 1. */
-std::vector<double> run_all_to_all(int rank, int nproc, const Args &args, bool via_host,
+std::vector<double> run_concurrent(int rank, int nproc, const Args &args, bool via_host,
                                    MPI_Comm node_comm, const std::vector<int> &on_my_node,
                                    const std::vector<int> &node_ranks,
                                    const std::vector<std::string> &rank_labels) {
 	const int count = static_cast<int>(args.nbytes);
-	DBG_LOG(rank, args, "all_to_all RUN_BEGIN bytes=" << args.nbytes
+	DBG_LOG(rank, args, mode_to_string(args.mode) << " RUN_BEGIN bytes=" << args.nbytes
 	        << " path=" << (via_host ? "host" : "auto"));
 
 	DeviceBuffer d_send(args.nbytes), d_recv(args.nbytes);
@@ -51,14 +59,16 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args, bool v
 	for (int src = 0; src < nproc; ++src)
 		if (src != rank) samples[src].reserve(static_cast<size_t>(args.iters));
 
-	auto one_iteration = [&](bool measure) {
+	auto one_iteration = [&](int root, bool measure) {
 		// recv[src] — данные от src, recv[nproc + src] — сигнал готовности
 		// общего сегмента src (путь через память внутри узла).
 		std::vector<MPI_Request> recv(2 * nproc, MPI_REQUEST_NULL);
 		std::vector<MPI_Request> send(nproc, MPI_REQUEST_NULL);
 
+		int expected = 0;
 		for (int src = 0; src < nproc; ++src) {
-			if (src == rank) continue;
+			if (!active(args.mode, root, src, rank)) continue;
+			++expected;
 			if (via_host && on_my_node[src] && slot[src])
 				mpi_ok(MPI_Irecv(nullptr, 0, MPI_BYTE, src, ready_tag(src, rank, nproc),
 				                 MPI_COMM_WORLD, &recv[nproc + src]), "MPI_Irecv ready");
@@ -76,7 +86,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args, bool v
 
 		bool own_slot_filled = false;
 		for (int dst = 0; dst < nproc; ++dst) {
-			if (dst == rank) continue;
+			if (!active(args.mode, root, rank, dst)) continue;
 			if (!via_host) {
 				mpi_ok(MPI_Isend(d_send.get(), count, MPI_BYTE, dst, pair_tag(rank, dst, nproc),
 				                 MPI_COMM_WORLD, &send[dst]), "MPI_Isend device");
@@ -98,7 +108,7 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args, bool v
 			}
 		}
 
-		for (int done = 0; done < nproc - 1; ++done) {
+		for (int done = 0; done < expected; ++done) {
 			int idx = MPI_UNDEFINED;
 			mpi_ok(MPI_Waitany(static_cast<int>(recv.size()), recv.data(), &idx,
 			                   MPI_STATUS_IGNORE), "MPI_Waitany");
@@ -126,9 +136,14 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args, bool v
 		mpi_ok(MPI_Waitall(nproc, send.data(), MPI_STATUSES_IGNORE), "MPI_Waitall sends");
 	};
 
-	for (int i = 0; i < args.warmup; ++i) one_iteration(false);
-	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(iters)");
-	for (int i = 0; i < args.iters; ++i) one_iteration(true);
+	// Раунд на каждый корень. Каждая пара активна ровно в одном раунде,
+	// поэтому samples[src] заполняется один раз.
+	const int rounds = args.mode == Mode::AllToAll ? 1 : nproc;
+	for (int root = 0; root < rounds; ++root) {
+		for (int i = 0; i < args.warmup; ++i) one_iteration(root, false);
+		mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(iters)");
+		for (int i = 0; i < args.iters; ++i) one_iteration(root, true);
+	}
 
 	std::vector<double> row(static_cast<size_t>(nproc) * ACK_FIELDS, 0.0);
 	for (int src = 0; src < nproc; ++src) {
@@ -140,13 +155,13 @@ std::vector<double> run_all_to_all(int rank, int nproc, const Args &args, bool v
 		append_raw_samples(args, rank_labels[src], rank_labels[rank], samples[src]);
 		fill_ack(samples[src], ack);
 	}
-	DBG_LOG(rank, args, "all_to_all RUN_DONE");
+	DBG_LOG(rank, args, mode_to_string(args.mode) << " RUN_DONE");
 	return row;
 }
 
 } // namespace
 
-void schedule_all_to_all(int rank, int nproc, const Args &args, bool via_host,
+void schedule_concurrent(int rank, int nproc, const Args &args, bool via_host,
                          MPI_Comm node_comm,
                          const std::vector<int> &on_my_node,
                          const std::vector<int> &node_ranks,
@@ -154,7 +169,7 @@ void schedule_all_to_all(int rank, int nproc, const Args &args, bool via_host,
                          const std::function<void(const std::string &)> &mirror) {
 	const double t0 = MPI_Wtime();
 	const std::vector<double> row =
-	    run_all_to_all(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks, rank_labels);
+	    run_concurrent(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks, rank_labels);
 
 	// Сбор после всех замеров: строка ранга dst — его статистики по источникам.
 	std::vector<double> all;

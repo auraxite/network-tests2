@@ -33,7 +33,7 @@ RPATH="${UCX_LIB:+-Wl,-rpath,$UCX_LIB }-Wl,-rpath,$OMPI_PATH/lib -Wl,-rpath,$CUD
 "$MPICXX" --showme:version 2>/dev/null || true
 "$MPICXX" -O2 -std=c++17 -I"$CUDA_PATH/include" \
 	"$SRC/gpu_benchmark.cpp" "$SRC/gpu_common.cpp" \
-	"$SRC/gpu_one_to_one.cpp" "$SRC/gpu_all_to_all.cpp" \
+	"$SRC/gpu_one_to_one.cpp" "$SRC/gpu_concurrent.cpp" \
 	-o "$SRC/gpu" \
 	$RPATH \
 	-Wl,--no-as-needed -Wl,-rpath-link,"$OMPI_PATH/lib" \
