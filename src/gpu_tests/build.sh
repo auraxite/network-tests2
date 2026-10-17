@@ -35,14 +35,11 @@ export PATH="$OMPI_PATH/bin:$PATH"
 export LD_LIBRARY_PATH="${UCX_LIB:+$UCX_LIB:}$OMPI_PATH/lib:${LD_LIBRARY_PATH:-}"
 
 MPICXX="$OMPI_PATH/bin/mpicxx"
-NVCC="$CUDA_PATH/bin/nvcc"
 
-for tool in "$MPICXX" "$NVCC"; do
-  test -x "$tool" || {
-    echo "build.sh: not executable: $tool" >&2
-    exit 1
-  }
-done
+test -x "$MPICXX" || {
+  echo "build.sh: not executable: $MPICXX" >&2
+  exit 1
+}
 
 if ! test -f "$CUDA_PATH/include/cuda_runtime.h"; then
   echo "build.sh: missing $CUDA_PATH/include/cuda_runtime.h" >&2
@@ -56,18 +53,7 @@ CXXFLAGS="-O2 -std=c++17 -I$CUDA_PATH/include"
 
 RPATH="${UCX_LIB:+-Wl,-rpath,$UCX_LIB }-Wl,-rpath,$OMPI_PATH/lib -Wl,-rpath,$CUDA_PATH/lib64"
 
-# === CUDA one_to_one / all_to_all отключены ===
-
-# CUDA_OBJS="$SRC/gpu_cuda_one_to_one.o $SRC/gpu_cuda_all_to_all.o"
-
-# trap 'rm -f $CUDA_OBJS' EXIT
-
-# for unit in gpu_cuda_one_to_one gpu_cuda_all_to_all; do
-#   "$NVCC" $CXXFLAGS -ccbin "$MPICXX" -I"$OMPI_PATH/include" \
-#     -c "$SRC/$unit.cu" -o "$SRC/$unit.o"
-# done
-
-# === Компиляция остальных исходников ===
+# === Компиляция ===
 
 "$MPICXX" $CXXFLAGS \
   "$SRC/gpu_benchmark.cpp" \

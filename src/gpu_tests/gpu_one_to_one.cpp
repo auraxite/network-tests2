@@ -1,276 +1,198 @@
 #include "gpu_one_to_one.hpp"
 
 #include <algorithm>
-#include <cuda_runtime.h>
-#include <functional>
 #include <iomanip>
+#include <memory>
 #include <sstream>
-#include <vector>
 
 namespace gpu_benchmark {
 
-static constexpr int RDV_TAG_FORWARD  = 42;
-static constexpr int RDV_TAG_BACKWARD = 43;
+namespace {
 
-std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
-                                    bool check_host, bool same_node_pair,
-                                    char *d_send, char *d_recv, char *h_buf,
-                                    char *shared_h_buf, MPI_Win shared_h_win,
-                                    const std::vector<std::string> &rank_labels);
+constexpr int TAG_TASK         = 1;
+constexpr int TAG_ACK          = 2;
+constexpr int TAG_DATA         = 0;
+constexpr int RDV_TAG_FORWARD  = 42;
+constexpr int RDV_TAG_BACKWARD = 43;
 
-void schedule_one_to_one(
-    int rank, int nproc, const Args &args, bool via_host,
-    MPI_Comm node_comm, int node_rank,
-    const std::vector<int> &on_my_node,
-    const std::vector<std::string> &rank_labels,
-    const std::function<void(const std::string &)> &mirror) {
+/* Буферы ранга: выделяются один раз на весь режим, а не на каждую пару. */
+struct Buffers {
+	DeviceBuffer                      d_send, d_recv;
+	PinnedBuffer                      h_buf;    // только для пути через память
+	std::unique_ptr<SharedHostWindow> shared;   // общий буфер узла, путь через память
+	char                             *shared_buf = nullptr;
+};
 
-	int local_gpu = 0;
-	cuda_ok(cudaGetDevice(&local_gpu), "cudaGetDevice(schedule_one_to_one)");
-	(void)local_gpu;
+/* Пустое сообщение туда и обратно: держит отправителя и получателя в одной фазе. */
+void rendezvous(bool is_sender, int peer) {
+	char dummy = 0;
+	if (is_sender)
+		mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, peer, RDV_TAG_FORWARD,
+		                    &dummy, 0, MPI_BYTE, peer, RDV_TAG_BACKWARD,
+		                    MPI_COMM_WORLD, MPI_STATUS_IGNORE), "Sendrecv rendezvous(sender)");
+	else
+		mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, peer, RDV_TAG_BACKWARD,
+		                    &dummy, 0, MPI_BYTE, peer, RDV_TAG_FORWARD,
+		                    MPI_COMM_WORLD, MPI_STATUS_IGNORE), "Sendrecv rendezvous(receiver)");
+}
 
-	char   *d_send           = nullptr;
-	char   *d_recv           = nullptr;
-	char   *h_buf            = nullptr;
-	char   *shared_h_buf     = nullptr;
-	MPI_Win shared_h_win     = MPI_WIN_NULL;
-	bool    shared_h_registered = false;
-	const bool use_shared = via_host;
+/* Одна передача src -> dst. Вызывается и отправителем, и получателем. */
+void transfer_once(const Task &t, bool is_sender, bool via_host, bool same_node,
+                   size_t nbytes, Buffers &b) {
+	const int count = static_cast<int>(nbytes);
 
-	cuda_ok(cudaMalloc(&d_send, args.nbytes), "cudaMalloc(d_send)");
-	cuda_ok(cudaMalloc(&d_recv, args.nbytes), "cudaMalloc(d_recv)");
-	cuda_ok(cudaMemset(d_send, 0xAA, args.nbytes), "cudaMemset(d_send init)");
-
-	if (via_host)
-		cuda_ok(cudaMallocHost(&h_buf, args.nbytes), "cudaMallocHost(h_buf)");
-
-	if (use_shared) {
-		MPI_Aint shared_bytes  = 0;
-		int      disp_unit     = 0;
-		void    *shared_base   = nullptr;
-		const MPI_Aint my_bytes = (node_rank == 0)
-		                              ? static_cast<MPI_Aint>(args.nbytes)
-		                              : static_cast<MPI_Aint>(0);
-		mpi_ok(MPI_Win_allocate_shared(my_bytes, sizeof(char), MPI_INFO_NULL,
-		                               node_comm, &shared_base, &shared_h_win),
-		       "MPI_Win_allocate_shared");
-		mpi_ok(MPI_Win_shared_query(shared_h_win, 0, &shared_bytes, &disp_unit,
-		                            &shared_base),
-		       "MPI_Win_shared_query");
-		shared_h_buf = static_cast<char *>(shared_base);
-		if (shared_h_buf && shared_bytes >= static_cast<MPI_Aint>(args.nbytes)) {
-			cudaError_t reg = cudaHostRegister(shared_h_buf, args.nbytes,
-			                                   cudaHostRegisterPortable);
-			if (reg == cudaSuccess || reg == cudaErrorHostMemoryAlreadyRegistered) {
-				if (reg != cudaSuccess) cudaGetLastError();
-				shared_h_registered = true;
-			} else {
-				DBG_LOG(rank, args, "shared host register skipped: "
-				        << cudaGetErrorString(reg));
-				cudaGetLastError();
-			}
+	// Внутри узла через общую оперативную память: копия GPU -> память у
+	// отправителя, сигнал готовности, копия память -> GPU у получателя.
+	if (same_node && b.shared_buf) {
+		if (is_sender) {
+			cuda_ok(cudaMemcpy(b.shared_buf, b.d_send.get(), count, cudaMemcpyDeviceToHost),
+			        "D2H(shared)");
+			b.shared->sync();
+			rendezvous(true, t.dst_rank);
+		} else {
+			rendezvous(false, t.src_rank);
+			b.shared->sync();
+			cuda_ok(cudaMemcpy(b.d_recv.get(), b.shared_buf, count, cudaMemcpyHostToDevice),
+			        "H2D(shared)");
 		}
-	}
-
-	if (rank != 0) {
-		while (true) {
-			Task tw{};
-			mpi_ok(MPI_Recv(&tw, sizeof(Task), MPI_BYTE, 0, 1, MPI_COMM_WORLD,
-			                MPI_STATUS_IGNORE),
-			       "MPI_Recv Task (worker)");
-			DBG_LOG(rank, args, "WORKER_TASK src=" << tw.src_rank
-			        << " dst=" << tw.dst_rank << " stop=" << tw.stop);
-			if (tw.stop) break;
-			const bool same = on_my_node[static_cast<size_t>(tw.src_rank)] != 0 &&
-			                  on_my_node[static_cast<size_t>(tw.dst_rank)] != 0;
-			auto ack = run_one_to_one(rank, tw, args, via_host, same,
-			                          d_send, d_recv, h_buf,
-			                          shared_h_buf, shared_h_win, rank_labels);
-			mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD),
-			       "MPI_Send ack (worker)");
-		}
-		if (shared_h_registered)
-			cuda_ok(cudaHostUnregister(shared_h_buf), "cudaHostUnregister");
-		if (shared_h_win != MPI_WIN_NULL)
-			mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free");
-		if (h_buf) cudaFreeHost(h_buf);
-		cudaFree(d_send);
-		cudaFree(d_recv);
 		return;
 	}
 
-	const double test_t0 = MPI_Wtime();
-	Task t{};
-	for (int src = 0; src < nproc; ++src) {
-		for (int dst = 0; dst < nproc; ++dst) {
-			t = {src, 0, dst, 0, 0};
-			DBG_LOG(rank, args, "PAIR src=" << src << " dst=" << dst);
-
-			if (src == dst) {
-				mirror(print_pair_line("pair",
-				       rank_labels[static_cast<size_t>(src)],
-				       rank_labels[static_cast<size_t>(dst)],
-				       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, args.stat_out));
-				continue;
-			}
-
-			const bool same = on_my_node[static_cast<size_t>(src)] != 0 &&
-			                  on_my_node[static_cast<size_t>(dst)] != 0;
-
-			if (src != 0) mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, src, 1,
-			                              MPI_COMM_WORLD), "MPI_Send Task src");
-			if (dst != 0) mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, dst, 1,
-			                              MPI_COMM_WORLD), "MPI_Send Task dst");
-
-			std::vector<double> metric(ACK_FIELDS, 0.0);
-			if (src == 0 || dst == 0) {
-				auto ack = run_one_to_one(rank, t, args, via_host, same,
-				                          d_send, d_recv, h_buf,
-				                          shared_h_buf, shared_h_win, rank_labels);
-				if (ack[6] == 1.0) metric = ack;
-			}
-			if (src != 0) {
-				std::vector<double> ack(ACK_FIELDS, 0.0);
-				mpi_ok(MPI_Recv(ack.data(), ACK_FIELDS, MPI_DOUBLE, src, 2,
-				                MPI_COMM_WORLD, MPI_STATUS_IGNORE), "MPI_Recv ack src");
-				if (ack[6] == 1.0) metric = ack;
-			}
-			if (dst != 0) {
-				std::vector<double> ack(ACK_FIELDS, 0.0);
-				mpi_ok(MPI_Recv(ack.data(), ACK_FIELDS, MPI_DOUBLE, dst, 2,
-				                MPI_COMM_WORLD, MPI_STATUS_IGNORE), "MPI_Recv ack dst");
-				if (ack[6] == 1.0) metric = ack;
-			}
-
-			mirror(print_pair_line("pair",
-			       rank_labels[static_cast<size_t>(src)],
-			       rank_labels[static_cast<size_t>(dst)],
-			       metric[0], metric[1], metric[2], metric[3],
-			       metric[4], metric[5], args.stat_out));
-		}
-	}
-
-	{
-		std::ostringstream oss;
-		oss << "TotalTimeSec: " << std::fixed << std::setprecision(TOTAL_TIME_DIGITS)
-		    << (MPI_Wtime() - test_t0) << "\n";
-		mirror(oss.str());
-	}
-	t.stop = 1;
-	for (int r = 1; r < nproc; ++r)
-		mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, r, 1, MPI_COMM_WORLD),
-		       "MPI_Send stop");
-
-	if (shared_h_registered)
-		cuda_ok(cudaHostUnregister(shared_h_buf), "cudaHostUnregister");
-	if (shared_h_win != MPI_WIN_NULL)
-		mpi_ok(MPI_Win_free(&shared_h_win), "MPI_Win_free");
-	if (h_buf) cudaFreeHost(h_buf);
-	cudaFree(d_send);
-	cudaFree(d_recv);
-}
-
-std::vector<double> run_one_to_one(int rank, const Task &t, const Args &args,
-                                    bool check_host, bool same_node_pair,
-                                    char *d_send, char *d_recv, char *h_buf,
-                                    char *shared_h_buf, MPI_Win shared_h_win,
-                                    const std::vector<std::string> &rank_labels) {
-	std::vector<double> ack(ACK_FIELDS, 0.0);
-	const bool is_sender   = (rank == t.src_rank);
-	const bool is_receiver = (rank == t.dst_rank);
-	if (!is_sender && !is_receiver) return ack;
-	if (t.src_rank == t.dst_rank) { ack[6] = 1.0; return ack; }
-
-	const int count = static_cast<int>(args.nbytes);
-
-	DBG_LOG(rank, args, "RUN src=" << t.src_rank << " dst=" << t.dst_rank
-	        << " bytes=" << args.nbytes
-	        << " path=" << (check_host ? "host" : "auto"));
-
-	auto do_one = [&]() {
-		// Intra-node: shared host memory path (avoids CUDA IPC unavailability)
-		if (same_node_pair && shared_h_buf) {
-			if (is_sender) {
-				cuda_ok(cudaMemcpy(shared_h_buf, d_send, count,
-				                   cudaMemcpyDeviceToHost), "D2H(shared)");
-				if (shared_h_win != MPI_WIN_NULL)
-					mpi_ok(MPI_Win_sync(shared_h_win), "MPI_Win_sync(sender)");
-				char dummy = 0;
-				mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
-				                    &dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
-				                    MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-				       "Sendrecv ready(sender)");
-			}
-			if (is_receiver) {
-				char dummy = 0;
-				mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
-				                    &dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
-				                    MPI_COMM_WORLD, MPI_STATUS_IGNORE),
-				       "Sendrecv ready(receiver)");
-				if (shared_h_win != MPI_WIN_NULL)
-					mpi_ok(MPI_Win_sync(shared_h_win), "MPI_Win_sync(receiver)");
-				cuda_ok(cudaMemcpy(d_recv, shared_h_buf, count,
-				                   cudaMemcpyHostToDevice), "H2D(shared)");
-			}
-			return;
-		}
-
-		// Inter-node or intra-node without shared buffer
-		if (is_sender) {
-			if (check_host) {
-				cuda_ok(cudaMemcpy(h_buf, d_send, count, cudaMemcpyDeviceToHost), "D2H");
-				mpi_ok(MPI_Send(h_buf, count, MPI_BYTE, t.dst_rank, 0, MPI_COMM_WORLD),
-				       "MPI_Send(host)");
-			} else {
-				mpi_ok(MPI_Send(d_send, count, MPI_BYTE, t.dst_rank, 0, MPI_COMM_WORLD),
-				       "MPI_Send(device)");
-			}
-		}
-		if (is_receiver) {
-			MPI_Status st{};
-			if (check_host) {
-				mpi_ok(MPI_Recv(h_buf, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD, &st),
-				       "MPI_Recv(host)");
-				cuda_ok(cudaMemcpy(d_recv, h_buf, count, cudaMemcpyHostToDevice), "H2D");
+	// Через MPI: буфер в памяти GPU (auto) или копия через оперативную память (host).
+	if (is_sender) {
+		if (via_host) {
+			cuda_ok(cudaMemcpy(b.h_buf.get(), b.d_send.get(), count, cudaMemcpyDeviceToHost), "D2H");
+			mpi_ok(MPI_Send(b.h_buf.get(), count, MPI_BYTE, t.dst_rank, TAG_DATA, MPI_COMM_WORLD),
+			       "MPI_Send(host)");
 		} else {
-			mpi_ok(MPI_Recv(d_recv, count, MPI_BYTE, t.src_rank, 0, MPI_COMM_WORLD, &st),
-			       "MPI_Recv(device)");
-			// UCX cuda_ipc may signal MPI completion before device DMA is fully
-			// committed on the default stream; synchronize to measure true latency.
+			mpi_ok(MPI_Send(b.d_send.get(), count, MPI_BYTE, t.dst_rank, TAG_DATA, MPI_COMM_WORLD),
+			       "MPI_Send(device)");
+		}
+	} else {
+		if (via_host) {
+			mpi_ok(MPI_Recv(b.h_buf.get(), count, MPI_BYTE, t.src_rank, TAG_DATA, MPI_COMM_WORLD,
+			                MPI_STATUS_IGNORE), "MPI_Recv(host)");
+			cuda_ok(cudaMemcpy(b.d_recv.get(), b.h_buf.get(), count, cudaMemcpyHostToDevice), "H2D");
+		} else {
+			mpi_ok(MPI_Recv(b.d_recv.get(), count, MPI_BYTE, t.src_rank, TAG_DATA, MPI_COMM_WORLD,
+			                MPI_STATUS_IGNORE), "MPI_Recv(device)");
+			// UCX cuda_ipc может сообщить о завершении MPI раньше, чем копия на
+			// устройстве действительно закончится: ждём её внутри замера.
 			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(recv device)");
 		}
-		}
-	};
+	}
+}
+
+/* Замер пары. Возвращает ack: заполнен у получателя, у отправителя valid = 0. */
+std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool via_host,
+                                 bool same_node, Buffers &b,
+                                 const std::vector<std::string> &rank_labels) {
+	std::vector<double> ack(ACK_FIELDS, 0.0);
+	const bool is_sender   = rank == t.src_rank;
+	const bool is_receiver = rank == t.dst_rank;
+	if (!is_sender && !is_receiver) return ack;
+
+	DBG_LOG(rank, args, "RUN src=" << t.src_rank << " dst=" << t.dst_rank
+	        << " bytes=" << args.nbytes << " path=" << (via_host ? "host" : "auto"));
+
+	for (int i = 0; i < args.warmup; ++i)
+		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
 
 	std::vector<double> samples_us;
-	samples_us.reserve(static_cast<size_t>(std::max(1, args.iters)));
-
-	for (int i = 0; i < args.warmup; ++i) do_one();
-
+	samples_us.reserve(static_cast<size_t>(args.iters));
 	for (int i = 0; i < args.iters; ++i) {
 		const double t0 = MPI_Wtime();
-		do_one();
+		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
 		const double t1 = MPI_Wtime();
 		if (is_receiver)
 			samples_us.push_back((t1 - t0) * 1e6);
-
-		// Per-iteration rendezvous: keeps sender/receiver in lockstep
-		char dummy = 0;
-		if (is_sender)
-			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_FORWARD,
-			                    &dummy, 0, MPI_BYTE, t.dst_rank, RDV_TAG_BACKWARD,
-			                    MPI_COMM_WORLD, MPI_STATUS_IGNORE), "iter rendezvous(sender)");
-		else
-			mpi_ok(MPI_Sendrecv(&dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_BACKWARD,
-			                    &dummy, 0, MPI_BYTE, t.src_rank, RDV_TAG_FORWARD,
-			                    MPI_COMM_WORLD, MPI_STATUS_IGNORE), "iter rendezvous(receiver)");
+		rendezvous(is_sender, is_sender ? t.dst_rank : t.src_rank);
 	}
 
 	if (is_receiver) {
-		append_raw_samples(args, rank, t, rank_labels, samples_us);
+		append_raw_samples(args, rank_labels[t.src_rank], rank_labels[t.dst_rank], samples_us);
 		fill_ack(samples_us, ack.data());
 	}
 	return ack;
+}
+
+} // namespace
+
+void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
+                         MPI_Comm node_comm, int node_rank,
+                         const std::vector<int> &on_my_node,
+                         const std::vector<std::string> &rank_labels,
+                         const std::function<void(const std::string &)> &mirror) {
+	Buffers b;
+	b.d_send = DeviceBuffer(args.nbytes);
+	b.d_recv = DeviceBuffer(args.nbytes);
+	cuda_ok(cudaMemset(b.d_send.get(), 0xAA, args.nbytes), "cudaMemset(d_send)");
+	if (via_host) {
+		b.h_buf = PinnedBuffer(args.nbytes);
+		// один общий буфер на узел: память выделяет ранг 0 узла
+		b.shared = std::make_unique<SharedHostWindow>(
+		    node_comm, node_rank == 0 ? args.nbytes : 0, rank, args);
+		b.shared_buf = b.shared->segment(0, args.nbytes);
+	}
+
+	const auto same_node = [&](const Task &t) {
+		return on_my_node[t.src_rank] != 0 && on_my_node[t.dst_rank] != 0;
+	};
+
+	// Остальные ранги: ждут задание, участвуют в замере, возвращают ack.
+	if (rank != 0) {
+		while (true) {
+			Task t{};
+			mpi_ok(MPI_Recv(&t, sizeof(Task), MPI_BYTE, 0, TAG_TASK, MPI_COMM_WORLD,
+			                MPI_STATUS_IGNORE), "MPI_Recv Task");
+			DBG_LOG(rank, args, "WORKER_TASK src=" << t.src_rank << " dst=" << t.dst_rank
+			        << " stop=" << t.stop);
+			if (t.stop) break;
+			const auto ack = measure_pair(rank, t, args, via_host, same_node(t), b, rank_labels);
+			mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, TAG_ACK, MPI_COMM_WORLD),
+			       "MPI_Send ack");
+		}
+		return;
+	}
+
+	// Ранг 0: перебирает пары, сам участвует в парах со своим номером.
+	const double test_t0 = MPI_Wtime();
+	for (int src = 0; src < nproc; ++src) {
+		for (int dst = 0; dst < nproc; ++dst) {
+			std::vector<double> metric(ACK_FIELDS, 0.0);
+			if (src != dst) {
+				const Task t{src, dst, 0};
+				DBG_LOG(rank, args, "PAIR src=" << src << " dst=" << dst);
+				for (int peer : {src, dst})
+					if (peer != 0)
+						mpi_ok(MPI_Send(&t, sizeof(Task), MPI_BYTE, peer, TAG_TASK, MPI_COMM_WORLD),
+						       "MPI_Send Task");
+				if (src == 0 || dst == 0) {
+					const auto ack = measure_pair(rank, t, args, via_host, same_node(t), b,
+					                              rank_labels);
+					if (ack[6] == 1.0) metric = ack;
+				}
+				for (int peer : {src, dst}) {
+					if (peer == 0) continue;
+					std::vector<double> ack(ACK_FIELDS, 0.0);
+					mpi_ok(MPI_Recv(ack.data(), ACK_FIELDS, MPI_DOUBLE, peer, TAG_ACK,
+					                MPI_COMM_WORLD, MPI_STATUS_IGNORE), "MPI_Recv ack");
+					if (ack[6] == 1.0) metric = ack;
+				}
+			}
+			mirror(print_pair_line("pair", rank_labels[src], rank_labels[dst], metric.data(),
+			                       args.stat_out));
+		}
+	}
+
+	std::ostringstream oss;
+	oss << "TotalTimeSec: " << std::fixed << std::setprecision(TOTAL_TIME_DIGITS)
+	    << (MPI_Wtime() - test_t0) << "\n";
+	mirror(oss.str());
+
+	const Task stop{0, 0, 1};
+	for (int r = 1; r < nproc; ++r)
+		mpi_ok(MPI_Send(&stop, sizeof(Task), MPI_BYTE, r, TAG_TASK, MPI_COMM_WORLD), "MPI_Send stop");
 }
 
 } // namespace gpu_benchmark
