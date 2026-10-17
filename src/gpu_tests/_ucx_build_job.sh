@@ -1,50 +1,29 @@
 #!/bin/bash
-# Тело сборки UCX. Выполняется внутри srun-джобы на узле с GPU,
-# запускается из build_ucx.sh (там же экспортируются переменные ниже).
-# Отдельным файлом — чтобы не терять подсветку синтаксиса в редакторе.
+# Сборка UCX на узле с GPU. Запускается из build_ucx.sh
 
 set -euo pipefail
 
 echo "host=$(hostname -s) UCX_VERSION=$UCX_VERSION UCX_PREFIX=$UCX_PREFIX CUDA_PATH=$CUDA_PATH"
-[ -f "$CUDA_PATH/include/cuda_runtime.h" ] || { echo "FATAL: $CUDA_PATH/include/cuda_runtime.h не найден"; exit 1; }
+[ -f "$CUDA_PATH/include/cuda_runtime.h" ] || { echo "FATAL: нет $CUDA_PATH/include/cuda_runtime.h"; exit 1; }
 nvidia-smi --query-gpu=index,name --format=csv,noheader || true
 
-# Скачивание (с кэшем в $HOME)
-rm -rf "$WORK"
-mkdir -p "$WORK"
-cd "$WORK"
-
-if [ -f "$HOME/$TARBALL" ]; then
-	echo "Использую кэш $HOME/$TARBALL"
-	cp "$HOME/$TARBALL" .
-else
-	echo "Скачиваю: $URL"
-	wget -q "$URL"
+# Исходники (архив кэшируется в $HOME)
+rm -rf "$WORK" && mkdir -p "$WORK" && cd "$WORK"
+if [ ! -f "$HOME/$TARBALL" ]; then
+	wget -q "$URL" -O "$TARBALL"   # в кэш — только целиком скачанный архив
 	cp "$TARBALL" "$HOME/$TARBALL"
 fi
-tar xzf "$TARBALL"
+tar xzf "$HOME/$TARBALL"
 cd "ucx-$UCX_VERSION"
 
-# gdrcopy опционален: --with-gdrcopy без пути означает "обязательно найди",
-# и configure падает с "gdrcopy packages cannot be found", если в системе нет
-# gdrapi.h. Поэтому ищем заголовок сами и включаем транспорт только если он
-# реально есть.
-#
-# Важно: gdrcopy — это НЕ GPUDirect RDMA. gdrcopy ускоряет мелкие сообщения
-# (даёт CPU прямой доступ к памяти GPU), а крупные передачи GPU→NIC→GPU идут
-# через GPUDirect RDMA и зависят от модуля nvidia_peermem, а не от gdrcopy.
-# Так что без gdrcopy полоса на больших размерах не пострадает.
+# gdrcopy — только если найден gdrapi.h (иначе configure падает).
+# На крупные сообщения не влияет: там работает GPUDirect RDMA.
 GDR_FLAG="--without-gdrcopy"
 for p in "${GDRCOPY_PATH:-}" /usr /usr/local "$HOME/opt/gdrcopy"; do
-	[ -n "$p" ] || continue
-	if [ -f "$p/include/gdrapi.h" ]; then
-		GDR_FLAG="--with-gdrcopy=$p"
-		break
-	fi
+	[ -f "$p/include/gdrapi.h" ] && { GDR_FLAG="--with-gdrcopy=$p"; break; }
 done
 echo "gdrcopy: ${GDR_FLAG#--}"
 
-# Configure
 CONFIG_LOG="/tmp/ucx_configure_$$.log"
 ./configure \
 	--prefix="$UCX_PREFIX" \
@@ -60,30 +39,21 @@ CONFIG_LOG="/tmp/ucx_configure_$$.log"
 	--without-java \
 	--disable-doxygen-doc 2>&1 | tee "$CONFIG_LOG"
 
-if ! grep -qE '^#define[[:space:]]+HAVE_CMA[[:space:]]+1' config.h 2>/dev/null \
-	&& ! grep -qE 'UCT modules:.*\bcma\b' "$CONFIG_LOG"; then
-	echo "FATAL: CMA не подхватился configure (см. $CONFIG_LOG)"
-	exit 1
-fi
-echo "OK: CMA включён"
+grep -qE '^#define[[:space:]]+HAVE_CMA[[:space:]]+1' config.h 2>/dev/null \
+	|| grep -qE 'UCT modules:.*\bcma\b' "$CONFIG_LOG" \
+	|| { echo "FATAL: configure не включил CMA (см. $CONFIG_LOG)"; exit 1; }
 
-# Заглушки для go/java bindings, чтобы не мешали make
+# go/java не собираем, но make всё равно заходит в эти каталоги
 for d in bindings/go bindings/java; do
-	[ -d "$d" ] || continue
-	printf 'all install install-data install-exec uninstall clean distclean check mostlyclean maintainer-clean:\n\t@true\n' > "$d/Makefile"
+	[ -d "$d" ] && printf 'all install install-data install-exec uninstall clean distclean check mostlyclean maintainer-clean:\n\t@true\n' > "$d/Makefile"
 done
 
 make -j"$BUILD_JOBS"
 make install
 
-echo "=== Проверка установки ==="
 "$UCX_PREFIX/bin/ucx_info" -v
-if "$UCX_PREFIX/bin/ucx_info" -d 2>&1 | grep -qE 'Transport: cma'; then
-	echo "OK: CMA транспорт доступен"
-else
-	echo "WARN: CMA транспорта нет в ucx_info -d"
-fi
-"$UCX_PREFIX/bin/ucx_info" -b | grep -iE 'have_cma|have_cuda'
+"$UCX_PREFIX/bin/ucx_info" -d | grep -E 'Transport: (cma|cuda_copy|cuda_ipc)' \
+	|| echo "WARN: в ucx_info -d нет cma или cuda-транспортов"
 
 rm -rf "$WORK" "$CONFIG_LOG"
 echo "Готово. UCX установлен в: $UCX_PREFIX"
