@@ -22,7 +22,6 @@ using filenames produced by gpu_common.cpp:
 """
 
 import argparse
-import math
 import re
 import sys
 from collections import defaultdict
@@ -33,7 +32,7 @@ from typing import Any
 import netCDF4 as nc4
 import numpy as np
 
-import gpu_heatmap as gh
+import gpu_io as io
 
 # Strips per-run sweep tags from a stem to get the logical "series" key:
 # cn_4_43_rep1_auto_one_to_one_b1000_w5_i2000 → cn_4_43_rep1_auto_one_to_one
@@ -75,36 +74,6 @@ def _meta_value_list(runs: list["RunData"], key: str) -> str:
     return ",".join(str(v) for v in values)
 
 # --------------------------------------------------------------------------- #
-# Raw file helpers                                                             #
-# --------------------------------------------------------------------------- #
-
-def _sanitize(label: str) -> str:
-    return "".join(c if (c.isalnum() or c in "._-") else "_" for c in label) or "nolabel"
-
-
-def _raw_path(txt_path: Path, src_label: str, dst_label: str) -> Path:
-    raw_dir = txt_path.parent / "raw"
-    return raw_dir / f"{txt_path.stem}_src{_sanitize(src_label)}_dst{_sanitize(dst_label)}.raw"
-
-
-def _load_raw(txt_path: Path, src_label: str, dst_label: str) -> list[float]:
-    p = _raw_path(txt_path, src_label, dst_label)
-    if not p.is_file():
-        return []
-    samples: list[float] = []
-    with p.open(encoding="utf-8", errors="replace") as f:
-        for line in f:
-            s = line.strip()
-            if not s or s.startswith("#"):
-                continue
-            try:
-                samples.append(float(s))
-            except ValueError:
-                pass
-    return samples
-
-
-# --------------------------------------------------------------------------- #
 # Parse one .txt file into a structured RunData                               #
 # --------------------------------------------------------------------------- #
 
@@ -117,13 +86,13 @@ class RunData:
     def __init__(self, txt_path: Path) -> None:
         self.txt_path = txt_path
         text = txt_path.read_text(encoding="utf-8", errors="replace")
-        self.meta, self._pairs = gh.parse_gpu_one_to_one_text(text)
+        self.meta, self._pairs = io.parse_gpu_one_to_one_text(text)
 
         # Rank labels: prefer hostname-based labels from the meta dict
         n = self.meta.get("ranks", 0)
-        rank_hosts = gh.rank_hosts_from_meta(self.meta, n) if isinstance(n, int) else None
+        rank_hosts = io.rank_hosts_from_meta(self.meta, n) if isinstance(n, int) else None
         if rank_hosts:
-            self.rank_labels: list[str] = gh.axis_labels_by_node(rank_hosts)
+            self.rank_labels: list[str] = io.axis_labels_by_node(rank_hosts)
         else:
             max_rank = max((max(s, d) for s, d, _ in self._pairs), default=-1)
             self.rank_labels = [str(r) for r in range(max_rank + 1)]
@@ -133,7 +102,7 @@ class RunData:
         # nbytes: from header or filename tag
         nbytes = self.meta.get("bytes")
         if not isinstance(nbytes, int) or nbytes <= 0:
-            m = gh.BYTES_TAG_RE.search(txt_path.stem)
+            m = io.BYTES_TAG_RE.search(txt_path.stem)
             nbytes = int(m.group(1)) if m else 0
         self.nbytes: int = nbytes
 
@@ -150,7 +119,7 @@ class RunData:
             if 0 <= src_r < self.n_ranks and 0 <= dst_r < self.n_ranks:
                 sl = self.rank_labels[src_r]
                 dl = self.rank_labels[dst_r]
-                samples = _load_raw(txt_path, sl, dl)
+                samples = io.load_raw(txt_path, sl, dl)
                 if samples:
                     self.raw[(src_r, dst_r)] = samples
 
@@ -177,7 +146,7 @@ def _write_stat_vars(
     for sn in _STAT_KEYS:
         v = ds.createVariable(sn, "f8", dims, fill_value=np.nan, zlib=True, complevel=4)
         v.units = units_map.get(sn, "us")
-        v.long_name = gh.METRIC_TITLE.get(sn, sn)
+        v.long_name = io.METRIC_TITLE.get(sn, sn)
         svars[sn] = v
     return svars
 

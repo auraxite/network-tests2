@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-"""Build line plots bytes -> latency for one src/dst pair from gpu logs.
+"""Графики «размер сообщения -> задержка» для одной пары по результатам gpu_tests.
 
-X axis uses a logarithmic scale with base 2 (log₂).
+Ось X логарифмическая по основанию 2. На каждый режим и среду — свой PNG и CSV.
 
-Arguments:
-  input            .txt file or directory with .txt files
-  -o, --out        output directory for PNG/CSV files
-  --src, --dst     axis label only, for example 28.0
-  --metric         avg_us | med_us | min_us | max_us | var_us | std_us
+Аргументы:
+  input         .txt или каталог с .txt
+  -o, --out     каталог для PNG/CSV
+  --src, --dst  метки осей, например 28.0
+  --metric      avg_us | med_us | min_us | max_us | var_us | std_us (по умолчанию med_us)
 """
 
 import argparse
@@ -25,67 +25,53 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
-import gpu_heatmap as gh
+import gpu_io as io
 
-
-KIB = 1024
-MIB = 1024 * 1024
-GIB = 1024 * 1024 * 1024
+AXIS_LABEL_RE = re.compile(r"^[0-9A-Za-z_.-]+\.[0-9]+$")
+CSV_FIELDS = ["series", "mode", "bytes", "bytes_human", "value", "stddev", "samples"]
 
 
 def format_bytes_human(nbytes: int) -> str:
-	if nbytes >= GIB and nbytes % GIB == 0:
-		return f"{nbytes // GIB} GiB"
-	if nbytes >= MIB and nbytes % MIB == 0:
-		return f"{nbytes // MIB} MiB"
-	if nbytes >= KIB and nbytes % KIB == 0:
-		return f"{nbytes // KIB} KiB"
+	for unit, size in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
+		if nbytes >= size and nbytes % size == 0:
+			return f"{nbytes // size} {unit}"
 	return f"{nbytes} B"
 
 
 def pair_display_label(meta: dict[str, Any], rank: int) -> str:
 	n = meta.get("ranks")
-	if isinstance(n, int):
-		rank_hosts = gh.rank_hosts_from_meta(meta, n)
-		if rank_hosts:
-			labels = gh.axis_labels_by_node(rank_hosts)
-			if 0 <= rank < len(labels):
-				return labels[rank]
+	rank_hosts = io.rank_hosts_from_meta(meta, n) if isinstance(n, int) else None
+	if rank_hosts and 0 <= rank < len(rank_hosts):
+		return io.axis_labels_by_node(rank_hosts)[rank]
 	return str(rank)
 
 
-def pair_metric_value(
-	meta: dict[str, Any],
-	pairs: list[tuple[int, int, list[float]]],
-	src_spec: str,
-	dst_spec: str,
-	metric: str,
-) -> tuple[int, int, float | None]:
+def resolve_axis_pair_label(label: str, meta: dict[str, Any]) -> int | None:
+	"""Только метки осей вида 28.0, номер ранга сам по себе не принимается."""
+	token = label.strip()
+	return io.pair_label_to_rank(token, meta) if AXIS_LABEL_RE.fullmatch(token) else None
+
+
+def pair_metric_value(meta: dict[str, Any], pairs: list[tuple[int, int, list[float]]],
+                      src_spec: str, dst_spec: str, metric: str) -> tuple[int, int, float | None]:
+	"""Ранги пары и значение величины (последнее непустое, если строк несколько)."""
 	src_rank = resolve_axis_pair_label(src_spec, meta)
 	dst_rank = resolve_axis_pair_label(dst_spec, meta)
 	if src_rank is None or dst_rank is None:
 		return -1, -1, None
-
-	idx = gh.METRIC_KEYS.index(metric)
+	idx = io.METRIC_KEYS.index(metric)
 	value: float | None = None
 	for src, dst, vals in pairs:
-		if src != src_rank or dst != dst_rank:
-			continue
-		if idx >= len(vals):
-			continue
-		candidate = float(vals[idx])
-		if math.isnan(candidate):
-			continue
-		value = candidate
+		if src == src_rank and dst == dst_rank and not math.isnan(vals[idx]):
+			value = float(vals[idx])
 	return src_rank, dst_rank, value
 
 
 def plot_series_label(meta: dict[str, Any]) -> str:
-	"""Legend label without the default MPI timer noise."""
-	env = str(meta.get("env", "unknown"))
-	timer = str(meta.get("timer", "unknown"))
+	"""Подпись среды без таймера по умолчанию (mpi)."""
+	parts = [str(meta.get("env", "unknown"))]
 	transport = str(meta.get("transport", "unknown"))
-	parts = [env]
+	timer = str(meta.get("timer", "unknown"))
 	if transport not in ("", "unknown"):
 		parts.append(transport)
 	if timer not in ("", "mpi", "unknown"):
@@ -93,320 +79,130 @@ def plot_series_label(meta: dict[str, Any]) -> str:
 	return " / ".join(parts)
 
 
-def mode_title(mode: str) -> str:
-	return mode.replace("-", "_")
-
-
 def sanitize_token(text: str) -> str:
 	return re.sub(r"[^0-9A-Za-z_.-]+", "_", text.strip()) or "na"
 
 
-AXIS_LABEL_RE = re.compile(r"^[0-9A-Za-z_.-]+\.[0-9]+$")
+def file_nbytes(meta: dict[str, Any], txt_path: Path) -> int | None:
+	"""Размер из шапки, при её отсутствии — из тега _bNNN_ в имени файла."""
+	nbytes = meta.get("bytes")
+	if isinstance(nbytes, int) and nbytes > 0:
+		return nbytes
+	m = io.BYTES_TAG_RE.search(txt_path.stem)
+	return int(m.group(1)) if m and int(m.group(1)) > 0 else None
 
 
-def resolve_axis_pair_label(label: str, meta: dict[str, Any]) -> int | None:
-	"""Resolve only axis labels like 28.0, intentionally rejecting raw ranks."""
-	token = label.strip()
-	if not AXIS_LABEL_RE.fullmatch(token):
-		return None
-	return gh.pair_label_to_rank(token, meta)
-
-
-def infer_nbytes_from_path(txt_path: Path) -> int | None:
-	"""Fallback for logs that missed the Bytes: header but keep _bNNN_ in filename."""
-	match = gh.BYTES_TAG_RE.search(txt_path.stem)
-	if not match:
-		return None
-	try:
-		nbytes = int(match.group(1))
-	except ValueError:
-		return None
-	return nbytes if nbytes > 0 else None
-
-
-def render_pair_plot_from_paths(
-	txt_paths: list[Path],
-	out_dir: Path,
-	*,
-	src_spec: str,
-	dst_spec: str,
-	metric: str,
-) -> int:
-	if not txt_paths:
-		print("gpu_plot: no input .txt files.", file=sys.stderr)
-		return 1
-
-	grouped_series: dict[str, dict[str, dict[int, list[float]]]] = {}
-	first_meta: dict[str, Any] | None = None
-	resolved_src_rank: int | None = None
-	resolved_dst_rank: int | None = None
-	skipped = 0
+def render_pair_plot_from_paths(txt_paths: list[Path], out_dir: Path, *,
+                                src_spec: str, dst_spec: str, metric: str) -> int:
+	# series[mode][подпись среды][размер] -> значения из разных файлов
+	series: dict[str, dict[str, dict[int, list[float]]]] = {}
+	first: tuple[dict[str, Any], int, int] | None = None
 
 	for txt in txt_paths:
-		text = txt.read_text(encoding="utf-8", errors="replace")
-		meta, pairs = gh.parse_gpu_one_to_one_text(text)
-		nbytes = meta.get("bytes")
-		if not isinstance(nbytes, int) or nbytes <= 0:
-			nbytes = infer_nbytes_from_path(txt)
-			if nbytes is not None:
-				meta["bytes"] = nbytes
-		if not isinstance(nbytes, int) or nbytes <= 0:
+		meta, pairs = io.parse_gpu_one_to_one_text(txt.read_text(encoding="utf-8", errors="replace"))
+		nbytes = file_nbytes(meta, txt)
+		if nbytes is None:
 			print(f"gpu_plot: [{txt}] missing valid Bytes: header, skip.", file=sys.stderr)
-			skipped += 1
 			continue
-
 		src_rank, dst_rank, value = pair_metric_value(meta, pairs, src_spec, dst_spec, metric)
 		if value is None:
-			print(
-				f"gpu_plot: [{txt}] no value for pair {src_spec}->{dst_spec} metric={metric}, skip.",
-				file=sys.stderr,
-			)
-			skipped += 1
+			print(f"gpu_plot: [{txt}] no value for pair {src_spec}->{dst_spec} metric={metric}, skip.",
+			      file=sys.stderr)
 			continue
-
-		if first_meta is None:
-			first_meta = meta
-			resolved_src_rank = src_rank
-			resolved_dst_rank = dst_rank
-		elif resolved_src_rank != src_rank or resolved_dst_rank != dst_rank:
-			print(
-				f"gpu_plot: [{txt}] pair spec resolves to another rank pair, skip.",
-				file=sys.stderr,
-			)
-			skipped += 1
+		if first is None:
+			first = (meta, src_rank, dst_rank)
+		elif (first[1], first[2]) != (src_rank, dst_rank):
+			print(f"gpu_plot: [{txt}] pair spec resolves to another rank pair, skip.", file=sys.stderr)
 			continue
-
 		mode = str(meta.get("mode", "unknown"))
-		env = str(meta.get("env", "unknown"))
-		series_label = plot_series_label(meta)
-		grouped_series.setdefault(mode, {}).setdefault(series_label, {}).setdefault(
-			nbytes, []
-		).append(value)
+		series.setdefault(mode, {}).setdefault(plot_series_label(meta), {}) \
+		      .setdefault(nbytes, []).append(value)
 
-	if first_meta is None or resolved_src_rank is None or resolved_dst_rank is None:
+	if first is None:
 		print("gpu_plot: could not collect any data for the requested pair.", file=sys.stderr)
 		return 1
 
-	if not grouped_series:
-		print("gpu_plot: no series to plot after filtering.", file=sys.stderr)
-		return 1
-
 	out_dir.mkdir(parents=True, exist_ok=True)
-	src_label = pair_display_label(first_meta, resolved_src_rank)
-	dst_label = pair_display_label(first_meta, resolved_dst_rank)
-	metric_title = gh.METRIC_TITLE.get(metric, metric)
-	metric_unit = gh.METRIC_CBAR_LABEL.get(metric, "мкс")
-	written_paths: list[Path] = []
+	src_label = pair_display_label(first[0], first[1])
+	dst_label = pair_display_label(first[0], first[2])
+	metric_title = io.METRIC_TITLE.get(metric, metric)
+	metric_unit = io.METRIC_CBAR_LABEL.get(metric, "мкс")
 	cmap = mpl.colormaps["tab10"] if hasattr(mpl, "colormaps") else mpl.cm.get_cmap("tab10")
+	written: list[Path] = []
 
-	for mode in sorted(grouped_series):
-		series = grouped_series[mode]
-		for idx, series_label in enumerate(sorted(series)):
-			points = series[series_label]
-			fig, ax = plt.subplots(figsize=(8.8, 5.6))
-			csv_rows: list[dict[str, Any]] = []
-			x_ticks: set[int] = set()
+	for mode in sorted(series):
+		for idx, label in enumerate(sorted(series[mode])):
+			points = series[mode][label]
 			xs = sorted(points)
 			ys = [float(np.mean(points[x])) for x in xs]
-			yerr = [
-				float(np.std(points[x], ddof=1)) if len(points[x]) > 1 else 0.0
-				for x in xs
-			]
-			x_ticks.update(xs)
+			yerr = [float(np.std(points[x], ddof=1)) if len(points[x]) > 1 else 0.0 for x in xs]
 			color = cmap(idx % max(1, getattr(cmap, "N", 10)))
-			if any(err > 0.0 for err in yerr):
-				ax.errorbar(
-					xs,
-					ys,
-					yerr=yerr,
-					marker="o",
-					markersize=5,
-					linewidth=1.8,
-					capsize=3,
-					color=color,
-				)
+
+			fig, ax = plt.subplots(figsize=(8.8, 5.6))
+			style = dict(marker="o", markersize=5, linewidth=1.8, color=color)
+			if any(e > 0.0 for e in yerr):
+				ax.errorbar(xs, ys, yerr=yerr, capsize=3, **style)
 			else:
-				ax.plot(
-					xs,
-					ys,
-					marker="o",
-					markersize=5,
-					linewidth=1.8,
-					color=color,
-				)
-
-			for x, y, err in zip(xs, ys, yerr):
-				csv_rows.append(
-					{
-						"series": series_label,
-						"mode": mode,
-						"bytes": x,
-						"bytes_human": format_bytes_human(x),
-						"value": y,
-						"stddev": err,
-						"samples": len(points[x]),
-					}
-				)
-
-			ax.set_title(
-				"\n".join(
-					[
-						f"{metric_title} для пары {src_label} -> {dst_label}",
-						f"Режим передачи: {mode_title(mode)}",
-						f"Среда передачи: {series_label}",
-					]
-				),
-				fontsize=11,
-			)
+				ax.plot(xs, ys, **style)
+			ax.set_title("\n".join([
+				f"{metric_title} для пары {src_label} -> {dst_label}",
+				f"Режим передачи: {mode.replace('-', '_')}",
+				f"Среда передачи: {label}",
+			]), fontsize=11)
 			ax.set_xlabel("Размер сообщения (байты), шкала log₂", fontsize=10)
 			ax.set_ylabel(f"{metric_title} ({metric_unit})", fontsize=10)
 			ax.grid(True, which="major", color="#d4d4d8", linewidth=0.8, alpha=0.9)
-			xticks_sorted = sorted(x_ticks)
 			ax.set_xscale("log", base=2)
-			ax.set_xticks(xticks_sorted)
-			ax.set_xticklabels([str(x) for x in xticks_sorted], rotation=35, ha="right")
+			ax.set_xticks(xs)
+			ax.set_xticklabels([str(x) for x in xs], rotation=35, ha="right")
 			fig.subplots_adjust(bottom=0.28)
-			fig.text(
-				0.5,
-				0.082,
-				f"сгенерировано: {gh.generation_timestamp()}",
-				ha="center",
-				va="bottom",
-				fontsize=9,
-				color="black",
-				transform=fig.transFigure,
-			)
+			fig.text(0.5, 0.082, f"сгенерировано: {io.generation_timestamp()}", ha="center",
+			         va="bottom", fontsize=9, color="black", transform=fig.transFigure)
 
-			base_name = (
-				f"src{sanitize_token(src_label)}"
-				f"_dst{sanitize_token(dst_label)}"
-				f"_{sanitize_token(mode)}"
-				f"_{sanitize_token(series_label)}"
-				f"_{gh.METRIC_FILE_STEM.get(metric, metric)}"
-			)
+			base_name = (f"src{sanitize_token(src_label)}_dst{sanitize_token(dst_label)}"
+			             f"_{sanitize_token(mode)}_{sanitize_token(label)}"
+			             f"_{io.METRIC_FILE_STEM.get(metric, metric)}")
 			png_path = out_dir / f"{base_name}.png"
 			csv_path = out_dir / f"{base_name}.csv"
-			legacy_transitions = out_dir / f"{base_name}_transitions.csv"
-			if legacy_transitions.is_file():
-				try:
-					legacy_transitions.unlink()
-				except OSError as e:
-					print(
-						f"gpu_plot: could not remove {legacy_transitions}: {e}",
-						file=sys.stderr,
-					)
-
 			fig.savefig(png_path, dpi=150, bbox_inches="tight")
 			plt.close(fig)
 
 			with csv_path.open("w", encoding="utf-8", newline="") as f:
-				writer = csv.DictWriter(
-					f,
-					fieldnames=[
-						"series",
-						"mode",
-						"bytes",
-						"bytes_human",
-						"value",
-						"stddev",
-						"samples",
-					],
-				)
+				writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
 				writer.writeheader()
-				writer.writerows(csv_rows)
+				writer.writerows({"series": label, "mode": mode, "bytes": x,
+				                  "bytes_human": format_bytes_human(x), "value": y, "stddev": e,
+				                  "samples": len(points[x])} for x, y, e in zip(xs, ys, yerr))
+			written += [png_path, csv_path]
 
-			written_paths.extend([png_path, csv_path])
-
-	for path in written_paths:
+	for path in written:
 		print(path)
 	return 0
 
 
 def main() -> int:
 	p = argparse.ArgumentParser(
-		description="Line plots bytes -> latency from gpu text output (pair ... lines). X axis: log₂.",
-		epilog=(
-			"Arguments:\n"
-			"  input            .txt file or directory with .txt files\n"
-			"  -o, --out        output directory for PNG/CSV files\n"
-			"  --src, --dst     axis label only, like 28.0 or cn28.0\n"
-			"  --metric         avg_us | med_us | min_us | max_us | var_us | std_us\n"
-			"                   default: med_us\n\n"
-		),
-		formatter_class=argparse.RawTextHelpFormatter,
-	)
-	p.add_argument(
-		"input",
-		help="Файл .txt или каталог с .txt файлами",
-	)
-	p.add_argument(
-		"-o",
-		"--out",
-		dest="out_dir",
-		type=Path,
-		default=Path("."),
-		help="Каталог для PNG/CSV",
-	)
-	p.add_argument(
-		"--src",
-		required=True,
-		help="Источник пары: только подпись оси, например 28.0",
-	)
-	p.add_argument(
-		"--dst",
-		required=True,
-		help="Приёмник пары: только подпись оси, например 28.1",
-	)
-	p.add_argument(
-		"--metric",
-		choices=gh.METRIC_KEYS,
-		default="med_us",
-		help="Метрика графика (по умолчанию med_us)",
-	)
+		description="Line plots bytes -> latency from gpu text output (pair ... lines). X axis: log₂.")
+	p.add_argument("input", help="Файл .txt или каталог с .txt файлами")
+	p.add_argument("-o", "--out", dest="out_dir", type=Path, default=Path("."), help="Каталог для PNG/CSV")
+	p.add_argument("--src", required=True, help="Источник пары: подпись оси, например 28.0")
+	p.add_argument("--dst", required=True, help="Приёмник пары: подпись оси, например 28.1")
+	p.add_argument("--metric", choices=io.METRIC_KEYS, default="med_us",
+	               help="Величина (по умолчанию med_us)")
 	args = p.parse_args()
 
-	if not AXIS_LABEL_RE.fullmatch(args.src.strip()):
-		print(
-			f"gpu_plot: --src must be an axis label like 28.0, got: {args.src}",
-			file=sys.stderr,
-		)
-		return 1
-	if not AXIS_LABEL_RE.fullmatch(args.dst.strip()):
-		print(
-			f"gpu_plot: --dst must be an axis label like 28.1, got: {args.dst}",
-			file=sys.stderr,
-		)
-		return 1
+	for name, spec in (("--src", args.src), ("--dst", args.dst)):
+		if not AXIS_LABEL_RE.fullmatch(spec.strip()):
+			print(f"gpu_plot: {name} must be an axis label like 28.0, got: {spec}", file=sys.stderr)
+			return 1
 
 	path = Path(args.input)
-	if not path.exists():
-		print(f"gpu_plot: path not found: {path.resolve()}", file=sys.stderr)
+	txts = sorted(path.glob("*.txt")) if path.is_dir() else [path] if path.is_file() else []
+	if not txts:
+		print(f"gpu_plot: no .txt input at {path.resolve()}", file=sys.stderr)
 		return 1
-
-	if path.is_dir():
-		txts = sorted(path.glob("*.txt"))
-		if not txts:
-			print(f"gpu_plot: no *.txt in {path}", file=sys.stderr)
-			return 1
-		return render_pair_plot_from_paths(
-			txts,
-			args.out_dir,
-			src_spec=args.src,
-			dst_spec=args.dst,
-			metric=args.metric,
-		)
-
-	if path.is_file():
-		return render_pair_plot_from_paths(
-			[path],
-			args.out_dir,
-			src_spec=args.src,
-			dst_spec=args.dst,
-			metric=args.metric,
-		)
-
-	print(f"gpu_plot: not a file or directory: {path}", file=sys.stderr)
-	return 1
+	return render_pair_plot_from_paths(txts, args.out_dir, src_spec=args.src, dst_spec=args.dst,
+	                                   metric=args.metric)
 
 
 if __name__ == "__main__":
