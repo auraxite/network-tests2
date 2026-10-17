@@ -1,7 +1,5 @@
 #!/bin/bash
-# Сборка программы gpu.
-#   bash build.sh        — сам отправляет сборку через srun на узел с GPU
-#   bash build.sh build  — собирает в текущем сеансе (когда вы уже на узле с GPU)
+# Сборка программы gpu: bash build.sh (сам отправляет сборку через srun на узел с GPU)
 
 set -euo pipefail
 
