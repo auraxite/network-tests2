@@ -1,5 +1,5 @@
 PY="${PWD}/.venv/bin/python3"; [ -x "$PY" ] || PY=python3
-R=results_big
+R=results
 
 "$PY" gpu_heatmap.py "$R" -o "$R/heatmaps"
 # "$PY" gpu_plot.py "$R" -o "$R/plots" --src 'cn.rank' --dst 'cn.rank' --metric med_us
