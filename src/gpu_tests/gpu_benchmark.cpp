@@ -348,6 +348,27 @@ int main(int argc, char **argv) {
 	mirror(header_text(args, via_host, nproc, ri));
 	mirror(ucx_config_text(cuda_aware, via_host));
 
+	// --pin-main: главный поток (он крутит опрос в замерах) — на один CPU.
+	// Делается после MPI_Init и создания контекста CUDA, поэтому их служебные
+	// потоки остаются на всей маске ранга.
+	int pinned = -1;
+	if (args.pin_main >= 0) {
+		cuda_ok(cudaFree(nullptr), "cudaFree(0) context");
+		pinned = pin_thread_to_mask_cpu(args.pin_main);
+	}
+	{
+		std::vector<int> all(nproc, -1);
+		mpi_ok(MPI_Gather(&pinned, 1, MPI_INT, all.data(), 1, MPI_INT, 0, MPI_COMM_WORLD),
+		       "MPI_Gather pin");
+		std::ostringstream pin;
+		pin << "Pin:";
+		for (int r = 0; r < nproc; ++r) pin << " r" << r << "=" << all[r];
+		if (args.pin_main < 0) pin << " (off)";
+		else pin << " (K=" << args.pin_main << ")";
+		pin << "\n";
+		mirror(pin.str());
+	}
+
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,

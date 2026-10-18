@@ -40,6 +40,9 @@ struct Args {
 	bool        debug            = false;
 	bool        random_order     = false;   // one_to_one_v2: --order random
 	unsigned    seed             = 1;       // one_to_one_v2: --seed
+	bool        cpu_log          = false;   // one_to_one_v2: --cpu-log
+	double      prespin_sec      = 0.0;     // one_to_one_v2: --prespin-sec
+	int         pin_main         = -1;      // --pin-main K: K-й CPU маски, -1 — нет
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
@@ -79,6 +82,13 @@ void fill_ack(const std::vector<double> &samples_us, double *ack);
 void append_raw_samples(const Args &args, const std::string &src_label,
                         const std::string &dst_label,
                         const std::vector<double> &samples_us);
+
+/* Закрепляет вызывающий поток за k-м (с 0) CPU его текущей маски.
+   Возвращает номер CPU или -1. Потоки, созданные раньше, не затрагиваются. */
+int pin_thread_to_mask_cpu(int k);
+
+/* Номер CPU, на котором сейчас выполняется поток. */
+int current_cpu();
 
 /* То же с другим расширением и точностью (например, .ts — отметки времени). */
 void append_raw_series(const Args &args, const std::string &src_label,

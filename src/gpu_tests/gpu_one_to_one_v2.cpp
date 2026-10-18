@@ -18,6 +18,14 @@ void schedule_one_to_one_v2(int rank, int nproc, const Args &args, bool via_host
                             const std::function<void(const std::string &)> &mirror) {
 	Buffers b = make_buffers(args, via_host, node_comm, node_rank, rank);
 
+	// Разгон CPU до первой пары: без него первая пара мерится на низкой
+	// частоте ядер (см. NOTES.md).
+	if (args.prespin_sec > 0) {
+		const double t_spin = MPI_Wtime();
+		while (MPI_Wtime() - t_spin < args.prespin_sec) {}
+		mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(prespin)");
+	}
+
 	if (rank != 0) {
 		worker_loop(rank, args, via_host, b, on_my_node, rank_labels, true);
 		return;
@@ -34,7 +42,8 @@ void schedule_one_to_one_v2(int rank, int nproc, const Args &args, bool via_host
 	}
 
 	std::ostringstream head;
-	head << "Order: " << (args.random_order ? "random" : "seq") << " seed=" << args.seed << "\n";
+	head << "Order: " << (args.random_order ? "random" : "seq") << " seed=" << args.seed
+	     << " prespin_sec=" << args.prespin_sec << " cpu_log=" << (args.cpu_log ? 1 : 0) << "\n";
 	mirror(head.str());
 
 	std::vector<std::vector<double>> metric(static_cast<size_t>(nproc) * nproc,

@@ -119,12 +119,15 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 	for (int i = 0; i < args.warmup; ++i)
 		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
 
-	std::vector<double> samples_us, times;
+	std::vector<double> samples_us, times, cpus;
 	samples_us.reserve(static_cast<size_t>(args.iters));
 	const bool record_times = with_times && is_receiver;
+	const bool record_cpus  = with_times && args.cpu_log;   // и отправитель, и получатель
 	if (record_times) times.reserve(static_cast<size_t>(args.iters));
+	if (record_cpus) cpus.reserve(static_cast<size_t>(args.iters));
 	for (int i = 0; i < args.iters; ++i) {
 		if (record_times) times.push_back(epoch_now());
+		if (record_cpus) cpus.push_back(current_cpu());
 		const double t0 = MPI_Wtime();
 		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
 		const double t1 = MPI_Wtime();
@@ -133,6 +136,9 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 		rendezvous(is_sender, is_sender ? t.dst_rank : t.src_rank);
 	}
 
+	if (record_cpus)
+		append_raw_series(args, rank_labels[t.src_rank], rank_labels[t.dst_rank], cpus,
+		                  is_sender ? ".scpu" : ".rcpu", 0);
 	if (is_receiver) {
 		append_raw_samples(args, rank_labels[t.src_rank], rank_labels[t.dst_rank], samples_us);
 		if (record_times)

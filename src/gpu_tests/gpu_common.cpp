@@ -9,6 +9,8 @@
 #include <iomanip>    // std::setprecision, std::fixed
 #include <iostream>
 #include <numeric>    // std::accumulate
+#include <pthread.h>  // pthread_setaffinity_np
+#include <sched.h>    // sched_getaffinity, sched_getcpu
 #include <sys/stat.h> // mkdir
 
 #if defined(OPEN_MPI) && OPEN_MPI
@@ -61,6 +63,9 @@ void help(int rank) {
 		<< "                  (default one_to_one)\n"
 		<< "  --order O       one_to_one_v2: seq | random (default seq)\n"
 		<< "  --seed N        one_to_one_v2: seed for --order random (default 1)\n"
+		<< "  --cpu-log       one_to_one_v2: CPU of sender/receiver per iteration (raw/*.scpu, *.rcpu)\n"
+		<< "  --prespin-sec S one_to_one_v2: busy-spin S seconds on every rank before the first pair\n"
+		<< "  --pin-main K    pin the main thread to the K-th CPU (from 0) of its mask after init\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
@@ -154,6 +159,12 @@ Args parse_args(int argc, char **argv, int rank) {
 			else bad_arg(rank, "unknown --order: " + o + " (use seq|random)");
 		} else if (s == "--seed")
 			a.seed = static_cast<unsigned>(std::strtoul(next("--seed"), nullptr, 10));
+		else if (s == "--cpu-log")
+			a.cpu_log = true;
+		else if (s == "--prespin-sec")
+			a.prespin_sec = std::atof(next("--prespin-sec"));
+		else if (s == "--pin-main")
+			a.pin_main = std::atoi(next("--pin-main"));
 		else if (s == "--help" || s == "-h") {
 			help(rank);
 			mpi_ok(MPI_Finalize(), "MPI_Finalize");
@@ -256,6 +267,22 @@ std::string print_pair_line(const char *line_name, const std::string &src_label,
 	oss << "\n";
 	return oss.str();
 }
+
+int pin_thread_to_mask_cpu(int k) {
+	cpu_set_t mask;
+	CPU_ZERO(&mask);
+	if (sched_getaffinity(0, sizeof(mask), &mask) != 0) return -1;
+	for (int c = 0; c < CPU_SETSIZE; ++c) {
+		if (!CPU_ISSET(c, &mask) || k-- > 0) continue;
+		cpu_set_t one;
+		CPU_ZERO(&one);
+		CPU_SET(c, &one);
+		return pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0 ? c : -1;
+	}
+	return -1;
+}
+
+int current_cpu() { return sched_getcpu(); }
 
 void append_raw_samples(const Args &args, const std::string &src_label,
                         const std::string &dst_label,
