@@ -43,6 +43,7 @@ struct Args {
 	bool        cpu_log          = false;   // one_to_one_v2: --cpu-log
 	double      prespin_sec      = 0.0;     // one_to_one_v2: --prespin-sec
 	int         pin_main         = -1;      // --pin-main K: K-й CPU маски, -1 — нет
+	bool        probe            = false;   // one_to_one_v2: --probe
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
@@ -89,6 +90,16 @@ int pin_thread_to_mask_cpu(int k);
 
 /* Номер CPU, на котором сейчас выполняется поток. */
 int current_cpu();
+
+/* Короткие тесты CPU для --probe, нс на шаг:
+   core_ns — цепочка зависимых умножений (зависит только от частоты ядра);
+   l3_ns   — переходы по указателям по 8 МБ (больше L2, меньше L3): задержка
+             L3 и внутренней шины процессора, то есть частота uncore. */
+struct ProbeResult {
+	double core_ns = 0.0;
+	double l3_ns   = 0.0;
+};
+ProbeResult cpu_probe();
 
 /* То же с другим расширением и точностью (например, .ts — отметки времени). */
 void append_raw_series(const Args &args, const std::string &src_label,

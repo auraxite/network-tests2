@@ -116,6 +116,10 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 	DBG_LOG(rank, args, "RUN src=" << t.src_rank << " dst=" << t.dst_rank
 	        << " bytes=" << args.nbytes << " path=" << (via_host ? "host" : "auto"));
 
+	const bool probe = with_times && args.probe;
+	ProbeResult before;
+	if (probe) before = cpu_probe();
+
 	for (int i = 0; i < args.warmup; ++i)
 		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
 
@@ -139,6 +143,12 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 	if (record_cpus)
 		append_raw_series(args, rank_labels[t.src_rank], rank_labels[t.dst_rank], cpus,
 		                  is_sender ? ".scpu" : ".rcpu", 0);
+	if (probe) {
+		const ProbeResult after = cpu_probe();
+		append_raw_series(args, rank_labels[t.src_rank], rank_labels[t.dst_rank],
+		                  {before.core_ns, before.l3_ns, after.core_ns, after.l3_ns},
+		                  is_sender ? ".sprobe" : ".rprobe", 4);
+	}
 	if (is_receiver) {
 		append_raw_samples(args, rank_labels[t.src_rank], rank_labels[t.dst_rank], samples_us);
 		if (record_times)

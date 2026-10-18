@@ -8,7 +8,10 @@
 #include <fstream>
 #include <iomanip>    // std::setprecision, std::fixed
 #include <iostream>
-#include <numeric>    // std::accumulate
+#include <chrono>     // steady_clock для --probe
+#include <cstdint>
+#include <numeric>    // std::accumulate, std::iota
+#include <random>     // std::mt19937 для --probe
 #include <pthread.h>  // pthread_setaffinity_np
 #include <sched.h>    // sched_getaffinity, sched_getcpu
 #include <sys/stat.h> // mkdir
@@ -66,6 +69,8 @@ void help(int rank) {
 		<< "  --cpu-log       one_to_one_v2: CPU of sender/receiver per iteration (raw/*.scpu, *.rcpu)\n"
 		<< "  --prespin-sec S one_to_one_v2: busy-spin S seconds on every rank before the first pair\n"
 		<< "  --pin-main K    pin the main thread to the K-th CPU (from 0) of its mask after init\n"
+		<< "  --probe         one_to_one_v2: core and L3 latency probes before/after each pair\n"
+		<< "                  (raw/*.sprobe, *.rprobe: core_ns l3_ns before, then after)\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
@@ -165,6 +170,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.prespin_sec = std::atof(next("--prespin-sec"));
 		else if (s == "--pin-main")
 			a.pin_main = std::atoi(next("--pin-main"));
+		else if (s == "--probe")
+			a.probe = true;
 		else if (s == "--help" || s == "-h") {
 			help(rank);
 			mpi_ok(MPI_Finalize(), "MPI_Finalize");
@@ -283,6 +290,65 @@ int pin_thread_to_mask_cpu(int k) {
 }
 
 int current_cpu() { return sched_getcpu(); }
+
+namespace {
+
+/* Строка кэша с номером следующей строки: один переход — один промах L2. */
+struct alignas(64) ProbeLine {
+	uint32_t next;
+	char     pad[60];
+};
+
+/* Случайный цикл по всем строкам (алгоритм Саттоло): аппаратная
+   предвыборка не угадывает следующий адрес. Строится один раз. */
+const std::vector<ProbeLine> &probe_lines() {
+	static const std::vector<ProbeLine> lines = [] {
+		constexpr size_t kLines = (8u << 20) / sizeof(ProbeLine);
+		std::vector<uint32_t> order(kLines);
+		std::iota(order.begin(), order.end(), 0u);
+		std::mt19937 gen(12345);
+		for (size_t i = kLines - 1; i > 0; --i)
+			std::swap(order[i], order[std::uniform_int_distribution<size_t>(0, i - 1)(gen)]);
+		std::vector<ProbeLine> v(kLines);
+		for (size_t i = 0; i < kLines; ++i)
+			v[order[i]].next = order[(i + 1) % kLines];
+		return v;
+	}();
+	return lines;
+}
+
+volatile uint64_t g_probe_sink = 0;
+// Константы читаются из volatile, чтобы компилятор не свернул цепочку в формулу.
+volatile uint64_t g_probe_mul = 6364136223846793005ull;
+volatile uint64_t g_probe_add = 1442695040888963407ull;
+
+} // namespace
+
+ProbeResult cpu_probe() {
+	using clock = std::chrono::steady_clock;
+	const auto &lines = probe_lines();
+	ProbeResult r;
+
+	constexpr int kCoreSteps = 200000;
+	uint64_t x = g_probe_sink | 1;
+	const uint64_t mul = g_probe_mul, add = g_probe_add;
+	auto t0 = clock::now();
+	for (int i = 0; i < kCoreSteps; ++i)
+		x = x * mul + add;
+	auto t1 = clock::now();
+	r.core_ns = std::chrono::duration<double, std::nano>(t1 - t0).count() / kCoreSteps;
+
+	constexpr int kChaseSteps = 50000;
+	uint32_t p = static_cast<uint32_t>(x % lines.size());
+	for (int i = 0; i < 2000; ++i) p = lines[p].next;   // разогрев TLB и кэша
+	t0 = clock::now();
+	for (int i = 0; i < kChaseSteps; ++i) p = lines[p].next;
+	t1 = clock::now();
+	r.l3_ns = std::chrono::duration<double, std::nano>(t1 - t0).count() / kChaseSteps;
+
+	g_probe_sink = x + p;
+	return r;
+}
 
 void append_raw_samples(const Args &args, const std::string &src_label,
                         const std::string &dst_label,
