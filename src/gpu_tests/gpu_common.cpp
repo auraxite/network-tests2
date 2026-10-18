@@ -52,13 +52,15 @@ void help(int rank) {
 	if (rank != 0)
 		return;
 	std::cout
-		<< "gpu — GPU pair latency (one_to_one | all_to_all | one_to_all | all_to_one)\n"
+		<< "gpu — GPU pair latency (one_to_one | one_to_one_v2 | all_to_all | one_to_all | all_to_one)\n"
 		<< "  --bytes N       message size in bytes (default 4 MB)\n"
 		<< "  --warmup N      warmup iterations per pair\n"
 		<< "  --iters N       measured iterations per pair\n"
 		<< "  --env E         auto | host\n"
-		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
+		<< "  --mode M        one_to_one | one_to_one_v2 | all_to_all | one_to_all | all_to_one\n"
 		<< "                  (default one_to_one)\n"
+		<< "  --order O       one_to_one_v2: seq | random (default seq)\n"
+		<< "  --seed N        one_to_one_v2: seed for --order random (default 1)\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
@@ -87,8 +89,9 @@ Mode parse_mode(const std::string &s, int rank) {
 		return Mode::AllToAll;
 	if (s == "one_to_all") return Mode::OneToAll;
 	if (s == "all_to_one") return Mode::AllToOne;
+	if (s == "one_to_one_v2") return Mode::OneToOneV2;
 	bad_arg(rank, "unknown --mode: " + s +
-	              " (use one_to_one|all_to_all|one_to_all|all_to_one)");
+	              " (use one_to_one|one_to_one_v2|all_to_all|one_to_all|all_to_one)");
 }
 
 const char *mode_to_string(Mode mode) {
@@ -96,6 +99,7 @@ const char *mode_to_string(Mode mode) {
 	case Mode::AllToAll: return "all_to_all";
 	case Mode::OneToAll: return "one_to_all";
 	case Mode::AllToOne: return "all_to_one";
+	case Mode::OneToOneV2: return "one_to_one_v2";
 	default:             return "one_to_one";
 	}
 }
@@ -143,6 +147,13 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.out_path = next("--out");
 		else if (s == "--debug" || s == "-d")
 			a.debug = true;
+		else if (s == "--order") {
+			const std::string o = next("--order");
+			if (o == "random") a.random_order = true;
+			else if (o == "seq") a.random_order = false;
+			else bad_arg(rank, "unknown --order: " + o + " (use seq|random)");
+		} else if (s == "--seed")
+			a.seed = static_cast<unsigned>(std::strtoul(next("--seed"), nullptr, 10));
 		else if (s == "--help" || s == "-h") {
 			help(rank);
 			mpi_ok(MPI_Finalize(), "MPI_Finalize");
@@ -249,7 +260,13 @@ std::string print_pair_line(const char *line_name, const std::string &src_label,
 void append_raw_samples(const Args &args, const std::string &src_label,
                         const std::string &dst_label,
                         const std::vector<double> &samples_us) {
-	if (!args.save_raw_samples || args.out_path.empty() || samples_us.empty())
+	append_raw_series(args, src_label, dst_label, samples_us, ".raw", REPORT_DIGITS);
+}
+
+void append_raw_series(const Args &args, const std::string &src_label,
+                       const std::string &dst_label, const std::vector<double> &values,
+                       const std::string &ext, int digits) {
+	if (!args.save_raw_samples || args.out_path.empty() || values.empty())
 		return;
 
 	const auto sanitize = [](const std::string &lab) {
@@ -276,13 +293,13 @@ void append_raw_samples(const Args &args, const std::string &src_label,
 	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST) return;
 
 	const std::string path = raw_dir + "/" + base + "_src" + sanitize(src_label) +
-	                         "_dst" + sanitize(dst_label) + ".raw";
+	                         "_dst" + sanitize(dst_label) + ext;
 	std::ofstream out(path, std::ios::app);
 	if (!out.is_open()) return;
 
 	out << "# src=" << src_label << " dst=" << dst_label << "\n";
-	for (double v : samples_us)
-		out << std::fixed << std::setprecision(REPORT_DIGITS) << v << "\n";
+	for (double v : values)
+		out << std::fixed << std::setprecision(digits) << v << "\n";
 }
 
 // ------------------------------------------------------------------ //

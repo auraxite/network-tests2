@@ -21,7 +21,7 @@ enum class Env { Auto, Host };
 
 enum class StatOut { All, Avg, Med, Min, Max, Std, Var };
 
-enum class Mode { OneToOne, AllToAll, OneToAll, AllToOne };
+enum class Mode { OneToOne, AllToAll, OneToAll, AllToOne, OneToOneV2 };
 
 /* ack layout (7 doubles):
      [0] avg_us  [1] med_us  [2] min_us  [3] max_us
@@ -38,6 +38,8 @@ struct Args {
 	std::string out_path;
 	bool        save_raw_samples = true;
 	bool        debug            = false;
+	bool        random_order     = false;   // one_to_one_v2: --order random
+	unsigned    seed             = 1;       // one_to_one_v2: --seed
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
@@ -77,6 +79,11 @@ void fill_ack(const std::vector<double> &samples_us, double *ack);
 void append_raw_samples(const Args &args, const std::string &src_label,
                         const std::string &dst_label,
                         const std::vector<double> &samples_us);
+
+/* То же с другим расширением и точностью (например, .ts — отметки времени). */
+void append_raw_series(const Args &args, const std::string &src_label,
+                       const std::string &dst_label, const std::vector<double> &values,
+                       const std::string &ext, int digits);
 
 std::string print_pair_line(const char *line_name, const std::string &src_label,
                             const std::string &dst_label, const double *ack,

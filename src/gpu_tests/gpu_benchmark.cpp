@@ -1,6 +1,7 @@
 #include "gpu_concurrent.hpp"
 #include "gpu_common.hpp"
 #include "gpu_one_to_one.hpp"
+#include "gpu_one_to_one_v2.hpp"
 
 #include <cctype>
 #include <climits>   // PATH_MAX
@@ -351,6 +352,9 @@ int main(int argc, char **argv) {
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,
 		                    rank_labels, mirror);
+	else if (args.mode == Mode::OneToOneV2)
+		schedule_one_to_one_v2(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,
+		                       rank_labels, mirror);
 	else
 		schedule_concurrent(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks,
 		                    rank_labels, mirror);
