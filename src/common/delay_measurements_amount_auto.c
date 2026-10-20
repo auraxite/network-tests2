@@ -45,6 +45,8 @@ double deviation_counter(double* window,
     avg_value += window[i];
     avg_squares_value += window[i]*window[i];
   }
+  avg_value /= window_length;
+  avg_squares_value /= window_length;
   deviation_value = avg_squares_value - avg_value*avg_value;
 
   return deviation_value;
@@ -106,11 +108,13 @@ double* fft_power_spectrum_counter(double* window,
   fftw_plan p = fftw_plan_dft_r2c_1d(window_length, window, out, FFTW_ESTIMATE);
   fftw_execute(p);
 
+  /* «Мощность» гармоники — модуль коэффициента, как в ВКР Волчанинова (разд. 5.5)
+     и в utils/algo_demo.py, где подбирались пороги */
   for (int k = 0; k < power_spectrum_length; ++k)
   {
     double re = out[k][0];
     double im = out[k][1];
-    window_power_spectrum[k] = re*re + im*im;
+    window_power_spectrum[k] = sqrt(re*re + im*im);
   }
 
   fftw_destroy_plan(p);
@@ -197,6 +201,12 @@ double scalar_criterion(int cur_iter,
   int max_window_begin_index = cur_iter - window_length;
   double min_max_values[2] = {-1, -1};
 
+  /* Окно короче 2 значений (ratio * cur_iter < 2): критерий не считается, измерения продолжаются */
+  if (window_length < 2)
+  {
+    return 0.0;
+  }
+
   for (int cur_win = 0; cur_win < window_selection_parameters.window_amount; cur_win++)
   {
     int cur_ind = rand()%max_window_begin_index;
@@ -233,6 +243,13 @@ double spectrum_criterion(int cur_iter,
   int max_window_begin_index = cur_iter - window_length;
   double sum_of_distancies = 0.0;
   double sum_of_norms = 0.0;
+
+  /* Окно короче 2 значений: критерий не считается, измерения продолжаются */
+  if (window_length < 2)
+  {
+    return 0.0;
+  }
+
   double **windows_power_spectrums = (double**)malloc(window_selection_parameters.window_amount*sizeof(double*)); 
   int power_spectrum_length = counters.spectrum_length_counter(window_length);
 
