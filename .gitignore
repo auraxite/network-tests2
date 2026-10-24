@@ -74,3 +74,7 @@ wire_journal_48_53.xlsx
 *.code-workspace
 
 src/gpu_tests/results
+work/
+
+# данные с кластера скачивать в work/diploma/results/, не в корень
+/results/

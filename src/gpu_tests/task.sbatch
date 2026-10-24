@@ -1,5 +1,7 @@
 #!/bin/bash
-# Запуск: bash submit.sh (раздел берётся из config.sh)
+# Запуск: bash submit.sh — обычное измерение (experiments/default.conf);
+#         bash submit.sh task.sbatch <эксперимент> — experiments/<эксперимент>.conf
+# Раздел берётся из config.sh, список экспериментов и их данные — experiments/README.md
 #SBATCH --job-name=clustbench
 #SBATCH --time=02:00:00
 #SBATCH --output=clustbench-%j.out
@@ -61,59 +63,41 @@
 # Если нужен ровно один GPU на ранг — бери детерминированные варианты:
 # --gpu-bind=map_gpu:0,1,2,3 или --gpu-bind=per_task:1.
 
-ENVS=( # закомментировать лишнее
-	auto
-	host
-)
-MODES=( # закомментировать лишнее
-	one_to_one
-	all_to_all
-	one_to_all
-	all_to_one
-)
+# --- Что запускать: experiments/<имя>.conf (по умолчанию default) ---
+# Описание задаёт:
+#   PLAN          строки "блок повторов среда режим байт:итераций:прогрев [ключи программы]"
+#   COMMON        ключи программы для всех запусков
+#   SHUFFLE_SEED  перемешать запуски (пусто — по порядку PLAN)
+#   SEED_BASE     зерно порядка пар у запуска = SEED_BASE + номер (для one_to_one_v2)
+#   OUT_LAYOUT    flat — results/<узлы>_<среда>_<режим>_b.._w.._i...txt (обычное измерение)
+#                 job  — results/hyp_<задание>/ c runs.csv и архивом .tgz (эксперименты)
+#   REQUIRE       строка, которая должна быть в программе (иначе: пересобери)
+#   LOG_FREQ      1 — фоновая запись частот GPU и CPU каждые 200 мс
+#   LOG_TOPOLOGY  1 — lscpu и маски ядер рангов
+#   COLLECT_ENV   1 — collect_env.sh: топология, ucx_info -d, адаптеры
+#   UCX_PATHS     1 — журнал UCX по рангам и счётчики адаптеров/NVLink до и после запуска
+#   PROTO_BLOCKS  блоки, где включаются UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
+EXPERIMENT="${1:-default}"
+GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
+CONF="${GPU_TESTS}/experiments/${EXPERIMENT}.conf"
+test -f "${CONF}" || { echo "error: нет ${CONF} (список: ls experiments)" >&2; exit 1; }
 
-ONE_TO_ONE_CASES=( # "bytes:iters:warmup"
-	"1000:2000:5"
-	"2000:2000:5"
-	"4000:2000:5"
-	"8000:2000:5"
-	"16000:2000:5"
-	"32000:2000:5"
-	"64000:2000:5"
-	"128000:2000:5"
-	"256000:2000:5"
-	"512000:2000:5"
-	"1024000:1000:5"
-	"2048000:1000:5"
-	"4096000:1000:5"
-	"8192000:100:5"
-	"16384000:100:5"
-)
-
-ALL_TO_ALL_CASES=( # "bytes:iters:warmup"
-	"512000:1000:5"
-	"4096000:500:5"
-	"16384000:200:5"
-)
-
-# one_to_all и all_to_one: раунд на каждый корень, итерации на раунд
-ROOTED_CASES=( # "bytes:iters:warmup"
-	"512000:1000:5"
-	"4096000:500:5"
-	"16384000:200:5"
-)
+PLAN=(); COMMON=(); SHUFFLE_SEED=""; SEED_BASE=0; OUT_LAYOUT=job; REQUIRE=""
+LOG_FREQ=0; LOG_TOPOLOGY=0; COLLECT_ENV=0; UCX_PATHS=0; PROTO_BLOCKS=()
+source "${CONF}"
 
 # Пути к Open MPI, UCX и CUDA — общие, из config.sh в каталоге отправки
-source "${SLURM_SUBMIT_DIR:-.}/config.sh"
+source "${GPU_TESTS}/config.sh"
 
 set -eEuo pipefail
 
+BG_PIDS=()
+stop_bg() { for p in ${BG_PIDS[@]+"${BG_PIDS[@]}"}; do kill "$p" 2>/dev/null || true; done; }
 on_error() {
 	local exit_code=$?
-	echo "FATAL: benchmark step failed (exit=${exit_code}). Stopping job immediately." >&2
-	if [[ -n "${SLURM_JOB_ID:-}" ]]; then
-		scancel "${SLURM_JOB_ID}" >/dev/null 2>&1 || true
-	fi
+	echo "FATAL: шаг завершился с ошибкой (exit=${exit_code}), задание остановлено" >&2
+	stop_bg
+	if [[ -n "${SLURM_JOB_ID:-}" ]]; then scancel "${SLURM_JOB_ID}" >/dev/null 2>&1 || true; fi
 	exit "${exit_code}"
 }
 trap on_error ERR
@@ -140,6 +124,7 @@ unset UCX_RNDV_SCHEME
 unset UCX_MEMTYPE_CACHE
 unset UCX_RNDV_THRESH
 unset UCX_TLS
+unset UCX_PROTO_ENABLE UCX_PROTO_INFO UCX_LOG_LEVEL
 
 # UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME, UCX_MEMTYPE_CACHE
 # выставляются программой до MPI_Init на основе --env:
@@ -171,114 +156,184 @@ unset UCX_TLS
 # на нужной партиции, затем раскомментируй и подставь своё:
 # export UCX_NET_DEVICES=mlx5_0:1
 
-
-GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
-OUT_DIR="${GPU_TESTS}/results"
-mkdir -p "${OUT_DIR}"
-NTASKS="${SLURM_NTASKS:-4}"
 BIN="${GPU_TESTS}/gpu"
+NNODES="${SLURM_JOB_NUM_NODES:-1}"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"
+if [[ "${OUT_LAYOUT}" == flat ]]; then
+	OUT_DIR="${GPU_TESTS}/results"
+else
+	OUT_DIR="${GPU_TESTS}/results/hyp_${SLURM_JOB_ID:-local}"
+fi
+RUNS="${OUT_DIR}/runs.csv"
 
+test -x "$BIN" || { echo "error: нет $BIN (bash build.sh)" >&2; exit 1; }
+[[ -z "${REQUIRE}" ]] || grep -qa -- "${REQUIRE}" "$BIN" || {
+	echo "error: $BIN собран без ${REQUIRE} — пересобери: bash build.sh" >&2; exit 1; }
+mkdir -p "${OUT_DIR}"
+echo "experiment: ${EXPERIMENT} (${CONF})"
+echo "out: ${OUT_DIR}"
+
+# --- Диагностика окружения ---
 echo "=== clustbench env ==="
 echo "host: $(hostname -s)"
 echo "OMPI_PATH=$OMPI_PATH"
 echo "UCX_PATH=$UCX_PATH"
-if [[ -d "$UCX_PATH/lib" ]]; then
-	echo "UCX lib: OK ($UCX_PATH/lib)"
-else
-	echo "UCX lib: (нет каталога — используется системный UCX из libmpi, если есть)"
-fi
-
 command -v mpirun && mpirun --version | head -3
 "$OMPI_PATH/bin/ompi_info" --parsable --all 2>/dev/null | grep -E 'opal_built_with_cuda_support|opal_cuda_support' || true
-echo "BIN=$BIN"
-test -x "$BIN" || { echo "error: missing or not executable: $BIN"; exit 1; }
 ldd "$BIN" | grep -E 'libmpi|libcudart|libucp|libuct' || true
-ldd "$OMPI_PATH/lib/libmpi.so" 2>/dev/null | grep -E 'libucp|libuct' || true
 if command -v ucx_info >/dev/null 2>&1; then
-	echo "UCX transports with cma:"
-	ucx_info -d 2>/dev/null | grep -E '^# *Transport:' | grep -i cma || \
-		echo "  WARNING: cma не найден в ucx_info -d (UCX собран без CMA?)"
-else
-	echo "ucx_info: не в PATH (диагностику CMA пропускаем)"
+	echo "UCX: транспорты cma, cuda и gdr в ucx_info -d:"
+	ucx_info -d 2>/dev/null | grep -E '^# *Transport:' | grep -iE 'cma|cuda|gdr' | sort -u | sed 's/^/  /' || \
+		echo "  WARNING: не найдены — UCX собран без CMA или CUDA?"
 fi
-
 echo "yama.ptrace_scope на узлах задания:"
-srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" \
+srun --ntasks-per-node=1 -n"${NNODES}" \
 	bash -c 'echo "  $(hostname -s): $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo n/a)"' \
 	2>/dev/null || true
 
-# --- Диагностика GPUDirect RDMA ---------------------------------------
-# Без этих трёх пунктов auto-режим будет упираться в ~0.8 ГБ/с независимо
-# от любых UCX-настроек, потому что NIC просто не сможет читать память GPU
-# напрямую и всё пойдёт через staging в хостовой памяти.
+# Без модуля peer-memory GPUDirect RDMA не работает, и auto упирается в ~0.8 ГБ/с:
+# сетевой адаптер не может читать память GPU, всё идёт через ОЗУ.
+# GPU и адаптер должны быть рядом: PIX/PXB — хорошо, SYS (через UPI между сокетами) — плохо.
 echo "=== GPUDirect diagnostics ==="
-srun --ntasks-per-node=1 -n"${SLURM_JOB_NUM_NODES:-1}" bash -c '
+srun --ntasks-per-node=1 -n"${NNODES}" bash -c '
 echo "--- $(hostname -s) ---"
-
-# 1. Модуль peer-memory. Без него GPUDirect RDMA физически не работает.
 if lsmod | grep -qE "nvidia_peermem|nv_peer_mem"; then
 	echo "  peermem: OK ($(lsmod | grep -oE "nvidia_peermem|nv_peer_mem" | head -1))"
 else
-	echo "  peermem: ОТСУТСТВУЕТ — GPUDirect RDMA не работает!"
-	echo "           нужен modprobe nvidia_peermem (права root, к админам кластера)"
+	echo "  peermem: ОТСУТСТВУЕТ — GPUDirect RDMA не работает (modprobe nvidia_peermem, к админам)"
 fi
-
-# 2. gdrdrv — ускоряет мелкие сообщения через gdr_copy.
-if lsmod | grep -q gdrdrv; then
-	echo "  gdrdrv:  OK"
-else
-	echo "  gdrdrv:  нет (gdr_copy будет пропущен, крупные размеры не пострадают)"
-fi
-
-# 3. Топология: GPU и HCA должны быть на одном PCIe-свитче/NUMA-узле.
-#    Связь PIX/PXB — хорошо, SYS (через UPI между сокетами) — те самые 0.8 ГБ/с.
+if lsmod | grep -q gdrdrv; then echo "  gdrdrv:  OK"; else echo "  gdrdrv:  нет (gdr_copy пропускается)"; fi
 echo "  топология GPU<->HCA:"
 nvidia-smi topo -m 2>/dev/null | sed "s/^/    /" || echo "    nvidia-smi topo недоступен"
 ' 2>/dev/null || true
-
-# Какие CUDA/GDR-транспорты реально собрались в UCX
-if command -v ucx_info >/dev/null 2>&1; then
-	echo "CUDA/GDR транспорты в ucx_info -d:"
-	ucx_info -d 2>/dev/null | grep -E '^# *Transport:' | grep -iE 'cuda|gdr' | sort -u | sed 's/^/  /' || \
-		echo "  WARNING: cuda_copy/cuda_ipc не найдены — UCX собран без CUDA?"
-fi
 echo "======================"
 
-for ENV in "${ENVS[@]}"; do
-	for MODE in "${MODES[@]}"; do
-		case "${MODE}" in
-		one_to_one) CASES=("${ONE_TO_ONE_CASES[@]}") ;;
-		all_to_all) CASES=("${ALL_TO_ALL_CASES[@]}") ;;
-		one_to_all|all_to_one) CASES=("${ROOTED_CASES[@]}") ;;
-		*) echo "unknown mode: ${MODE}" >&2; exit 1 ;;
-		esac
+if [[ "${COLLECT_ENV}" == 1 ]]; then
+	srun --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash "${GPU_TESTS}/collect_env.sh" "${OUT_DIR}"
+fi
 
-		for CASE in "${CASES[@]}"; do
-			IFS=":" read -r BYTES ITERS WARMUP <<<"${CASE}"
+if [[ "${LOG_TOPOLOGY}" == 1 ]]; then
+	srun --ntasks-per-node=1 -n"${NNODES}" bash -c '
+		f="$0/topology_$(hostname -s).txt"
+		{ lscpu; echo; lscpu -e; echo; echo "# CPU: thread_siblings_list";
+		  for c in /sys/devices/system/cpu/cpu[0-9]*; do
+			echo "${c##*cpu} $(cat $c/topology/thread_siblings_list 2>/dev/null)"; done | sort -n
+		  echo; echo "# scaling_governor:"; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
+		} > "$f"' "${OUT_DIR}"
+	srun --gres-flags=allow-task-sharing --cpu-bind=cores bash -c \
+		'echo "rank=$SLURM_PROCID local=$SLURM_LOCALID host=$(hostname -s) $(grep Cpus_allowed_list /proc/self/status)"' \
+		| sort > "${OUT_DIR}/rank_masks.txt"
+fi
 
-			OUT_TXT="${OUT_DIR}/${SAFE_NODES}_${ENV}_${MODE}_b${BYTES}_w${WARMUP}_i${ITERS}.txt"
-			echo "RUN env=${ENV} mode=${MODE} bytes=${BYTES} warmup=${WARMUP} iters=${ITERS}"
-			echo "  -> ${OUT_TXT}"
+# Фоновые записи частот GPU и CPU каждые 200 мс; --overlap не занимает ресурсы замеров
+if [[ "${LOG_FREQ}" == 1 ]]; then
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
+		nvidia-smi --query-gpu=timestamp,index,pci.bus_id,clocks.sm,clocks.mem,pstate,temperature.gpu,power.draw,utilization.gpu \
+			--format=csv,nounits -lms 200 > "$0/gpu_clocks_$(hostname -s).csv"' "${OUT_DIR}" \
+		2>"${OUT_DIR}/gpu_clocks.err" &
+	BG_PIDS+=($!)
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" bash -c '
+		f="$0/cpu_freq_$(hostname -s).csv"
+		while true; do
+			echo "$(date +%s.%N),$(awk "/^cpu MHz/ {printf \"%s;\", \$4}" /proc/cpuinfo)" >> "$f"
+			sleep 0.2
+		done' "${OUT_DIR}" 2>"${OUT_DIR}/cpu_freq.err" &
+	BG_PIDS+=($!)
+fi
 
-			echo "  launch: rank-per-gpu mode (${NTASKS} MPI rank(s), 2 visible GPU/node)"
-			# --cpu-bind=verbose,cores — жёсткая привязка ранга к ядрам
-			# (verbose печатает фактическую маску, чтобы было видно, что
-			# ранг сел рядом со своим GPU, а не на чужой сокет).
-			srun --mpi=pmix \
-				--kill-on-bad-exit=1 \
-				--gres-flags=allow-task-sharing \
-				--cpu-bind=verbose,cores \
-				"${BIN}" \
-				--bytes "${BYTES}" \
-				--warmup "${WARMUP}" \
-				--iters "${ITERS}" \
-				--env "${ENV}" \
-				--mode "${MODE}" \
-				--out "${OUT_TXT}"
+# Счётчики: байты, отправленные каждым сетевым адаптером (port_xmit_data в 4-байтовых словах),
+# и трафик NVLink. Разбор — parse_paths.py.
+snap() {
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
+		f="$0/counters/$(hostname -s)_$1.txt"
+		{ for d in /sys/class/infiniband/*; do
+			for p in "$d"/ports/*; do
+				echo "nic $(basename "$d") $(basename "$p") xmit_words $(cat "$p"/counters/port_xmit_data 2>/dev/null || echo NA)"
+			done
+		  done
+		  echo "# nvidia-smi nvlink -gt d"
+		  nvidia-smi nvlink -gt d 2>&1 || echo "NA"
+		} > "$f"' "${OUT_DIR}" "$1"
+}
+if [[ "${UCX_PATHS}" == 1 ]]; then
+	mkdir -p "${OUT_DIR}/ucx" "${OUT_DIR}/counters"
+	# Трафик каждого GPU по PCIe раз в секунду (МБ/с приёма и передачи), строка с временем эпохи:
+	# путь через ОЗУ или адаптер проходит по PCIe GPU, путь по NVLink — нет
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
+		stdbuf -oL nvidia-smi dmon -s t -d 1 | while IFS= read -r l; do echo "$(date +%s.%N) $l"; done \
+			> "$0/counters/pcie_$(hostname -s).txt"' "${OUT_DIR}" 2>"${OUT_DIR}/counters/pcie.err" &
+	BG_PIDS+=($!)
+fi
 
-			echo "OK  env=${ENV} mode=${MODE} bytes=${BYTES}"
-		done
+# --- Список запусков; перемешивание — Фишер — Йетс на bash (shuf с <(yes) рвал задание SIGPIPE) ---
+LIST=()
+for LINE in "${PLAN[@]}"; do
+	read -r BLOCK REPS ENV MODE CASE ARGS <<<"${LINE}"
+	for REP in $(seq 1 "${REPS}"); do
+		LIST+=("${BLOCK} ${REP} ${ENV} ${MODE} ${CASE} ${ARGS}")
 	done
 done
+if [[ -n "${SHUFFLE_SEED}" ]]; then
+	RANDOM=${SHUFFLE_SEED}
+	for ((K = ${#LIST[@]} - 1; K > 0; K--)); do
+		J=$((RANDOM % (K + 1)))
+		TMP=${LIST[K]}; LIST[K]=${LIST[J]}; LIST[J]=${TMP}
+	done
+fi
+echo "запусков: ${#LIST[@]}, перемешивание: ${SHUFFLE_SEED:-нет}"
+if [[ "${OUT_LAYOUT}" == job ]]; then echo "index,block,rep,seed,env,mode,bytes,iters,warmup,args,start,end" > "${RUNS}"; fi
+
+for IDX in "${!LIST[@]}"; do
+	read -r BLOCK REP ENV MODE CASE ARGS <<<"${LIST[$IDX]}"
+	IFS=":" read -r B I W <<<"${CASE}"
+	SEED=$((SEED_BASE + IDX))
+	EXTRA=()
+	if [[ -n "${ARGS}" ]]; then read -r -a EXTRA <<<"${ARGS}"; fi
+	if [[ "${MODE}" == one_to_one_v2 ]]; then EXTRA+=(--seed "${SEED}"); fi
+	if [[ "${OUT_LAYOUT}" == flat ]]; then
+		NAME="${SAFE_NODES}_${ENV}_${MODE}_b${B}_w${W}_i${I}"
+	else
+		NAME="${SAFE_NODES}_${BLOCK}_rep${REP}_s${SEED}_${ENV}_${MODE}_b${B}_w${W}_i${I}"
+	fi
+	UCX_ENV=()
+	if [[ "${UCX_PATHS}" == 1 ]]; then UCX_ENV=(UCX_LOG_LEVEL=info); fi
+	for P in ${PROTO_BLOCKS[@]+"${PROTO_BLOCKS[@]}"}; do
+		if [[ "${BLOCK}" == "${P}" ]]; then UCX_ENV+=(UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y); fi
+	done
+	# Вывод программы: по файлу на ранг (журнал UCX), в журнал задания (обычное измерение) или никуда
+	if [[ "${UCX_PATHS}" == 1 ]]; then
+		STDIO=(--output="${OUT_DIR}/ucx/${NAME}.r%t.out" --error="${OUT_DIR}/ucx/${NAME}.r%t.err")
+	elif [[ "${OUT_LAYOUT}" == flat ]]; then
+		STDIO=()
+	else
+		STDIO=(--output=/dev/null)
+	fi
+	echo "RUN ${IDX}: ${BLOCK} rep=${REP} env=${ENV} mode=${MODE} bytes=${B} warmup=${W} iters=${I} ${ARGS}"
+	if [[ "${UCX_PATHS}" == 1 ]]; then snap "${IDX}_before"; fi
+	T0=$(date +%s.%N)
+	# --cpu-bind=verbose,cores: ранг жёстко на своих ядрах, маска печатается в журнал задания
+	env ${UCX_ENV[@]+"${UCX_ENV[@]}"} srun --mpi=pmix \
+		--kill-on-bad-exit=1 \
+		--gres-flags=allow-task-sharing \
+		--cpu-bind=verbose,cores \
+		${STDIO[@]+"${STDIO[@]}"} \
+		"${BIN}" \
+		--bytes "${B}" --warmup "${W}" --iters "${I}" --env "${ENV}" --mode "${MODE}" \
+		${COMMON[@]+"${COMMON[@]}"} ${EXTRA[@]+"${EXTRA[@]}"} --out "${OUT_DIR}/${NAME}.txt"
+	T1=$(date +%s.%N)
+	if [[ "${UCX_PATHS}" == 1 ]]; then snap "${IDX}_after"; fi
+	if [[ "${OUT_LAYOUT}" == job ]]; then
+		echo "${IDX},${BLOCK},${REP},${SEED},${ENV},${MODE},${B},${I},${W},${ARGS},${T0},${T1}" >> "${RUNS}"
+	fi
+done
+
+stop_bg
+wait 2>/dev/null || true
+if [[ "${OUT_LAYOUT}" == job ]]; then
+	cp "${GPU_TESTS}/clustbench-${SLURM_JOB_ID:-local}.err" "${OUT_DIR}/job.err" 2>/dev/null || true
+	# Один архив: при скачивании множества мелких файлов часть терялась (hyp_11065, hyp_11078)
+	tar czf "${OUT_DIR}.tgz" -C "$(dirname "${OUT_DIR}")" "$(basename "${OUT_DIR}")"
+	echo "архив: ${OUT_DIR}.tgz"
+fi
+echo "DONE: ${OUT_DIR}"
