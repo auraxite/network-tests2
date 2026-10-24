@@ -1,19 +1,15 @@
 #!/bin/bash
-# Сборка Open MPI на узле с GPU. Запускается из build_openmpi.sh через srun,
-# переменные (SRC_DIR, OMPI_VERSION, OMPI_PREFIX, UCX_PATH, CUDA_PATH,
-# BUILD_JOBS) приходят оттуда.
-#
+# Сборка Open MPI на узле с GPU. Запускается из build_openmpi.sh
+
 # Перед сборкой вносится одна правка в pml ucx: публиковать один полный адрес
 # UCX для всех процессов. Без неё в задании srun на нескольких узлах пары GPU
-# одного узла передают данные через сетевой адаптер (g5500, 16 МБ: ~830 мкс
-# вместо ~72). Почему — в NOTES.md, раздел «Правка Open MPI».
-# Собрать без правки: OMPI_PATCH_FULLADDR=0 bash build_openmpi.sh
+# одного узла передают данные через сетевой адаптер.
 
 set -euo pipefail
 
 cd "$SRC_DIR/openmpi-$OMPI_VERSION"
 echo "host=$(hostname -s) OMPI_PREFIX=$OMPI_PREFIX UCX_PATH=$UCX_PATH CUDA_PATH=$CUDA_PATH"
-make distclean || true   # на чистых исходниках distclean завершается с ошибкой
+make distclean || true
 
 # --- Правка pml_ucx.c: заменить одну строку (или вернуть исходную) ----------
 PML_UCX="ompi/mca/pml/ucx/pml_ucx.c"
@@ -33,14 +29,10 @@ elif [ "$(grep -cF "$from" "$PML_UCX")" = 1 ]; then
 	sed -i "${line}s|.*|$to|" "$PML_UCX"
 	echo "pml_ucx.c, строка $line: $to"
 else
-	# другая версия Open MPI: строки нет или она не одна — лучше не собирать
 	echo "FATAL: в $PML_UCX не найдена ровно одна строка '$from'"
 	exit 1
 fi
 
-# --- Сборка ------------------------------------------------------------------
-# --with-cuda: CUDA-aware MPI (буферы GPU в MPI_Send/Recv, среда auto).
-# hcoll на кластере нет: не искать и не собирать.
 ./configure \
 	--prefix="$OMPI_PREFIX" \
 	--with-ucx="$UCX_PATH" \
