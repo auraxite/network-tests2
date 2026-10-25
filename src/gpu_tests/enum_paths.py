@@ -25,7 +25,8 @@ from pathlib import Path
 def section(text, title):
 	"""Текст раздела collect_env.sh: от «===== title» до следующего «=====»."""
 	m = re.search(r"^===== " + re.escape(title) + r" =====\n(.*?)(?=^===== |\Z)", text, re.M | re.S)
-	return m.group(1) if m else ""
+	# nvidia-smi выделяет заголовок управляющими кодами терминала (ESC[4m … ESC[0m)
+	return re.sub(r"\x1b\[[0-9;]*m", "", m.group(1)) if m else ""
 
 
 def parse_topo(txt):

@@ -84,15 +84,23 @@ def pcie_tx(samples, t0, t1):
 
 
 def read_ucx(path):
-	"""Строки ep_cfg и таблицы UCX_PROTO_INFO из журнала одного процесса."""
+	"""Конфигурации соединений и таблицы UCX_PROTO_INFO из журнала одного процесса.
+
+	UCX 1.15 пишет в журнал уровня info строку на конфигурацию соединения:
+	  «0x… intra-node cfg#2 tag(sysv/memory cma/memory rc_mlx5/mlx5_0:1 cuda_ipc/cuda)»
+	(в других версиях — «ep_cfg[N]: tag(...)»). Каждая строка журнала начинается
+	с «[время] [узел:pid:поток]», его снимаем.
+	"""
 	cfg, rows = [], []
 	if not path.exists():
 		return cfg, rows
 	title = None
-	for line in open(path, encoding="utf-8", errors="replace"):
-		m = re.search(r"ep_cfg\[(\d+)\]:\s*(.*)", line)
-		if m:
-			cfg.append((int(m[1]), m[2].strip()))
+	for raw in open(path, encoding="utf-8", errors="replace"):
+		line = re.sub(r"^\[[^\]]*\]\s*\[[^\]]*\]\s*", "", raw)
+		m = re.search(r"\b((?:self|intra-node|inter-node) cfg#\d+) (tag\(.*\))", line) or \
+			re.search(r"(ep_cfg\[\d+\]):\s*(.*)", line)
+		if m and not line.lstrip().startswith("|"):
+			cfg.append((m[1], m[2].strip()))
 			continue
 		if not line.lstrip().startswith("|"):
 			continue
@@ -114,19 +122,35 @@ def in_range(sizes, B):
 	return lo <= B <= hi
 
 
+def classify(proto, lanes):
+	"""Путь по строке таблицы UCX: протокол и транспорты.
+
+	copy-in — отправитель копирует данные в промежуточный буфер в ОЗУ, copy-out — получатель
+	копирует из такого буфера; zero-copy — устройство работает с памятью GPU само.
+	"""
+	p = proto.replace("(?)", "").strip()
+	if "cuda_ipc" in lanes:
+		return "напрямую GPU → GPU"
+	if "copy-in" in p:
+		return "через ОЗУ"
+	if "zero-copy copy-out" in p:
+		return "отправитель без ОЗУ, получатель через ОЗУ"
+	if "zero-copy" in p:
+		return "без ОЗУ"
+	return p
+
+
 def proto_verdict(rows, kind, B):
-	"""Что таблица UCX_PROTO_INFO говорит о передаче из памяти GPU для пар kind и размера B."""
-	sel = [(p, l) for t, s, p, l in rows if kind in t and "cuda" in t and in_range(s, B)]
-	if not sel:
-		return ""
-	text = " ".join(f"{p} {l}" for p, l in sel)
-	if "cuda_ipc" in text:
-		return "напрямую GPU → GPU (cuda_ipc)"
-	if "cuda_copy" in text or "pipeline" in text or "bcopy" in text:
-		return "через ОЗУ (" + "; ".join(f"{p}: {l}" for p, l in sel) + ")"
-	if re.search(r"\b(rc|dc|ud)_\w+", text):
-		return "без ОЗУ, адаптер работает с памятью GPU (" + "; ".join(f"{p}: {l}" for p, l in sel) + ")"
-	return "; ".join(f"{p}: {l}" for p, l in sel)
+	"""Что таблицы UCX_PROTO_INFO говорят о передаче тегированных сообщений из памяти GPU
+	для пар kind («intra-node» или «inter-node») и размера B. Вариантов вызова у UCX несколько
+	(обычный, fast-completion, multi) — перечисляются все различающиеся."""
+	sel = []
+	for t, s, p, l in rows:
+		if kind in t and "tagged message" in t and "from cuda" in t and in_range(s, B):
+			item = f"{classify(p, l)} ({p.replace('(?)', '').strip()}, {l})"
+			if item not in sel:
+				sel.append(item)
+	return "; ".join(sel)
 
 
 def candidates(job, host, group):
@@ -169,9 +193,9 @@ def main(job):
 				cfg, rows = read_ucx(job / "ucx" / f"{txt.stem}.r{rank}.{ext}")
 				node_cfg[host] += [l for _, l in cfg]
 				node_rows[host] += rows
-				for i, lanes in cfg:
+				for label, lanes in cfg:
 					ucx_out.append(dict(index=r["index"], block=r["block"], env=r["env"], bytes=B, rank=rank,
-					                    gpu=lab, source="ep_cfg", table=f"ep_cfg[{i}]", sizes="", protocol="",
+					                    gpu=lab, source="cfg", table=label, sizes="", protocol="",
 					                    lanes=lanes))
 				for title, sizes, proto, lanes in rows:
 					ucx_out.append(dict(index=r["index"], block=r["block"], env=r["env"], bytes=B, rank=rank,
@@ -191,18 +215,15 @@ def main(job):
 			f_nvl = nvl / ea if nvl is not None and ea else None
 			f_nic = (nic - ei) / ea if nic is not None and ea else None
 			f_pci = (pci - ei) / ea if pci is not None and ea else None
-			lanes = " ".join(node_cfg[host])
-			if r["env"] == "host":
-				group = "через ОЗУ"   # программа сама копирует в ОЗУ, MPI получает адреса ОЗУ
-			elif f_nvl is not None and f_nvl > SHARE:
+			# решают точные накопительные счётчики NVLink и адаптера; трафик PCIe (мгновенный
+			# отсчёт раз в секунду) слишком шумный и в выводе не участвует
+			if f_nvl is not None and f_nvl > SHARE:
 				group = "NVLink"
 			elif f_nic is not None and f_nic > SHARE:
 				group = "через адаптер"
 			elif f_nvl is not None and f_nic is not None:
-				# NVLink и адаптер (точные накопительные счётчики) не выросли сверх межузловых пар —
-				# значит, по PCIe GPU. Трафик PCIe (отсчёт раз в секунду) — только подтверждение.
-				group = ("напрямую по PCIe" if "cuda_ipc" in lanes and "rc_" not in lanes else
-				         "по PCIe GPU")
+				# ни NVLink, ни адаптер сверх межузловых пар — значит, по PCIe GPU
+				group = "по PCIe GPU"
 			else:
 				group = ""
 			intra_ucx = proto_verdict(node_rows[host], "intra-node", B)
@@ -213,7 +234,8 @@ def main(job):
 				share_nvlink=f_nvl, share_nic=f_nic, share_pcie=f_pci,
 				intra_by_counters=group or "не определить", intra_by_ucx=intra_ucx,
 				intra_candidates=candidates(job, host, group),
-				inter_by_ucx=inter_ucx or ("через ОЗУ" if r["env"] == "host" else
+				inter_by_ucx=inter_ucx or ("через ОЗУ: в среде host программа сама копирует данные в ОЗУ"
+				                           if r["env"] == "host" else
 				                           "в журнале UCX узла нет таблицы для этого размера" if r["block"] == "proto" else
 				                           "нужен блок proto: счётчики GPUDirect RDMA и ОЗУ не различают")))
 

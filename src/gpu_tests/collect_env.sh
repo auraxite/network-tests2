@@ -35,6 +35,21 @@ section() {
 	section ibstat
 	# дерево PCIe: какие устройства под общим коммутатором
 	section lspci -tv
+	# где в дереве PCIe каждый адаптер и GPU и к какому процессору (NUMA) он подключён
+	section bash -c 'for d in /sys/class/infiniband/*; do
+		p=$(readlink -f "$d/device"); n=$(basename "$d")
+		echo "nic $n pci=$(basename "$p") numa=$(cat "$p/numa_node" 2>/dev/null)" \
+			"netdev=$(ls "$p/net" 2>/dev/null | tr "\n" " ")path=$p"
+	done
+	for g in $(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null); do
+		b=$(echo "0000:${g#*:}" | tr "A-F" "a-f")   # 00000000:56:00.0 → 0000:56:00.0
+		p=$(readlink -f "/sys/bus/pci/devices/$b")
+		echo "gpu $g numa=$(cat "$p/numa_node" 2>/dev/null) path=$p"
+	done'
+	# процессоры, их память и расстояния между NUMA-узлами
+	section numactl -H
+	# адреса сетевых интерфейсов: по ним проверяется, связаны ли Ethernet-адаптеры узлов
+	section ip -br -4 addr
 	section lscpu
 	# какие транспорты есть в собранной UCX и с какими параметрами
 	section "${UCX_INFO}" -v
