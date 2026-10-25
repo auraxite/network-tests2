@@ -16,6 +16,19 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=4
 
+# check_paths.sh --gid ИНТЕРФЕЙС: номер GID RoCE v2 с адресом IPv4 интерфейса (для UCX_IB_GID_INDEX)
+if [[ "${1:-}" == --gid ]]; then
+	for d in /sys/class/infiniband/*; do
+		for a in "$d"/ports/1/gid_attrs/ndevs/*; do
+			i=${a##*/}
+			[[ "$(cat "$a" 2>/dev/null)" == "$2" ]] || continue
+			[[ "$(cat "$d/ports/1/gid_attrs/types/$i" 2>/dev/null)" == "RoCE v2" ]] || continue
+			[[ "$(cat "$d/ports/1/gids/$i")" == 0000:0000:0000:0000:0000:ffff:* ]] && { echo "$i"; exit 0; }
+		done
+	done
+	exit 1
+fi
+
 source "${SLURM_SUBMIT_DIR:-.}/config.sh"
 set -u   # без -e: неработающий путь — тоже результат
 
@@ -32,7 +45,7 @@ OUT="${GPU_TESTS}/results/paths_${SLURM_JOB_ID:-local}"
 mkdir -p "${OUT}/perf" "${OUT}/counters"
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
 A=${NODES[0]}; B=${NODES[1]}
-SIZE=4194304; ITERS=100
+SIZE=4194304; ITERS=100; WARMUP=10   # разогрев задан явно: иначе счётчики не сравнить с объёмом
 GPN="${SLURM_GPUS_PER_NODE:-4}"; GPN=${GPN##*:}   # GPU на узел в выделении (вид «4» или «a100:4»)
 test -x "${PERF}" || { echo "error: нет ${PERF}" >&2; exit 1; }
 echo "out: ${OUT}, узлы ${A} ${B}"
@@ -78,7 +91,9 @@ snap() {
 }
 
 # --- Один прогон ucx_perftest: путь включается переменными UCX ---
-# run ИМЯ УЗЕЛ_СЕРВЕРА GPU_СЕРВЕРА УЗЕЛ_КЛИЕНТА GPU_КЛИЕНТА ПАМЯТЬ [NUMA=с:к] ПЕРЕМЕННЫЕ...
+# run ИМЯ УЗЕЛ_СЕРВЕРА GPU_СЕРВЕРА УЗЕЛ_КЛИЕНТА GPU_КЛИЕНТА ПАМЯТЬ [NUMA=с:к] [GID=интерфейс] ПЕРЕМЕННЫЕ...
+# GID=интерфейс — для RoCE взять GID с адресом IPv4 этого интерфейса (номер ищется на каждом
+# узле свой). Без него UCX может выбрать на узлах GID разных VLAN, и соединения нет.
 # NUMA=с:к — память процессов сервера и клиента на NUMA-узлах с и к (буферы в ОЗУ).
 # UCX нужен транспорт служебных сообщений: cuda_ipc и cma их не передают (нужен posix),
 # rc_mlx5 соединяется через ud_mlx5.
@@ -91,23 +106,28 @@ run() {
 		numa=${1#NUMA=}; shift
 		nsrv="numactl --membind=${numa%:*}"; ncli="numactl --membind=${numa#*:}"
 	fi
+	local gid="" pre=""
+	if [[ "${1:-}" == GID=* ]]; then
+		gid=${1#GID=}; shift
+		pre="export UCX_IB_GID_INDEX=\$(bash ${GPU_TESTS}/check_paths.sh --gid ${gid}); echo UCX_IB_GID_INDEX=\$UCX_IB_GID_INDEX;"
+	fi
 	PORT=$((PORT + 1))
 	local envs=(UCX_LOG_LEVEL=info "$@")
 	echo "RUN ${name}: ${sn}:GPU${sg} <-> ${cn}:GPU${cg} mem=${mem} ${envs[*]}"
 	local t0=${SECONDS}
 	snap "${name}_before"
 	env "${envs[@]}" srun --overlap -N1 -n1 -w "${sn}" --gpus-per-node="${GPN}" --cpu-bind=none bash -c \
-		"CUDA_VISIBLE_DEVICES=${sg} exec timeout 40 ${nsrv} ${PERF} -p ${PORT} -t tag_lat -m ${mem} -s ${SIZE} -n ${ITERS}" \
+		"${pre} CUDA_VISIBLE_DEVICES=${sg} exec timeout 40 ${nsrv} ${PERF} -p ${PORT} -t tag_lat -m ${mem} -s ${SIZE} -n ${ITERS} -w ${WARMUP}" \
 		> "${OUT}/perf/${name}.server" 2>&1 &
 	local spid=$!
 	sleep 3
 	env "${envs[@]}" srun --overlap -N1 -n1 -w "${cn}" --gpus-per-node="${GPN}" --cpu-bind=none bash -c \
-		"CUDA_VISIBLE_DEVICES=${cg} exec timeout 30 ${ncli} ${PERF} ${sn} -p ${PORT} -t tag_lat -m ${mem} -s ${SIZE} -n ${ITERS}" \
+		"${pre} CUDA_VISIBLE_DEVICES=${cg} exec timeout 30 ${ncli} ${PERF} ${sn} -p ${PORT} -t tag_lat -m ${mem} -s ${SIZE} -n ${ITERS} -w ${WARMUP}" \
 		> "${OUT}/perf/${name}.client" 2>&1
 	local rc=$?
 	wait "${spid}" 2>/dev/null
 	snap "${name}_after"
-	local envstr="$*"
+	local envstr="$*${gid:+ GID=${gid}}"
 	echo "${name},${sn},${sg},${cn},${cg},${mem},${numa},\"${envstr// /;}\",${rc},$((SECONDS - t0))" >> "${OUT}/perf.csv"
 	echo "  exit=${rc} за $((SECONDS - t0))с"
 }
@@ -141,6 +161,12 @@ for d in "${NICS[@]}"; do
 	run "inter_${d}_gdr"  "${B}" 0 "${A}" 0 cuda UCX_TLS=${RC},cuda_copy,self UCX_NET_DEVICES="${d}:1" UCX_IB_GPU_DIRECT_RDMA=y
 	run "inter_${d}_ram"  "${B}" 0 "${A}" 0 cuda UCX_TLS=${RC},cuda_copy,self UCX_NET_DEVICES="${d}:1" UCX_IB_GPU_DIRECT_RDMA=n
 	run "inter_${d}_host" "${B}" 0 "${A}" 0 host UCX_TLS=${RC},self UCX_NET_DEVICES="${d}:1"
+	# Ethernet: ещё раз с GID основного (без VLAN) интерфейса адаптера
+	nd=$(awk -v d="${d}" '$1=="nic" && $2==d {sub("netdev=","",$5); print $5}' "${OUT}/env_${A}.txt")
+	if [[ -n "${nd}" && "${nd}" != path=* ]]; then
+		run "inter_${d}_gid_gdr" "${B}" 0 "${A}" 0 cuda GID="${nd}" UCX_TLS=${RC},cuda_copy,self UCX_NET_DEVICES="${d}:1" UCX_IB_GPU_DIRECT_RDMA=y
+		run "inter_${d}_gid_host" "${B}" 0 "${A}" 0 host GID="${nd}" UCX_TLS=${RC},self UCX_NET_DEVICES="${d}:1"
+	fi
 done
 # GPU2 ↔ GPU2: GPU у второго процессора, все адаптеры у первого
 if [[ "${NGPU}" -ge 3 && ${#NICS[@]} -gt 0 ]]; then

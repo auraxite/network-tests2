@@ -46,6 +46,11 @@ section() {
 		p=$(readlink -f "/sys/bus/pci/devices/$b")
 		echo "gpu $g numa=$(cat "$p/numa_node" 2>/dev/null) path=$p"
 	done'
+	# таблица GID RoCE: номер, тип, интерфейс (у VLAN свои GID), адрес
+	section bash -c 'for d in /sys/class/infiniband/*; do for a in "$d"/ports/1/gid_attrs/ndevs/*; do
+		i=${a##*/}; nd=$(cat "$a" 2>/dev/null) || continue
+		echo "gid $(basename "$d") $i $(cat "$d/ports/1/gid_attrs/types/$i" 2>/dev/null | tr " " _) $nd $(cat "$d/ports/1/gids/$i")"
+	done; done'
 	# процессоры, их память и расстояния между NUMA-узлами
 	section numactl -H
 	# адреса сетевых интерфейсов: по ним проверяется, связаны ли Ethernet-адаптеры узлов
