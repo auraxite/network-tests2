@@ -305,11 +305,14 @@ for IDX in "${!LIST[@]}"; do
 	fi
 	UCX_ENV=()
 	if [[ "${UCX_PATHS}" == 1 ]]; then UCX_ENV=(UCX_LOG_LEVEL=info); fi
+	IS_PROTO=0
 	for P in ${PROTO_BLOCKS[@]+"${PROTO_BLOCKS[@]}"}; do
-		if [[ "${BLOCK}" == "${P}" ]]; then UCX_ENV+=(UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y); fi
+		if [[ "${BLOCK}" == "${P}" ]]; then UCX_ENV+=(UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y); IS_PROTO=1; fi
 	done
-	# Вывод программы: по файлу на ранг (журнал UCX), в журнал задания (обычное измерение) или никуда
-	if [[ "${UCX_PATHS}" == 1 ]]; then
+	# Вывод программы: по файлу на ранг (журнал UCX; для блоков proto — всегда, там таблицы порогов),
+	# в журнал задания (обычное измерение) или никуда
+	if [[ "${UCX_PATHS}" == 1 || "${IS_PROTO}" == 1 ]]; then
+		mkdir -p "${OUT_DIR}/ucx"
 		STDIO=(--output="${OUT_DIR}/ucx/${NAME}.r%t.out" --error="${OUT_DIR}/ucx/${NAME}.r%t.err")
 	elif [[ "${OUT_LAYOUT}" == flat ]]; then
 		STDIO=()
