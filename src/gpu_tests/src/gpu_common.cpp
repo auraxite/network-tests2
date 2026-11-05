@@ -64,6 +64,7 @@ void help(int rank) {
 		<< "  --env E         custom | host | default (auto = custom, old name)\n"
 		<< "                  default: only UCX_TLS=^tcp, no adapter choice; Open MPI\n"
 		<< "                  and UCX pick the path themselves\n"
+		<< "  --gpus L        GPU for local ranks in order, e.g. 0,2 (default: local rank)\n"
 		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
 		<< "                  (default one_to_one)\n"
 		<< "  --order O       one_to_one: seq | random (default seq)\n"
@@ -174,6 +175,10 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.pin_main = std::atoi(next("--pin-main"));
 		else if (s == "--probe")
 			a.probe = true;
+		else if (s == "--gpus") {
+			a.gpus = parse_gpu_list(next("--gpus"));
+			if (a.gpus.empty()) bad_arg(rank, "--gpus: список номеров через запятую, например 0,2");
+		}
 		else if (s == "--help" || s == "-h") {
 			help(rank);
 			mpi_ok(MPI_Finalize(), "MPI_Finalize");
@@ -189,6 +194,20 @@ Args parse_args(int argc, char **argv, int rank) {
 
 bool use_host_path(Env env, bool cuda_aware) {
 	return env == Env::Host || !cuda_aware;
+}
+
+std::vector<int> parse_gpu_list(const std::string &s) {
+	std::vector<int> out;
+	size_t i = 0;
+	while (i < s.size()) {
+		size_t j = s.find(',', i);
+		if (j == std::string::npos) j = s.size();
+		const std::string tok = s.substr(i, j - i);
+		if (tok.empty() || tok.find_first_not_of("0123456789") != std::string::npos) return {};
+		out.push_back(std::atoi(tok.c_str()));
+		i = j + 1;
+	}
+	return out;
 }
 
 std::string env_to_string(Env env) {

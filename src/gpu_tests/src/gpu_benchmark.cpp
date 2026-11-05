@@ -33,6 +33,14 @@ std::string pre_scan_env(int argc, char **argv) {
 	return "custom";
 }
 
+/* Значение ключа до разбора аргументов (пусто, если ключа нет). */
+std::string pre_scan_arg(int argc, char **argv, const char *key) {
+	for (int i = 1; i < argc - 1; ++i)
+		if (std::string(argv[i]) == key)
+			return argv[i + 1];
+	return "";
+}
+
 /* Номер ранга на узле по переменным лаунчера, -1 если не нашли. */
 int env_local_rank() {
 	for (const char *v : {"OMPI_COMM_WORLD_LOCAL_RANK", "SLURM_LOCALID",
@@ -103,14 +111,18 @@ std::string closest_ib_device(const std::string &gpu_pci) {
 
 /* Выбрать GPU по локальному номеру и карту под него, до MPI_Init. Возвращает
    номер GPU или -1, если не получилось (тогда диагностика будет после MPI_Init). */
-int bind_gpu_and_nic_early(std::string &nic_out, bool pick_nic) {
+int bind_gpu_and_nic_early(std::string &nic_out, bool pick_nic, const std::vector<int> &gpus) {
 	nic_out.clear();
 	const int lrank = env_local_rank();
 	if (lrank < 0) return -1;
 
 	int count = 0;
 	if (cudaGetDeviceCount(&count) != cudaSuccess || count <= 0) return -1;
-	const int dev = count > 1 ? lrank : 0;
+	int dev = count > 1 ? lrank : 0;
+	if (!gpus.empty()) {   // --gpus: номер GPU берётся из списка по локальному рангу
+		if (lrank >= static_cast<int>(gpus.size())) return -1;
+		dev = gpus[static_cast<size_t>(lrank)];
+	}
 	if (dev >= count || cudaSetDevice(dev) != cudaSuccess) return -1;
 
 	char pci[32] = {};
@@ -287,7 +299,8 @@ int main(int argc, char **argv) {
 	// Оба вызова обязаны идти до MPI_Init: UCX читает окружение при инициализации.
 	std::string early_nic;
 	const std::string env_arg = pre_scan_env(argc, argv);
-	const int early_gpu = bind_gpu_and_nic_early(early_nic, env_arg != "default");
+	const int early_gpu = bind_gpu_and_nic_early(early_nic, env_arg != "default",
+	                                             parse_gpu_list(pre_scan_arg(argc, argv, "--gpus")));
 	if (env_arg == "default")
 		// default: только исключить TCP. Без этого на узлах с Kubernetes UCX берёт TCP через
 		// flannel.1, соединение между узлами отклоняется и не создаётся целиком (NOTES.md)
@@ -337,6 +350,15 @@ int main(int argc, char **argv) {
 			MPI_Abort(MPI_COMM_WORLD, 1);
 		}
 		local_gpu = local_rank;
+	}
+	if (!args.gpus.empty()) {   // --gpus 0,2: GPU по списку, а не по локальному рангу
+		if (local_rank >= static_cast<int>(args.gpus.size()) ||
+		    args.gpus[static_cast<size_t>(local_rank)] >= local_gpu_count) {
+			std::cerr << "rank " << rank << " (local_rank " << local_rank << "): в --gpus нет GPU "
+			          << "для этого ранга или номер больше числа видимых GPU (" << local_gpu_count << ")\n";
+			MPI_Abort(MPI_COMM_WORLD, 1);
+		}
+		local_gpu = args.gpus[static_cast<size_t>(local_rank)];
 	}
 	if (early_gpu >= 0 && early_gpu != local_gpu)
 		std::cerr << "rank " << rank << ": ранний выбор GPU (" << early_gpu

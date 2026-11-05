@@ -44,6 +44,7 @@ struct Args {
 	double      prespin_sec      = 0.0;     // one_to_one: --prespin-sec
 	int         pin_main         = -1;      // --pin-main K: K-й CPU маски, -1 — нет
 	bool        probe            = false;   // one_to_one: --probe
+	std::vector<int> gpus;                  // --gpus 0,2: GPU для локальных рангов узла по порядку
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
@@ -59,6 +60,7 @@ const char *mode_to_string(Mode mode);
 Env         parse_env(const std::string &s, int rank);
 StatOut     parse_stat_out(const std::string &s, int rank);
 Args        parse_args(int argc, char **argv, int rank);
+std::vector<int> parse_gpu_list(const std::string &s);   // "0,2" -> {0, 2}; пусто при ошибке
 /* true — данные идут через оперативную память (среда host или MPI без CUDA). */
 bool        use_host_path(Env env, bool cuda_aware);
 std::string env_to_string(Env env);
