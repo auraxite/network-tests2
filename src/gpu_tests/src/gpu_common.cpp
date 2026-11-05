@@ -62,7 +62,7 @@ void help(int rank) {
 		<< "  --warmup N      warmup iterations per pair\n"
 		<< "  --iters N       measured iterations per pair\n"
 		<< "  --env E         custom | host | default (auto = custom, old name)\n"
-		<< "                  default: no UCX variables and no adapter choice, Open MPI\n"
+		<< "                  default: only UCX_TLS=^tcp, no adapter choice; Open MPI\n"
 		<< "                  and UCX pick the path themselves\n"
 		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
 		<< "                  (default one_to_one)\n"

@@ -255,7 +255,7 @@ std::string ucx_config_text(bool cuda_aware, bool via_host, Env env) {
 
 	o << "Route:\n";
 	if (env == Env::Default) {
-		o << "  library default (no UCX variables, adapter chosen by UCX)\n";
+		o << "  library default except UCX_TLS=^tcp (adapter chosen by UCX)\n";
 		return o.str();
 	}
 	o << "  intra-node: ";
@@ -288,7 +288,11 @@ int main(int argc, char **argv) {
 	std::string early_nic;
 	const std::string env_arg = pre_scan_env(argc, argv);
 	const int early_gpu = bind_gpu_and_nic_early(early_nic, env_arg != "default");
-	if (env_arg != "default")   // default: переменные UCX не выставляются
+	if (env_arg == "default")
+		// default: только исключить TCP. Без этого на узлах с Kubernetes UCX берёт TCP через
+		// flannel.1, соединение между узлами отклоняется и не создаётся целиком (NOTES.md)
+		setenv("UCX_TLS", "^tcp", 0);
+	else
 		set_ucx_for_env(env_arg == "host");
 
 	mpi_ok(MPI_Init(&argc, &argv), "MPI_Init");

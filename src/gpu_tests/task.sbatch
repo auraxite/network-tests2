@@ -131,7 +131,7 @@ unset UCX_NET_DEVICES UCX_IB_GPU_DIRECT_RDMA
 # выставляются программой до MPI_Init на основе --env:
 #   custom (раньше auto) → cuda_copy+cuda_ipc+IB+GDR (gdr_copy нет: в системе нет gdrcopy)
 #   host → только IB+cma
-#   default → ничего не выставляется, путь и адаптер выбирают Open MPI и UCX
+#   default → только UCX_TLS=^tcp, путь и адаптер выбирают Open MPI и UCX
 # Чтобы переопределить — раскомментируй нужное:
 # export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,cuda_copy,cuda_ipc,cma,sm,self
 # export UCX_IB_GPU_DIRECT_RDMA=yes
@@ -289,7 +289,7 @@ if [[ -n "${SHUFFLE_SEED}" ]]; then
 	done
 fi
 echo "запусков: ${#LIST[@]}, перемешивание: ${SHUFFLE_SEED:-нет}"
-if [[ "${OUT_LAYOUT}" == job ]]; then echo "index,block,rep,seed,env,mode,bytes,iters,warmup,args,start,end" > "${RUNS}"; fi
+if [[ "${OUT_LAYOUT}" == job ]]; then echo "index,block,rep,seed,env,mode,bytes,iters,warmup,args,start,end,rc" > "${RUNS}"; fi
 
 for IDX in "${!LIST[@]}"; do
 	read -r BLOCK REP ENV MODE CASE ARGS <<<"${LIST[$IDX]}"
@@ -320,6 +320,8 @@ for IDX in "${!LIST[@]}"; do
 	if [[ "${UCX_PATHS}" == 1 ]]; then snap "${IDX}_before"; fi
 	T0=$(date +%s.%N)
 	# --cpu-bind=verbose,cores: ранг жёстко на своих ядрах, маска печатается в журнал задания
+	# Упавший запуск не обрывает задание: код возврата пишется в runs.csv (столбец rc)
+	RC=0
 	env ${UCX_ENV[@]+"${UCX_ENV[@]}"} srun --mpi=pmix \
 		--kill-on-bad-exit=1 \
 		--gres-flags=allow-task-sharing \
@@ -327,11 +329,12 @@ for IDX in "${!LIST[@]}"; do
 		${STDIO[@]+"${STDIO[@]}"} \
 		"${BIN}" \
 		--bytes "${B}" --warmup "${W}" --iters "${I}" --env "${ENV}" --mode "${MODE}" \
-		${COMMON[@]+"${COMMON[@]}"} ${EXTRA[@]+"${EXTRA[@]}"} --out "${OUT_DIR}/${NAME}.txt"
+		${COMMON[@]+"${COMMON[@]}"} ${EXTRA[@]+"${EXTRA[@]}"} --out "${OUT_DIR}/${NAME}.txt" || RC=$?
 	T1=$(date +%s.%N)
+	if [[ "${RC}" != 0 ]]; then echo "RUN ${IDX} FAILED rc=${RC} (${NAME}), продолжаю"; fi
 	if [[ "${UCX_PATHS}" == 1 ]]; then snap "${IDX}_after"; fi
 	if [[ "${OUT_LAYOUT}" == job ]]; then
-		echo "${IDX},${BLOCK},${REP},${SEED},${ENV},${MODE},${B},${I},${W},${ARGS},${T0},${T1}" >> "${RUNS}"
+		echo "${IDX},${BLOCK},${REP},${SEED},${ENV},${MODE},${B},${I},${W},${ARGS},${T0},${T1},${RC}" >> "${RUNS}"
 	fi
 done
 
