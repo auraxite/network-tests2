@@ -57,25 +57,27 @@ void help(int rank) {
 	if (rank != 0)
 		return;
 	std::cout
-		<< "gpu — GPU pair latency (one_to_one | one_to_one_v2 | all_to_all | one_to_all | all_to_one)\n"
+		<< "gpu — GPU pair latency (one_to_one | all_to_all | one_to_all | all_to_one)\n"
 		<< "  --bytes N       message size in bytes (default 4 MB)\n"
 		<< "  --warmup N      warmup iterations per pair\n"
 		<< "  --iters N       measured iterations per pair\n"
-		<< "  --env E         auto | host\n"
-		<< "  --mode M        one_to_one | one_to_one_v2 | all_to_all | one_to_all | all_to_one\n"
+		<< "  --env E         custom | host | default (auto = custom, old name)\n"
+		<< "                  default: no UCX variables and no adapter choice, Open MPI\n"
+		<< "                  and UCX pick the path themselves\n"
+		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
 		<< "                  (default one_to_one)\n"
-		<< "  --order O       one_to_one_v2: seq | random (default seq)\n"
-		<< "  --seed N        one_to_one_v2: seed for --order random (default 1)\n"
-		<< "  --cpu-log       one_to_one_v2: CPU of sender/receiver per iteration (raw/*.scpu, *.rcpu)\n"
-		<< "  --prespin-sec S one_to_one_v2: busy-spin S seconds on every rank before the first pair\n"
+		<< "  --order O       one_to_one: seq | random (default seq)\n"
+		<< "  --seed N        one_to_one: seed for --order random (default 1)\n"
+		<< "  --cpu-log       one_to_one: CPU of sender/receiver per iteration (raw/*.scpu, *.rcpu)\n"
+		<< "  --prespin-sec S one_to_one: busy-spin S seconds on every rank before the first pair\n"
 		<< "  --pin-main K    pin the main thread to the K-th CPU (from 0) of its mask after init\n"
-		<< "  --probe         one_to_one_v2: core and L3 latency probes before/after each pair\n"
+		<< "  --probe         one_to_one: core and L3 latency probes before/after each pair\n"
 		<< "                  (raw/*.sprobe, *.rprobe: core_ns l3_ns before, then after)\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
 		<< "\n"
-		<< "UCX defaults applied before MPI_Init for --env auto "
+		<< "UCX defaults applied before MPI_Init for --env custom "
 		   "(override via env vars):\n"
 		<< "  UCX_IB_GPU_DIRECT_RDMA=y   enable GPUDirect RDMA\n"
 		<< "  UCX_RNDV_SCHEME=auto       let UCX pick get/put zcopy or pipeline\n"
@@ -99,9 +101,9 @@ Mode parse_mode(const std::string &s, int rank) {
 		return Mode::AllToAll;
 	if (s == "one_to_all") return Mode::OneToAll;
 	if (s == "all_to_one") return Mode::AllToOne;
-	if (s == "one_to_one_v2") return Mode::OneToOneV2;
+	if (s == "one_to_one_v2") return Mode::OneToOne;   // прежнее имя, для старых заданий
 	bad_arg(rank, "unknown --mode: " + s +
-	              " (use one_to_one|one_to_one_v2|all_to_all|one_to_all|all_to_one)");
+	              " (use one_to_one|all_to_all|one_to_all|all_to_one)");
 }
 
 const char *mode_to_string(Mode mode) {
@@ -109,15 +111,15 @@ const char *mode_to_string(Mode mode) {
 	case Mode::AllToAll: return "all_to_all";
 	case Mode::OneToAll: return "one_to_all";
 	case Mode::AllToOne: return "all_to_one";
-	case Mode::OneToOneV2: return "one_to_one_v2";
 	default:             return "one_to_one";
 	}
 }
 
 Env parse_env(const std::string &s, int rank) {
-	if (s == "auto") return Env::Auto;
+	if (s == "custom" || s == "auto") return Env::Custom;   // auto — прежнее имя
 	if (s == "host") return Env::Host;
-	bad_arg(rank, "unknown --env: " + s + " (use auto|host)");
+	if (s == "default") return Env::Default;
+	bad_arg(rank, "unknown --env: " + s + " (use custom|host|default)");
 }
 
 StatOut parse_stat_out(const std::string &s, int rank) {
@@ -187,6 +189,14 @@ Args parse_args(int argc, char **argv, int rank) {
 
 bool use_host_path(Env env, bool cuda_aware) {
 	return env == Env::Host || !cuda_aware;
+}
+
+std::string env_to_string(Env env) {
+	switch (env) {
+	case Env::Host:    return "host";
+	case Env::Default: return "default";
+	default:           return "custom";
+	}
 }
 
 void debug_log(bool enabled, int rank, const std::string &msg) {
@@ -350,17 +360,13 @@ ProbeResult cpu_probe() {
 	return r;
 }
 
-void append_raw_samples(const Args &args, const std::string &src_label,
-                        const std::string &dst_label,
-                        const std::vector<double> &samples_us) {
-	append_raw_series(args, src_label, dst_label, samples_us, ".raw", REPORT_DIGITS);
-}
-
-void append_raw_series(const Args &args, const std::string &src_label,
-                       const std::string &dst_label, const std::vector<double> &values,
-                       const std::string &ext, int digits) {
-	if (!args.save_raw_samples || args.out_path.empty() || values.empty())
-		return;
+/* Открыть на дозапись raw/<base>_src<src>_dst<dst><ext> рядом с --out и
+   записать строку-заголовок. false — писать не нужно или не получилось. */
+static bool open_raw_file(const Args &args, const std::string &src_label,
+                          const std::string &dst_label, const std::string &ext,
+                          std::ofstream &out) {
+	if (!args.save_raw_samples || args.out_path.empty())
+		return false;
 
 	const auto sanitize = [](const std::string &lab) {
 		std::string out;
@@ -383,14 +389,40 @@ void append_raw_series(const Args &args, const std::string &src_label,
 		base.erase(base.size() - suffix.size());
 
 	const std::string raw_dir = dir + "/raw";
-	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST) return;
+	if (mkdir(raw_dir.c_str(), 0775) != 0 && errno != EEXIST) return false;
 
 	const std::string path = raw_dir + "/" + base + "_src" + sanitize(src_label) +
 	                         "_dst" + sanitize(dst_label) + ext;
-	std::ofstream out(path, std::ios::app);
-	if (!out.is_open()) return;
+	out.open(path, std::ios::app);
+	if (!out.is_open()) return false;
 
 	out << "# src=" << src_label << " dst=" << dst_label << "\n";
+	return true;
+}
+
+void append_raw_samples(const Args &args, const std::string &src_label,
+                        const std::string &dst_label,
+                        const std::vector<double> &samples_us,
+                        const std::vector<double> &start_times) {
+	std::ofstream out;
+	if (samples_us.empty() || !open_raw_file(args, src_label, dst_label, ".raw", out))
+		return;
+	// Два столбца — время начала итерации (с, системные часы) и задержка (мкс);
+	// без времени — только задержка, как в прежнем формате.
+	const bool with_time = start_times.size() == samples_us.size();
+	for (size_t i = 0; i < samples_us.size(); ++i) {
+		if (with_time)
+			out << std::fixed << std::setprecision(6) << start_times[i] << " ";
+		out << std::fixed << std::setprecision(REPORT_DIGITS) << samples_us[i] << "\n";
+	}
+}
+
+void append_raw_series(const Args &args, const std::string &src_label,
+                       const std::string &dst_label, const std::vector<double> &values,
+                       const std::string &ext, int digits) {
+	std::ofstream out;
+	if (values.empty() || !open_raw_file(args, src_label, dst_label, ext, out))
+		return;
 	for (double v : values)
 		out << std::fixed << std::setprecision(digits) << v << "\n";
 }

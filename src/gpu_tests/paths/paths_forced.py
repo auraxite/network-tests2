@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Разбор результатов check_paths.sh: какой путь прошла каждая проверка.
+"""Разбор результатов paths_forced.sh: какой путь прошла каждая проверка.
 
-    python parse_check_paths.py results/paths_<задание> [-o paths_check.csv]
+    python paths/paths_forced.py results/paths_<задание> [-o paths_check.csv]
 
 Для каждого теста из perf.csv: код выхода, задержка ucx_perftest (медиана, мкс; со знаком
 минус — тест не закончился, взят последний промежуточный отчёт),

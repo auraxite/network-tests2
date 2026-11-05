@@ -17,17 +17,17 @@ bash submit.sh --time=01:00:00 task.sbatch probe # эксперимент probe.
 ```
 PLAN=(
 	# блок повторов среда режим байт:итераций:прогрев [ключи программы]
-	"free 8 auto one_to_one_v2 16000:2000:500"
-	"pin0 6 auto one_to_one_v2 16000:2000:500 --pin-main 0"
+	"free 8 auto one_to_one 16000:2000:500"
+	"pin0 6 auto one_to_one 16000:2000:500 --pin-main 0"
 )
 COMMON=(--order random --cpu-log)  # ключи для всех запусков
 SHUFFLE_SEED=4      # перемешать запуски; пусто — по порядку PLAN
-SEED_BASE=2000      # зерно порядка пар у запуска = SEED_BASE + номер (one_to_one_v2)
+SEED_BASE=2000      # зерно порядка пар у запуска = SEED_BASE + номер (one_to_one)
 REQUIRE=--pin-main  # без этой строки в программе — ошибка «пересобери»
 LOG_FREQ=1          # частоты GPU и CPU каждые 200 мс
 LOG_TOPOLOGY=1      # lscpu и маски ядер рангов
 COLLECT_ENV=1       # collect_env.sh: топология, ucx_info -d, адаптеры
-UCX_PATHS=1         # журнал UCX по рангам и счётчики адаптеров/NVLink (parse_paths.py)
+UCX_PATHS=1         # журнал UCX по рангам и счётчики адаптеров/NVLink (paths_chosen.py)
 PROTO_BLOCKS=(proto) # блоки с UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
 ```
 
@@ -37,12 +37,13 @@ PROTO_BLOCKS=(proto) # блоки с UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
 
 | Описание | Что проверяет | Раньше | Коммит | Данные |
 |---|---|---|---|---|
-| `default.conf` | все режимы и размеры, auto и host | `task.sbatch` | — | `results/*.txt` |
+| `default.conf` | все режимы и размеры, auto и host (среды задаются `--env auto | host | default`) | `task.sbatch` | — | `results/*.txt` |
 | `warmup.conf` | прогрев, повторы, режимы с корнем, длинные серии | `task2.sbatch` | `a5dc6a0` | `hyp_11013` |
-| `order.conf` | случайный порядок запусков и пар, one_to_one_v2 | `task3.sbatch` | `8cdab01` | `hyp_11065` |
+| `order.conf` | случайный порядок запусков и пар, one_to_one | `task3.sbatch` | `8cdab01` | `hyp_11065` |
 | `pinning.conf` | привязка главного потока, номер CPU на итерации, нагрузка CPU перед первой парой | `task4.sbatch` | `fc9d7a6` | `hyp_11078` |
 | `probe.conf` | тесты частоты ядра и задержки L3 рядом с парой | `task5.sbatch` | `96a039f` | `hyp_11082` |
-| `paths.conf` | какой путь передачи фактически выбран | `task6.sbatch` (не запускался) | — | — |
+| `paths.conf` | какой путь передачи фактически выбран, пороги UCX в средах auto и default | `task6.sbatch` (не запускался) | — | — |
+| `thresholds.conf` | где реальные замеры переключают путь: частая сетка около порогов | — | — | — |
 
 Данные `hyp_*` сняты старыми файлами заданий; их можно достать из git по коммиту,
 например `git show 96a039f:src/gpu_tests/task5.sbatch`. Новое задание с описаниями

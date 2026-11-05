@@ -68,7 +68,7 @@
 #   PLAN          строки "блок повторов среда режим байт:итераций:прогрев [ключи программы]"
 #   COMMON        ключи программы для всех запусков
 #   SHUFFLE_SEED  перемешать запуски (пусто — по порядку PLAN)
-#   SEED_BASE     зерно порядка пар у запуска = SEED_BASE + номер (для one_to_one_v2)
+#   SEED_BASE     зерно порядка пар у запуска = SEED_BASE + номер (для one_to_one)
 #   OUT_LAYOUT    flat — results/<узлы>_<среда>_<режим>_b.._w.._i...txt (обычное измерение)
 #                 job  — results/hyp_<задание>/ c runs.csv и архивом .tgz (эксперименты)
 #   REQUIRE       строка, которая должна быть в программе (иначе: пересобери)
@@ -125,11 +125,13 @@ unset UCX_MEMTYPE_CACHE
 unset UCX_RNDV_THRESH
 unset UCX_TLS
 unset UCX_PROTO_ENABLE UCX_PROTO_INFO UCX_LOG_LEVEL
+unset UCX_NET_DEVICES UCX_IB_GPU_DIRECT_RDMA
 
 # UCX_TLS, UCX_IB_GPU_DIRECT_RDMA, UCX_RNDV_SCHEME, UCX_MEMTYPE_CACHE
 # выставляются программой до MPI_Init на основе --env:
-#   auto → cuda_copy+cuda_ipc+IB+GDR (gdr_copy нет: в системе нет gdrcopy)
+#   custom (раньше auto) → cuda_copy+cuda_ipc+IB+GDR (gdr_copy нет: в системе нет gdrcopy)
 #   host → только IB+cma
+#   default → ничего не выставляется, путь и адаптер выбирают Open MPI и UCX
 # Чтобы переопределить — раскомментируй нужное:
 # export UCX_TLS=rc_mlx5,ud_mlx5,dc_mlx5,cuda_copy,cuda_ipc,cma,sm,self
 # export UCX_IB_GPU_DIRECT_RDMA=yes
@@ -167,9 +169,9 @@ else
 fi
 RUNS="${OUT_DIR}/runs.csv"
 
-test -x "$BIN" || { echo "error: нет $BIN (bash build.sh)" >&2; exit 1; }
+test -x "$BIN" || { echo "error: нет $BIN (bash build/build.sh)" >&2; exit 1; }
 [[ -z "${REQUIRE}" ]] || grep -qa -- "${REQUIRE}" "$BIN" || {
-	echo "error: $BIN собран без ${REQUIRE} — пересобери: bash build.sh" >&2; exit 1; }
+	echo "error: $BIN собран без ${REQUIRE} — пересобери: bash build/build.sh" >&2; exit 1; }
 mkdir -p "${OUT_DIR}"
 echo "experiment: ${EXPERIMENT} (${CONF})"
 echo "out: ${OUT_DIR}"
@@ -210,7 +212,7 @@ nvidia-smi topo -m 2>/dev/null | sed "s/^/    /" || echo "    nvidia-smi topo н
 echo "======================"
 
 if [[ "${COLLECT_ENV}" == 1 ]]; then
-	srun --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash "${GPU_TESTS}/collect_env.sh" "${OUT_DIR}"
+	srun --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash "${GPU_TESTS}/paths/collect_env.sh" "${OUT_DIR}"
 fi
 
 if [[ "${LOG_TOPOLOGY}" == 1 ]]; then
@@ -243,7 +245,7 @@ if [[ "${LOG_FREQ}" == 1 ]]; then
 fi
 
 # Счётчики: байты, отправленные каждым сетевым адаптером (port_xmit_data в 4-байтовых словах),
-# и трафик NVLink. Разбор — parse_paths.py.
+# и трафик NVLink. Разбор — paths_chosen.py.
 snap() {
 	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
 		f="$0/counters/$(hostname -s)_$1.txt"
@@ -290,7 +292,7 @@ for IDX in "${!LIST[@]}"; do
 	SEED=$((SEED_BASE + IDX))
 	EXTRA=()
 	if [[ -n "${ARGS}" ]]; then read -r -a EXTRA <<<"${ARGS}"; fi
-	if [[ "${MODE}" == one_to_one_v2 ]]; then EXTRA+=(--seed "${SEED}"); fi
+	if [[ "${MODE}" == one_to_one ]]; then EXTRA+=(--seed "${SEED}"); fi
 	if [[ "${OUT_LAYOUT}" == flat ]]; then
 		NAME="${SAFE_NODES}_${ENV}_${MODE}_b${B}_w${W}_i${I}"
 	else

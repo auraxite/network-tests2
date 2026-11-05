@@ -17,11 +17,11 @@ void cuda_ok(cudaError_t e, const char *msg);
 void mpi_ok(int err, const char *msg);
 bool mpi_cuda_aware();
 
-enum class Env { Auto, Host };
+enum class Env { Custom, Host, Default };
 
 enum class StatOut { All, Avg, Med, Min, Max, Std, Var };
 
-enum class Mode { OneToOne, AllToAll, OneToAll, AllToOne, OneToOneV2 };
+enum class Mode { OneToOne, AllToAll, OneToAll, AllToOne };
 
 /* ack layout (7 doubles):
      [0] avg_us  [1] med_us  [2] min_us  [3] max_us
@@ -32,18 +32,18 @@ struct Args {
 	size_t      nbytes           = 4u * 1000u * 1000u;
 	int         warmup           = 10;
 	int         iters            = 50;
-	Env         env              = Env::Auto;
+	Env         env              = Env::Custom;
 	StatOut     stat_out         = StatOut::All;
 	Mode        mode             = Mode::OneToOne;
 	std::string out_path;
 	bool        save_raw_samples = true;
 	bool        debug            = false;
-	bool        random_order     = false;   // one_to_one_v2: --order random
-	unsigned    seed             = 1;       // one_to_one_v2: --seed
-	bool        cpu_log          = false;   // one_to_one_v2: --cpu-log
-	double      prespin_sec      = 0.0;     // one_to_one_v2: --prespin-sec
+	bool        random_order     = false;   // one_to_one: --order random
+	unsigned    seed             = 1;       // one_to_one: --seed
+	bool        cpu_log          = false;   // one_to_one: --cpu-log
+	double      prespin_sec      = 0.0;     // one_to_one: --prespin-sec
 	int         pin_main         = -1;      // --pin-main K: K-й CPU маски, -1 — нет
-	bool        probe            = false;   // one_to_one_v2: --probe
+	bool        probe            = false;   // one_to_one: --probe
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
@@ -61,6 +61,7 @@ StatOut     parse_stat_out(const std::string &s, int rank);
 Args        parse_args(int argc, char **argv, int rank);
 /* true — данные идут через оперативную память (среда host или MPI без CUDA). */
 bool        use_host_path(Env env, bool cuda_aware);
+std::string env_to_string(Env env);
 void        debug_log(bool enabled, int rank, const std::string &msg);
 
 #define DBG_LOG(rank_, args_, expr_)                                    \
@@ -79,10 +80,13 @@ std::vector<std::string> build_rank_labels(const std::vector<char> &hosts_recv,
 /* Заполняет ack[0..6] по сериям замеров. */
 void fill_ack(const std::vector<double> &samples_us, double *ack);
 
-/* Дописывает серию в raw/<base>_src<src>_dst<dst>.raw рядом с --out. */
+/* Дописывает серию в raw/<base>_src<src>_dst<dst>.raw рядом с --out.
+   С start_times (по одному на замер) строка — «время_начала_с задержка_мкс»,
+   без них — только задержка. */
 void append_raw_samples(const Args &args, const std::string &src_label,
                         const std::string &dst_label,
-                        const std::vector<double> &samples_us);
+                        const std::vector<double> &samples_us,
+                        const std::vector<double> &start_times = {});
 
 /* Закрепляет вызывающий поток за k-м (с 0) CPU его текущей маски.
    Возвращает номер CPU или -1. Потоки, созданные раньше, не затрагиваются. */
@@ -101,7 +105,7 @@ struct ProbeResult {
 };
 ProbeResult cpu_probe();
 
-/* То же с другим расширением и точностью (например, .ts — отметки времени). */
+/* Ряд чисел в файл с другим расширением и точностью (например, .scpu, .sprobe). */
 void append_raw_series(const Args &args, const std::string &src_label,
                        const std::string &dst_label, const std::vector<double> &values,
                        const std::string &ext, int digits);

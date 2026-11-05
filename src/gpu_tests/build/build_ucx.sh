@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-source "$(dirname "$0")/config.sh"   # раздел, версии и пути — общие
+source "$(dirname "$0")/../config.sh"   # раздел, версии и пути — общие
 
 # --- Настройки этого скрипта ---
 BUILD_JOBS="${BUILD_JOBS:-4}"

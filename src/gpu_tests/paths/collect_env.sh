@@ -1,13 +1,13 @@
 #!/bin/bash
 # Снимок топологии узла и возможностей UCX: из чего складываются возможные пути передачи.
 # Запуск на каждом узле задания:
-#   srun --ntasks-per-node=1 -n<число узлов> bash collect_env.sh <каталог>
-# или на одном узле вручную: bash collect_env.sh <каталог>
+#   srun --ntasks-per-node=1 -n<число узлов> bash paths/collect_env.sh <каталог>
+# или на одном узле вручную: bash paths/collect_env.sh <каталог>
 # Пишет <каталог>/env_<узел>.txt. Недоступные команды пропускаются.
 
 set -u
 OUT_DIR="${1:-.}"
-source "$(dirname "$0")/config.sh"
+source "$(dirname "$0")/../config.sh"
 mkdir -p "${OUT_DIR}"
 F="${OUT_DIR}/env_$(hostname -s).txt"
 

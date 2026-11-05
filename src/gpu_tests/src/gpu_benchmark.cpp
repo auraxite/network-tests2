@@ -1,7 +1,6 @@
-#include "gpu_concurrent.hpp"
+#include "gpu_simultaneous.hpp"
 #include "gpu_common.hpp"
 #include "gpu_one_to_one.hpp"
-#include "gpu_one_to_one_v2.hpp"
 
 #include <cctype>
 #include <climits>   // PATH_MAX
@@ -26,12 +25,12 @@ namespace {
 /* IB-транспорты, допустимые и для Verbs, и для MLX5. */
 const char *IB_TLS = "rc_verbs,rc_mlx5,ud_verbs,ud_mlx5,dc_mlx5";
 
-/* --env host до разбора аргументов: переменные UCX нужны раньше MPI_Init. */
-bool pre_scan_host_env(int argc, char **argv) {
+/* Значение --env до разбора аргументов: переменные UCX нужны раньше MPI_Init. */
+std::string pre_scan_env(int argc, char **argv) {
 	for (int i = 1; i < argc - 1; ++i)
-		if (std::string(argv[i]) == "--env" && std::string(argv[i + 1]) == "host")
-			return true;
-	return false;
+		if (std::string(argv[i]) == "--env")
+			return argv[i + 1];
+	return "custom";
 }
 
 /* Номер ранга на узле по переменным лаунчера, -1 если не нашли. */
@@ -104,7 +103,7 @@ std::string closest_ib_device(const std::string &gpu_pci) {
 
 /* Выбрать GPU по локальному номеру и карту под него, до MPI_Init. Возвращает
    номер GPU или -1, если не получилось (тогда диагностика будет после MPI_Init). */
-int bind_gpu_and_nic_early(std::string &nic_out) {
+int bind_gpu_and_nic_early(std::string &nic_out, bool pick_nic) {
 	nic_out.clear();
 	const int lrank = env_local_rank();
 	if (lrank < 0) return -1;
@@ -119,6 +118,7 @@ int bind_gpu_and_nic_early(std::string &nic_out) {
 	std::string pci_lower(pci);   // в /sys путь в нижнем регистре
 	for (char &c : pci_lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
+	if (!pick_nic) return dev;   // --env default: адаптер выбирает UCX
 	nic_out = closest_ib_device(pci_lower);
 	if (!nic_out.empty())
 		setenv("UCX_NET_DEVICES", (nic_out + ":1").c_str(), 0);
@@ -212,9 +212,9 @@ void check_gpu_assignment(int nproc, const RankInfo &ri) {
 			}
 }
 
-std::string header_text(const Args &args, bool via_host, int nproc, const RankInfo &ri) {
+std::string header_text(const Args &args, int nproc, const RankInfo &ri) {
 	std::ostringstream o;
-	o << "Env: "    << (via_host ? "host" : "auto") << "\n"
+	o << "Env: "    << env_to_string(args.env) << "\n"
 	  << "Mode: "   << mode_to_string(args.mode)    << "\n"
 	  << "Transport: mpi_ucx\n"
 	  << "Timer: mpi\n"
@@ -233,7 +233,7 @@ std::string header_text(const Args &args, bool via_host, int nproc, const RankIn
 }
 
 /* Действующие переменные UCX и словесное описание пути. */
-std::string ucx_config_text(bool cuda_aware, bool via_host) {
+std::string ucx_config_text(bool cuda_aware, bool via_host, Env env) {
 	std::ostringstream o;
 	o << "CUDA-aware MPI: " << (cuda_aware ? "yes" : "no") << "\n";
 	o << "UCX config (effective after MPI_Init):\n";
@@ -244,11 +244,15 @@ std::string ucx_config_text(bool cuda_aware, bool via_host) {
 	}
 
 	o << "Route:\n";
+	if (env == Env::Default) {
+		o << "  library default (no UCX variables, adapter chosen by UCX)\n";
+		return o.str();
+	}
 	o << "  intra-node: ";
 	if (via_host)
 		o << "host-staging     (explicit D2H + MPI + H2D)\n";
 	else
-		o << "UCX-auto         (UCX may use CUDA IPC or NVLink if available)\n";
+		o << "custom           (UCX may use CUDA IPC or NVLink if available)\n";
 
 	o << "  inter-node: ";
 	if (via_host) {
@@ -272,8 +276,10 @@ std::string ucx_config_text(bool cuda_aware, bool via_host) {
 int main(int argc, char **argv) {
 	// Оба вызова обязаны идти до MPI_Init: UCX читает окружение при инициализации.
 	std::string early_nic;
-	const int early_gpu = bind_gpu_and_nic_early(early_nic);
-	set_ucx_for_env(pre_scan_host_env(argc, argv));
+	const std::string env_arg = pre_scan_env(argc, argv);
+	const int early_gpu = bind_gpu_and_nic_early(early_nic, env_arg != "default");
+	if (env_arg != "default")   // default: переменные UCX не выставляются
+		set_ucx_for_env(env_arg == "host");
 
 	mpi_ok(MPI_Init(&argc, &argv), "MPI_Init");
 	int rank = 0, nproc = 1;
@@ -345,8 +351,8 @@ int main(int argc, char **argv) {
 	if (rank == 0) check_gpu_assignment(nproc, ri);
 	const auto rank_labels = build_rank_labels(ri.hosts, nproc, RankInfo::HOST_LEN);
 
-	mirror(header_text(args, via_host, nproc, ri));
-	mirror(ucx_config_text(cuda_aware, via_host));
+	mirror(header_text(args, nproc, ri));
+	mirror(ucx_config_text(cuda_aware, via_host, args.env));
 
 	// --pin-main: главный поток (он крутит опрос в замерах) — на один CPU.
 	// Делается после MPI_Init и создания контекста CUDA, поэтому их служебные
@@ -372,13 +378,10 @@ int main(int argc, char **argv) {
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,
-		                    rank_labels, mirror);
-	else if (args.mode == Mode::OneToOneV2)
-		schedule_one_to_one_v2(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,
-		                       rank_labels, mirror);
+		                      rank_labels, mirror);
 	else
-		schedule_concurrent(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks,
-		                    rank_labels, mirror);
+		schedule_simultaneous(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks,
+		                      rank_labels, mirror);
 
 	mpi_ok(MPI_Comm_free(&node_comm), "MPI_Comm_free");
 	mpi_ok(MPI_Finalize(), "MPI_Finalize");

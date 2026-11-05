@@ -15,12 +15,14 @@ CUDA_INSTALL_PATH ?= /usr/local/cuda
 
 EXECS = gpu
 
+# исходники в src/, объектные файлы и программа gpu — здесь
+vpath %.cpp src
+
 FILES_GPU = \
 	gpu_benchmark.o \
 	gpu_common.o \
 	gpu_one_to_one.o \
-	gpu_one_to_one_v2.o \
-	gpu_concurrent.o
+	gpu_simultaneous.o
 
 all: $(EXECS)
 

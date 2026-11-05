@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 PY=.venv/bin/python3; [ -x "$PY" ] || PY=python3
-R=results
+R=../results   # results/ в корне gpu_tests, куда пишет task.sbatch
 
 "$PY" gpu_heatmap.py "$R" -o "$R/heatmaps"
 # "$PY" gpu_plot.py "$R" -o "$R/plots" --src 'cn.rank' --dst 'cn.rank' --metric med_us

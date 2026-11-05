@@ -1,11 +1,11 @@
 """Разбор эксперимента paths (experiments/paths.conf): каким путём фактически шли пары GPU.
 
-python parse_paths.py results/hyp_<job>
+python paths/paths_chosen.py results/hyp_<job>
 
 Пишет в каталог задания:
   paths_nodes.csv — по запуску и узлу: байты по NVLink, через сетевые адаптеры и по PCIe GPU,
                     сколько ожидалось от межузловых и внутриузловых пар узла; какая группа путей
-                    подтверждена для пар внутри узла и между узлами и какие пути из enum_paths.py
+                    подтверждена для пар внутри узла и между узлами и какие пути из paths_possible.py
                     в неё входят (если рядом лежит снимок env_<узел>.txt);
   paths_ucx.csv   — по запуску и рангу: транспорты из строк ep_cfg журнала UCX и строки
                     таблиц UCX_PROTO_INFO (внутри узла / между узлами, размеры, протокол, устройства).
@@ -154,16 +154,16 @@ def proto_verdict(rows, kind, B):
 
 
 def candidates(job, host, group):
-	"""Пути из enum_paths.py, входящие в подтверждённую группу (нужен снимок env_<узел>.txt)."""
+	"""Пути из paths_possible.py, входящие в подтверждённую группу (нужен снимок env_<узел>.txt)."""
 	env = job / f"env_{host}.txt"
 	if not env.exists() or not group:
 		return ""
 	sys.path.insert(0, str(Path(__file__).resolve().parent))
-	import enum_paths
+	import paths_possible
 	keys = {"NVLink": ("NVLink",), "через адаптер": ("через адаптер",),
 	        "напрямую по PCIe": ("PCIe напрямую",), "через ОЗУ": ("через ОЗУ",),
 	        "по PCIe GPU": ("PCIe напрямую", "через ОЗУ")}[group]
-	rows = enum_paths.intra(enum_paths.Node(env))
+	rows = paths_possible.intra(paths_possible.Node(env))
 	return "; ".join(k for k, _, _, ok in rows if k.startswith(keys) and ok is not False)
 
 

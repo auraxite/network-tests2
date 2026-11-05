@@ -8,7 +8,8 @@
 
 namespace gpu_benchmark {
 
-/* Режим one_to_one: ранг 0 по очереди назначает пары (src, dst), остальные
+/* Режим one_to_one: ранг 0 по очереди (или в случайном порядке, --order random)
+   назначает пары (src, dst), остальные
    пары в это время простаивают. Строки результата отдаются в mirror. */
 void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
                          MPI_Comm node_comm, int node_rank,

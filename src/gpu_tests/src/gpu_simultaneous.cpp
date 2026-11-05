@@ -1,4 +1,4 @@
-#include "gpu_concurrent.hpp"
+#include "gpu_simultaneous.hpp"
 
 #include <iomanip>
 #include <memory>
@@ -21,20 +21,20 @@ bool active(Mode mode, int root, int src, int dst) {
 
 /* Замеры на этом ранге как на получателе. Возвращает строку ack по источникам:
    элемент src — статистики пары (src, rank), свой элемент помечен valid = 1. */
-std::vector<double> run_concurrent(int rank, int nproc, const Args &args, bool via_host,
+std::vector<double> run_simultaneous(int rank, int nproc, const Args &args, bool via_host,
                                    MPI_Comm node_comm, const std::vector<int> &on_my_node,
                                    const std::vector<int> &node_ranks,
                                    const std::vector<std::string> &rank_labels) {
 	const int count = static_cast<int>(args.nbytes);
 	DBG_LOG(rank, args, mode_to_string(args.mode) << " RUN_BEGIN bytes=" << args.nbytes
-	        << " path=" << (via_host ? "host" : "auto"));
+	        << " env=" << env_to_string(args.env));
 
 	DeviceBuffer d_send(args.nbytes), d_recv(args.nbytes);
 	cuda_ok(cudaMemset(d_send.get(), 0xAA, args.nbytes), "cudaMemset");
 
 	// Путь через память: внутри узла — общие сегменты (по одному на ранг),
 	// между узлами — отдельные закреплённые буферы на каждого соседа.
-	// Путь auto: отдельный буфер приёма в памяти GPU на каждого соседа.
+	// Буферы в памяти GPU (custom, default): отдельный буфер приёма в памяти GPU на каждого соседа.
 	std::unique_ptr<SharedHostWindow> shared;
 	std::vector<char *>       slot(nproc, nullptr);   // общий сегмент ранга r (если на этом узле)
 	std::vector<PinnedBuffer> send_host(nproc), recv_host(nproc);
@@ -124,7 +124,7 @@ std::vector<double> run_concurrent(int rank, int nproc, const Args &args, bool v
 					                   cudaMemcpyHostToDevice), "H2D");
 				}
 			}
-			// Путь auto: данные уже в recv_dev[src], синхронизация устройства здесь
+			// Буферы в памяти GPU: данные уже в recv_dev[src], синхронизация устройства здесь
 			// намеренно не делается: она ждала бы и чужие передачи (см. NOTES.md).
 			if (measure)
 				samples[src].push_back((MPI_Wtime() - t0) * 1e6);
@@ -161,7 +161,7 @@ std::vector<double> run_concurrent(int rank, int nproc, const Args &args, bool v
 
 } // namespace
 
-void schedule_concurrent(int rank, int nproc, const Args &args, bool via_host,
+void schedule_simultaneous(int rank, int nproc, const Args &args, bool via_host,
                          MPI_Comm node_comm,
                          const std::vector<int> &on_my_node,
                          const std::vector<int> &node_ranks,
@@ -169,7 +169,7 @@ void schedule_concurrent(int rank, int nproc, const Args &args, bool via_host,
                          const std::function<void(const std::string &)> &mirror) {
 	const double t0 = MPI_Wtime();
 	const std::vector<double> row =
-	    run_concurrent(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks, rank_labels);
+	    run_simultaneous(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks, rank_labels);
 
 	// Сбор после всех замеров: строка ранга dst — его статистики по источникам.
 	std::vector<double> all;

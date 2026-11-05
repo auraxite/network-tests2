@@ -1,22 +1,22 @@
 #!/bin/bash
-# Сборка программы gpu: bash build.sh (сам отправляет сборку через srun на узел с GPU)
+# Сборка программы gpu: bash build/build.sh (сам отправляет сборку через srun на узел с GPU)
 
 set -euo pipefail
 
-source "$(dirname "$0")/config.sh"   # раздел и пути — общие
+source "$(dirname "$0")/../config.sh"   # раздел и пути — общие
 
 # --- Настройки этого скрипта ---
 SRUN_TIME="${SRUN_TIME:-00:10:00}"
 
-SRC="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # корень gpu_tests: исходники в src/, программа gpu — здесь
 
 case "${1:-srun}" in
 srun)
 	exec srun --partition="$PARTITION" -N1 --gres=gpu:1 --time="$SRUN_TIME" \
-		bash "$SRC/build.sh" build ;;
+		bash "$ROOT/build/build.sh" build ;;
 build) ;;
 *)
-	echo "Usage: bash build.sh [build]" >&2
+	echo "Usage: bash build/build.sh [build]" >&2
 	exit 1 ;;
 esac
 
@@ -32,13 +32,13 @@ RPATH="${UCX_LIB:+-Wl,-rpath,$UCX_LIB }-Wl,-rpath,$OMPI_PATH/lib -Wl,-rpath,$CUD
 
 "$MPICXX" --showme:version 2>/dev/null || true
 "$MPICXX" -O2 -std=c++17 -I"$CUDA_PATH/include" \
-	"$SRC/gpu_benchmark.cpp" "$SRC/gpu_common.cpp" \
-	"$SRC/gpu_one_to_one.cpp" "$SRC/gpu_one_to_one_v2.cpp" "$SRC/gpu_concurrent.cpp" \
-	-o "$SRC/gpu" \
+	"$ROOT/src/gpu_benchmark.cpp" "$ROOT/src/gpu_common.cpp" \
+	"$ROOT/src/gpu_one_to_one.cpp" "$ROOT/src/gpu_simultaneous.cpp" \
+	-o "$ROOT/gpu" \
 	$RPATH \
 	-Wl,--no-as-needed -Wl,-rpath-link,"$OMPI_PATH/lib" \
 	-L"$OMPI_PATH/lib" -lmpi -lopen-pal \
 	-Wl,--as-needed -L"$CUDA_PATH/lib64" -lcudart
 
-echo "OK: $SRC/gpu"
-ldd "$SRC/gpu" | grep -E 'libmpi|open-pal|libcudart|libucp|libuct' || true
+echo "OK: $ROOT/gpu"
+ldd "$ROOT/gpu" | grep -E 'libmpi|open-pal|libcudart|libucp|libuct' || true

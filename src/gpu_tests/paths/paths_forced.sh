@@ -1,9 +1,9 @@
 #!/bin/bash
-# Проверка на практике, какие пути передачи из перечня enum_paths.py работают.
+# Проверка на практике, какие пути передачи из перечня paths_possible.py работают.
 # Каждый путь включается принудительно настройками UCX и проверяется ucx_perftest
 # (тест задержки ping-pong, 4 МБ из памяти GPU): прошла ли передача, задержка,
 # журнал UCX и счётчики NVLink и адаптеров до и после.
-# Запуск: bash submit.sh check_paths.sh ; результат: results/paths_<задание>.tgz
+# Запуск: bash submit.sh paths/paths_forced.sh ; результат: results/paths_<задание>.tgz
 # 10–20 минут (около 35 тестов). На узле берутся все GPU, чтобы снимок
 # показал полную топологию. За 90с до лимита времени архив собирается из того, что успело.
 #SBATCH --job-name=clustbench-paths
@@ -16,7 +16,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=4
 
-# check_paths.sh --gid ИНТЕРФЕЙС: номер GID RoCE v2 с адресом IPv4 интерфейса (для UCX_IB_GID_INDEX)
+# paths_forced.sh --gid ИНТЕРФЕЙС: номер GID RoCE v2 с адресом IPv4 интерфейса (для UCX_IB_GID_INDEX)
 if [[ "${1:-}" == --gid ]]; then
 	for d in /sys/class/infiniband/*; do
 		for a in "$d"/ports/1/gid_attrs/ndevs/*; do
@@ -60,7 +60,7 @@ pack() {
 trap 'echo "лимит времени близко, упаковка"; pack; exit 1' USR1
 
 # --- Снимок топологии обоих узлов ---
-srun --ntasks-per-node=1 -N2 --gpus-per-node="${GPN}" bash "${GPU_TESTS}/collect_env.sh" "${OUT}"
+srun --ntasks-per-node=1 -N2 --gpus-per-node="${GPN}" bash "${GPU_TESTS}/paths/collect_env.sh" "${OUT}"
 
 # --- Связность сети: ping с первого узла до каждого адреса второго ---
 srun -N1 -n1 -w "${B}" ip -o -4 addr show | awk '{print $2, $4}' > "${OUT}/ip_${B}.txt"
@@ -109,7 +109,7 @@ run() {
 	local gid="" pre=""
 	if [[ "${1:-}" == GID=* ]]; then
 		gid=${1#GID=}; shift
-		pre="export UCX_IB_GID_INDEX=\$(bash ${GPU_TESTS}/check_paths.sh --gid ${gid}); echo UCX_IB_GID_INDEX=\$UCX_IB_GID_INDEX;"
+		pre="export UCX_IB_GID_INDEX=\$(bash ${GPU_TESTS}/paths/paths_forced.sh --gid ${gid}); echo UCX_IB_GID_INDEX=\$UCX_IB_GID_INDEX;"
 	fi
 	PORT=$((PORT + 1))
 	local envs=(UCX_LOG_LEVEL=info "$@")

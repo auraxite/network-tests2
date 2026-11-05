@@ -15,7 +15,7 @@ namespace gpu_benchmark {
    В one_to_all и all_to_one корнем по очереди становится каждый ранг.
    Задержка пары (src, dst) — время от общего старта итерации до завершения
    приёма от src на dst. Строки результата отдаются в mirror. */
-void schedule_concurrent(int rank, int nproc, const Args &args, bool via_host,
+void schedule_simultaneous(int rank, int nproc, const Args &args, bool via_host,
                          MPI_Comm node_comm,
                          const std::vector<int> &on_my_node,
                          const std::vector<int> &node_ranks,

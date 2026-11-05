@@ -1,6 +1,6 @@
 """Перечисление возможных путей передачи между GPU по снимку collect_env.sh.
 
-python enum_paths.py results/hyp_<job>/env_<узел>.txt [env_<второй узел>.txt]
+python paths/paths_possible.py results/hyp_<job>/env_<узел>.txt [env_<второй узел>.txt]
 
 Путь — последовательность вершин и рёбер графа коммуникационной среды. Граф строится по
 кодам связи из `nvidia-smi topo -m`: код задаёт цепочку вершин между двумя устройствами
@@ -10,13 +10,17 @@ python enum_paths.py results/hyp_<job>/env_<узел>.txt [env_<второй у�
   PHB  — через контроллер PCIe процессора
   NODE — через разные контроллеры PCIe одного процессора
   SYS  — через межпроцессорный интерфейс между процессорами
-Перечисляются пути GPU → GPU внутри узла и между узлами: через NVLink, через PCIe напрямую,
-через ОЗУ любого процессора, через любой работающий сетевой адаптер. Для каждого пути
-указано, что нужно, чтобы он был возможен, и выполнено ли это по снимку.
+Перечисляются все пути GPU → GPU внутри узла и между узлами. Путь состоит из стороны
+отправителя, способа передачи и стороны получателя:
+  способ: напрямую GPU → GPU; копирование между буферами в ОЗУ; через пару адаптеров,
+          связанных одной сетью (внутри узла — в том числе через один адаптер и обратно);
+  сторона: без буфера в ОЗУ или через буфер в ОЗУ любого процессора узла.
+Для каждого пути указано, что нужно, чтобы он был допустим, и выполнено ли это по снимку.
 
 Это возможные пути, а не выбранный: какой путь прошло сообщение, показывает эксперимент
 paths (журнал UCX и счётчики адаптеров и NVLink).
 """
+import ipaddress
 import re
 import sys
 from pathlib import Path
@@ -79,6 +83,20 @@ def parse_nics(txt):
 	return nics
 
 
+def parse_subnets(t):
+	"""Подсети IPv4 каждого адаптера: его интерфейс и VLAN на нём (раздел sysfs и ip -br -4 addr)."""
+	netdev = dict(re.findall(r"^nic (\S+) .*?netdev=(\S+) ", t, re.M))
+	nets = {}
+	for l in section(t, "ip -br -4 addr").splitlines():
+		f = l.split()
+		for cidr in f[2:]:
+			try:
+				nets.setdefault(f[0].split("@")[-1], set()).add(str(ipaddress.ip_interface(cidr).network))
+			except ValueError:
+				pass
+	return {nic: nets.get(nd, set()) for nic, nd in netdev.items() if not nd.startswith("path=")}
+
+
 class Node:
 	def __init__(self, path):
 		t = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -86,6 +104,7 @@ class Node:
 		self.rel, self.numa, legend = parse_topo(section(t, "nvidia-smi topo -m"))
 		self.p2p = parse_p2p(section(t, "nvidia-smi topo -p2p r"))
 		self.nicinfo = parse_nics(section(t, "ibv_devinfo"))
+		self.subnets = parse_subnets(t)
 		self.tls = set(re.findall(r"Transport:\s*(\S+)", section(t, next(
 			(k for k in re.findall(r"^===== (.*ucx_info -d) =====", t, re.M)), "ucx_info -d"))))
 		self.peermem = bool(re.search(r"nvidia_peermem|nv_peer_mem", section(t, next(
@@ -142,6 +161,74 @@ def fmt(chain):
 	return " → ".join(chain)
 
 
+def ram_to(node, dev, s):
+	"""Цепочка от ОЗУ процессора s до устройства (обратная к to_ram, без ОЗУ в начале)."""
+	return node.to_ram(dev, s)[::-1][1:]
+
+
+def sides(node, gpu, nic, sender):
+	"""Варианты стороны пути между GPU и адаптером: без буфера в ОЗУ (адаптер сам обращается
+	к видеопамяти, GPUDirect RDMA) или через буфер в ОЗУ любого процессора узла."""
+	out = []
+	direct = node.hop(gpu, nic)[0] if sender else node.hop(nic, gpu)[0][::-1]
+	out.append(("без ОЗУ", direct, True))
+	for s in range(node.sockets):
+		if sender:   # GPU → ОЗУ s → адаптер
+			chain = node.to_ram(gpu, s) + ram_to(node, nic, s)
+		else:        # адаптер → ОЗУ s → GPU
+			chain = node.to_ram(nic, s) + ram_to(node, gpu, s)
+		out.append((f"через ОЗУ{s}", chain, False))
+	return out
+
+
+def connected(n1, x, n2, y):
+	"""Есть ли сеть между адаптером x узла n1 и адаптером y узла n2 (условие связности):
+	True, False или None, если по снимку это установить нельзя (нет адресов Ethernet)."""
+	if n1 is n2 and x == y:
+		return True   # петля через тот же адаптер
+	lx = n1.nicinfo.get(n1.nicname[x], {}).get("layer", "?")
+	ly = n2.nicinfo.get(n2.nicname[y], {}).get("layer", "?")
+	if lx != ly:
+		return False
+	# Ethernet: адаптеры связаны, если у их интерфейсов есть общая подсеть
+	if lx != "Ethernet":
+		return True
+	if not (n1.subnets and n2.subnets):
+		return None
+	return bool(n1.subnets.get(n1.nicname[x], set()) & n2.subnets.get(n2.nicname[y], set()))
+
+
+def via_nics(n1, a, n2, b, prime=""):
+	"""Пути через адаптеры: каждая сторона без ОЗУ или через буфер в ОЗУ любого процессора,
+	адаптеры — любая пара, связанная одной сетью (внутри узла — в том числе один адаптер)."""
+	rows = []
+	has_copy = lambda n: ("cuda_copy" in n.tls) if n.tls else None
+	for x in n1.active_nics():
+		for y in n2.active_nics():
+			link = connected(n1, x, n2, y)
+			if link is False:
+				continue
+			nx, ny = n1.nicname[x], n2.nicname[y]
+			layer = n1.nicinfo.get(nx, {}).get("layer", "?")
+			mid = [nx, f"петля {layer}", nx] if (n1 is n2 and x == y) else [nx, f"сеть {layer}", ny]
+			for sd, side_a, gdr_a in sides(n1, a, x, True):
+				for rd, side_b, gdr_b in sides(n2, b, y, False):
+					need, ok = [], (True if link else None)
+					if gdr_a or gdr_b:
+						need.append("GPUDirect RDMA (nvidia_peermem)")
+						if (gdr_a and not n1.peermem) or (gdr_b and not n2.peermem):
+							ok = False
+					if not (gdr_a and gdr_b):
+						need.append("cuda_copy")
+						for n in (n1, n2):
+							if has_copy(n) is False:
+								ok = False
+					rows.append((f"через адаптеры {nx} → {ny}: отправитель {sd}, получатель {rd}",
+					             [f"VRAM({a})", a] + side_a + mid + side_b + [f"{b}{prime}", f"VRAM({b}{prime})"],
+					             ", ".join(need) + ", сетевой транспорт UCX", ok))
+	return rows
+
+
 def intra(node):
 	rows = []
 	G = node.gpus
@@ -150,66 +237,41 @@ def intra(node):
 			code = node.rel.get((a, b), "?")
 			p2p_ok = node.p2p.get((a, b))
 			need_ipc = "cuda_ipc" in node.tls if node.tls else None
+			# a) напрямую GPU → GPU
 			if code.startswith("NV"):
-				rows.append(("NVLink", [f"VRAM({a})", a] + node.hop(a, b)[0] + [b, f"VRAM({b})"],
+				rows.append(("напрямую, NVLink", [f"VRAM({a})", a] + node.hop(a, b)[0] + [b, f"VRAM({b})"],
 				             "прямой доступ GPU → GPU, транспорт cuda_ipc", p2p_ok and need_ipc))
-				# PCIe между ними в topo скрыт кодом NV#; путь есть, но CUDA выбирает NVLink
-				rows.append(("PCIe напрямую", [f"VRAM({a})", a, "PCIe (код скрыт NVLink)", b, f"VRAM({b})"],
-				             "не используется: при наличии NVLink прямой доступ идёт по NVLink", False))
+				# PCIe между ними в topo скрыт кодом NV#: связь есть, но драйвер ведёт прямой доступ по NVLink
+				rows.append(("напрямую, PCIe", [f"VRAM({a})", a, "PCIe (код скрыт NVLink)", b, f"VRAM({b})"],
+				             "недопустим: при наличии NVLink драйвер ведёт прямой доступ по NVLink", False))
 			else:
 				chain = node.hop(a, b)[0]
-				rows.append((f"PCIe напрямую ({code})", [f"VRAM({a})", a] + chain + [b, f"VRAM({b})"],
+				rows.append((f"напрямую, PCIe ({code})", [f"VRAM({a})", a] + chain + [b, f"VRAM({b})"],
 				             "прямой доступ GPU → GPU, транспорт cuda_ipc", p2p_ok and need_ipc))
-			# отправитель кладёт данные в ОЗУ процессора s, получатель забирает из ОЗУ процессора t;
-			# при s ≠ t копирование ОЗУ → ОЗУ идёт через межпроцессорный интерфейс
+			# b) через ОЗУ: буфер отправителя в ОЗУ s, буфер получателя в ОЗУ t;
+			# при s ≠ t копирование между буферами идёт через межпроцессорный интерфейс
 			for s in range(node.sockets):
 				for t in range(node.sockets):
 					ra, rb = node.to_ram(a, s), node.to_ram(b, t)[::-1]
-					tail = rb[1:] if s == t else ["межпроцессорный интерфейс"] + rb
-					rows.append((f"через ОЗУ{s}" + (f" и ОЗУ{t}" if s != t else ""),
+					tail = rb[1:] if s == t else [f"CPU{s}", "межпроцессорный интерфейс", f"CPU{t}"] + rb
+					rows.append((f"через ОЗУ: буфер отправителя в ОЗУ{s}, получателя в ОЗУ{t}",
 					             [f"VRAM({a})", a] + ra + tail + [b, f"VRAM({b})"],
 					             "cuda_copy и копирование ОЗУ → ОЗУ (sm, cma)",
 					             ("cuda_copy" in node.tls) if node.tls else None))
-			for n in node.active_nics():
-				nn = node.nicname[n]
-				layer = node.nicinfo.get(nn, {}).get("layer", "?")
-				rows.append((f"через адаптер {nn} без ОЗУ", [f"VRAM({a})", a] + node.hop(a, n)[0] + [nn, f"петля {layer}", nn]
-				             + node.hop(n, b)[0][::-1] + [b, f"VRAM({b})"],
-				             "GPUDirect RDMA (nvidia_peermem), сетевой транспорт UCX", node.peermem))
-				s = node.socket_of(n)
-				rows.append((f"через адаптер {nn} и ОЗУ{s}", [f"VRAM({a})", a] + node.to_ram(a, s) + [nn, f"петля {layer}", nn]
-				             + node.to_ram(b, s)[::-1] + [b, f"VRAM({b})"],
-				             "cuda_copy и сетевой транспорт UCX", ("cuda_copy" in node.tls) if node.tls else None))
+			# c) через адаптеры внутри узла
+			rows += via_nics(node, a, node, b)
 	return rows
 
 
 def inter(n1, n2):
-	"""Пути от GPU0 первого узла к GPU0 второго: адаптер отправителя и получателя × без ОЗУ / через ОЗУ."""
-	rows = []
-	a, b = n1.gpus[0], n2.gpus[0]
-	for x in n1.active_nics():
-		for y in n2.active_nics():
-			lx = n1.nicinfo.get(n1.nicname[x], {}).get("layer", "?")
-			ly = n2.nicinfo.get(n2.nicname[y], {}).get("layer", "?")
-			if lx != ly:
-				continue
-			for sd, side_a in (("без ОЗУ", n1.hop(a, x)[0]), ("через ОЗУ", n1.to_ram(a, n1.socket_of(x)))):
-				for rd, side_b in (("без ОЗУ", n2.hop(y, b)[0]), ("через ОЗУ", n2.to_ram(b, n2.socket_of(y))[::-1])):
-					need = []
-					ok = True
-					if "без" in sd or "без" in rd:
-						need.append("GPUDirect RDMA")
-						ok = ok and n1.peermem and n2.peermem
-					if "через" in sd or "через" in rd:
-						need.append("cuda_copy")
-					rows.append((f"{n1.nicname[x]} → {n2.nicname[y]}: отправитель {sd}, получатель {rd}",
-					             [f"VRAM({a})", a] + side_a + [f"{n1.nicname[x]}", f"сеть {lx}", f"{n2.nicname[y]}"]
-					             + side_b + [f"{b}'", f"VRAM({b}')"], ", ".join(need), ok))
-	return rows
+	"""d) Пути от GPU0 первого узла к GPU0 второго."""
+	return via_nics(n1, n1.gpus[0], n2, n2.gpus[0], prime="'")
 
 
 def show(title, rows):
-	print(f"\n=== {title}: {len(rows)} путей")
+	ok = sum(1 for r in rows if r[3])
+	unk = sum(1 for r in rows if r[3] is None)
+	print(f"\n=== {title}: {len(rows)} путей, допустимы по снимку {ok}" + (f", неизвестно {unk}" if unk else ""))
 	for i, (kind, chain, need, ok) in enumerate(rows, 1):
 		mark = {True: "возможен", False: "НЕТ", None: "?"}[ok]
 		print(f"{i:>3}. [{mark}] {kind}\n     {fmt(chain)}\n     нужно: {need}")

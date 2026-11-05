@@ -29,7 +29,7 @@ METRIC_TITLE = {
 
 # Теги в именах файлов task.sbatch: <узлы>_<env>_<mode>_b<байт>_w<warmup>_i<iters>.txt
 REP_TAG_RE = re.compile(r"(?:^|_)rep(\d+)(?:_|$)", re.I)
-ENV_TAG_RE = re.compile(r"(?:^|_)(auto|host)(?:_|$)", re.I)
+ENV_TAG_RE = re.compile(r"(?:^|_)(auto|custom|default|host)(?:_|$)", re.I)
 MODE_TAG_RE = re.compile(
 	r"(?:^|_)(cuda_one_to_one|cuda_all_to_all|one_to_one_v2|one_to_one|all_to_all|one_to_all|all_to_one)(?:_|$)", re.I
 )
@@ -152,17 +152,34 @@ def raw_path(txt_path: Path, src_label: str, dst_label: str) -> Path:
 	return txt_path.parent / "raw" / f"{txt_path.stem}_src{_sanitize(src_label)}_dst{_sanitize(dst_label)}.raw"
 
 
-def load_raw(txt_path: Path, src_label: str, dst_label: str) -> list[float]:
+def load_raw_times(txt_path: Path, src_label: str, dst_label: str) -> tuple[list[float], list[float]]:
+	"""(время начала итераций, задержки мкс) из .raw.
+
+	Строка .raw — «время задержка» (два столбца) или только задержка (старый формат,
+	тогда время берётся из .ts рядом, если он есть, иначе список времени пуст)."""
 	p = raw_path(txt_path, src_label, dst_label)
 	if not p.is_file():
-		return []
+		return [], []
+	times: list[float] = []
 	samples: list[float] = []
 	with p.open(encoding="utf-8", errors="replace") as f:
 		for line in f:
-			s = line.strip()
-			if s and not s.startswith("#"):
-				try:
-					samples.append(float(s))
-				except ValueError:
-					pass
-	return samples
+			s = line.split()
+			if not s or s[0].startswith("#"):
+				continue
+			try:
+				samples.append(float(s[-1]))
+				if len(s) > 1:
+					times.append(float(s[0]))
+			except ValueError:
+				pass
+	ts = p.with_suffix(".ts")
+	if not times and ts.is_file():
+		with ts.open(encoding="utf-8", errors="replace") as f:
+			times = [float(l) for l in f if l.strip() and not l.startswith("#")]
+	return (times if len(times) == len(samples) else []), samples
+
+
+def load_raw(txt_path: Path, src_label: str, dst_label: str) -> list[float]:
+	"""Задержки, мкс, из .raw (оба формата)."""
+	return load_raw_times(txt_path, src_label, dst_label)[1]
