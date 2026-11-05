@@ -43,6 +43,7 @@ PROTO_BLOCKS=(proto) # блоки с UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
 | `pinning.conf` | привязка главного потока, номер CPU на итерации, нагрузка CPU перед первой парой | `task4.sbatch` | `fc9d7a6` | `hyp_11078` |
 | `probe.conf` | тесты частоты ядра и задержки L3 рядом с парой | `task5.sbatch` | `96a039f` | `hyp_11082` |
 | `paths.conf` | какой путь передачи фактически выбран, пороги UCX в средах auto и default | `task6.sbatch` (не запускался) | — | — |
+| `sysviahost.conf` | ключ `--sys-via-host`: пары GPU разных процессоров через RAM | — | — | — |
 | `crosssocket.conf` | пара GPU разных процессоров (GPU0 и GPU2) и пороги UCX 1.22 | — | — | — |
 | `thresholds.conf` | где реальные замеры переключают путь: частая сетка около порогов | — | — | — |
 

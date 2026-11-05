@@ -36,6 +36,16 @@ bool same_node(const Task &t, const std::vector<int> &on_my_node) {
 	return on_my_node[t.src_rank] != 0 && on_my_node[t.dst_rank] != 0;
 }
 
+/* Идёт ли пара через RAM: всегда в среде host, а с --sys-via-host — ещё пары GPU разных
+   процессоров одного узла (прямой путь между ними на G5500 в тысячи раз медленнее, NOTES.md). */
+bool pair_via_host(const Task &t, const Args &args, bool via_host, bool same,
+                   const std::vector<int> &gpu_numa) {
+	if (via_host) return true;
+	if (!args.sys_via_host || !same) return false;
+	const int a = gpu_numa[t.src_rank], b = gpu_numa[t.dst_rank];
+	return a >= 0 && b >= 0 && a != b;
+}
+
 /* Пустое сообщение туда и обратно: держит отправителя и получателя в одной фазе. */
 void rendezvous(bool is_sender, int peer) {
 	char dummy = 0;
@@ -56,7 +66,7 @@ void transfer_once(const Task &t, bool is_sender, bool via_host, bool same_node,
 
 	// Внутри узла через общую оперативную память: копия GPU -> память у
 	// отправителя, сигнал готовности, копия память -> GPU у получателя.
-	if (same_node && b.shared_buf) {
+	if (via_host && same_node && b.shared_buf) {
 		if (is_sender) {
 			cuda_ok(cudaMemcpy(b.shared_buf, b.d_send.get(), count, cudaMemcpyDeviceToHost),
 			        "D2H(shared)");
@@ -167,7 +177,8 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 /* Ранги, кроме 0: ждут задание, участвуют в замере, возвращают ack. */
 void worker_loop(int rank, const Args &args, bool via_host, Buffers &b,
                  const std::vector<int> &on_my_node,
-                 const std::vector<std::string> &rank_labels) {
+                 const std::vector<std::string> &rank_labels,
+                 const std::vector<int> &gpu_numa) {
 	while (true) {
 		Task t{};
 		mpi_ok(MPI_Recv(&t, sizeof(Task), MPI_BYTE, 0, TAG_TASK, MPI_COMM_WORLD,
@@ -175,8 +186,9 @@ void worker_loop(int rank, const Args &args, bool via_host, Buffers &b,
 		DBG_LOG(rank, args, "WORKER_TASK src=" << t.src_rank << " dst=" << t.dst_rank
 		        << " stop=" << t.stop);
 		if (t.stop) break;
-		const auto ack = measure_pair(rank, t, args, via_host, same_node(t, on_my_node), b,
-		                              rank_labels);
+		const bool same = same_node(t, on_my_node);
+		const auto ack = measure_pair(rank, t, args, pair_via_host(t, args, via_host, same, gpu_numa),
+		                              same, b, rank_labels);
 		mpi_ok(MPI_Send(ack.data(), ACK_FIELDS, MPI_DOUBLE, 0, TAG_ACK, MPI_COMM_WORLD),
 		       "MPI_Send ack");
 	}
@@ -188,8 +200,10 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
                          MPI_Comm node_comm, int node_rank,
                          const std::vector<int> &on_my_node,
                          const std::vector<std::string> &rank_labels,
+                         const std::vector<int> &gpu_numa,
                          const std::function<void(const std::string &)> &mirror) {
-	Buffers b = make_buffers(args, via_host, node_comm, node_rank, rank);
+	// буферы в RAM нужны и для --sys-via-host: часть пар пойдёт через них
+	Buffers b = make_buffers(args, via_host || args.sys_via_host, node_comm, node_rank, rank);
 
 	// Разгон CPU до первой пары: без него первая пара мерится на низкой
 	// частоте ядер (см. NOTES.md).
@@ -200,7 +214,7 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 	}
 
 	if (rank != 0) {
-		worker_loop(rank, args, via_host, b, on_my_node, rank_labels);
+		worker_loop(rank, args, via_host, b, on_my_node, rank_labels, gpu_numa);
 		return;
 	}
 
@@ -235,7 +249,8 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 				       "MPI_Send Task");
 		auto &m = metric[static_cast<size_t>(src) * nproc + dst];
 		if (src == 0 || dst == 0) {
-			const auto ack = measure_pair(rank, t, args, via_host, same_node(t, on_my_node), b,
+			const bool same = same_node(t, on_my_node);
+			const auto ack = measure_pair(rank, t, args, pair_via_host(t, args, via_host, same, gpu_numa), same, b,
 			                              rank_labels);
 			if (ack[6] == 1.0) m = ack;
 		}

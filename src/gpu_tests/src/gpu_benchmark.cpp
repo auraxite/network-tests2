@@ -41,6 +41,18 @@ std::string pre_scan_arg(int argc, char **argv, const char *key) {
 	return "";
 }
 
+/* NUMA-узел (процессор) GPU по PCI-адресу из /sys, -1 если не узнать. */
+int gpu_numa_node(const char *pci) {
+	std::string p(pci);
+	for (char &c : p) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	std::FILE *f = std::fopen(("/sys/bus/pci/devices/" + p + "/numa_node").c_str(), "r");
+	if (!f) return -1;
+	int n = -1;
+	if (std::fscanf(f, "%d", &n) != 1) n = -1;
+	std::fclose(f);
+	return n;
+}
+
 /* Номер ранга на узле по переменным лаунчера, -1 если не нашли. */
 int env_local_rank() {
 	for (const char *v : {"OMPI_COMM_WORLD_LOCAL_RANK", "SLURM_LOCALID",
@@ -411,10 +423,27 @@ int main(int argc, char **argv) {
 		mirror(pin.str());
 	}
 
+	// Процессор каждого GPU — для --sys-via-host и для шапки
+	std::vector<int> gpu_numa(nproc, -1);
+	{
+		int my_numa = gpu_numa_node(ri.pci(rank));
+		mpi_ok(MPI_Allgather(&my_numa, 1, MPI_INT, gpu_numa.data(), 1, MPI_INT, MPI_COMM_WORLD),
+		       "MPI_Allgather gpu_numa");
+		std::ostringstream o;
+		o << "GPU NUMA:";
+		for (int r = 0; r < nproc; ++r) o << " r" << r << "=" << gpu_numa[r];
+		o << "\nSYS pairs via host: " << (args.sys_via_host ? "on" : "off") << "\n";
+		mirror(o.str());
+	}
+	if (args.sys_via_host && args.mode != Mode::OneToOne) {
+		if (rank == 0) std::cerr << "--sys-via-host пока только для --mode one_to_one\n";
+		MPI_Abort(MPI_COMM_WORLD, 1);
+	}
+
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
 	if (args.mode == Mode::OneToOne)
 		schedule_one_to_one(rank, nproc, args, via_host, node_comm, local_rank, on_my_node,
-		                      rank_labels, mirror);
+		                      rank_labels, gpu_numa, mirror);
 	else
 		schedule_simultaneous(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks,
 		                      rank_labels, mirror);

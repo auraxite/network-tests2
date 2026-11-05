@@ -15,6 +15,7 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
                          MPI_Comm node_comm, int node_rank,
                          const std::vector<int> &on_my_node,
                          const std::vector<std::string> &rank_labels,
+                         const std::vector<int> &gpu_numa,
                          const std::function<void(const std::string &)> &mirror);
 
 } // namespace gpu_benchmark

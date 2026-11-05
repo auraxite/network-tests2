@@ -65,6 +65,8 @@ void help(int rank) {
 		<< "                  default: only UCX_TLS=^tcp, no adapter choice; Open MPI\n"
 		<< "                  and UCX pick the path themselves\n"
 		<< "  --gpus L        GPU for local ranks in order, e.g. 0,2 (default: local rank)\n"
+		<< "  --sys-via-host  one_to_one: pairs of GPUs of different CPUs on one node go via RAM\n"
+		<< "                  (module copies, as in --env host); other pairs as the env says\n"
 		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
 		<< "                  (default one_to_one)\n"
 		<< "  --order O       one_to_one: seq | random (default seq)\n"
@@ -175,6 +177,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.pin_main = std::atoi(next("--pin-main"));
 		else if (s == "--probe")
 			a.probe = true;
+		else if (s == "--sys-via-host")
+			a.sys_via_host = true;
 		else if (s == "--gpus") {
 			a.gpus = parse_gpu_list(next("--gpus"));
 			if (a.gpus.empty()) bad_arg(rank, "--gpus: список номеров через запятую, например 0,2");

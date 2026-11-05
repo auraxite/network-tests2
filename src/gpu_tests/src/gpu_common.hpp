@@ -45,6 +45,7 @@ struct Args {
 	int         pin_main         = -1;      // --pin-main K: K-й CPU маски, -1 — нет
 	bool        probe            = false;   // one_to_one: --probe
 	std::vector<int> gpus;                  // --gpus 0,2: GPU для локальных рангов узла по порядку
+	bool        sys_via_host     = false;   // one_to_one: пары GPU разных процессоров узла — через RAM
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
