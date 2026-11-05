@@ -46,6 +46,7 @@ struct Args {
 	bool        probe            = false;   // one_to_one: --probe
 	std::vector<int> gpus;                  // --gpus 0,2: GPU для локальных рангов узла по порядку
 	bool        sys_via_host     = false;   // one_to_one: пары GPU разных процессоров узла — через RAM
+	bool        sys_via_host_def = false;   // включено по умолчанию (custom, one_to_one), а не ключом
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */

@@ -66,7 +66,8 @@ void help(int rank) {
 		<< "                  and UCX pick the path themselves\n"
 		<< "  --gpus L        GPU for local ranks in order, e.g. 0,2 (default: local rank)\n"
 		<< "  --sys-via-host  one_to_one: pairs of GPUs of different CPUs on one node go via RAM\n"
-		<< "                  (module copies, as in --env host); other pairs as the env says\n"
+		<< "                  (module copies, as in --env host); other pairs as the env says.\n"
+		<< "                  On by default for --env custom; --no-sys-via-host turns it off\n"
 		<< "  --mode M        one_to_one | all_to_all | one_to_all | all_to_one\n"
 		<< "                  (default one_to_one)\n"
 		<< "  --order O       one_to_one: seq | random (default seq)\n"
@@ -137,6 +138,7 @@ StatOut parse_stat_out(const std::string &s, int rank) {
 }
 
 Args parse_args(int argc, char **argv, int rank) {
+	int sys_flag = -1;   // --sys-via-host: 1, --no-sys-via-host: 0, не задано: -1
 	Args a;
 	for (int i = 1; i < argc; ++i) {
 		const std::string s = argv[i];
@@ -178,7 +180,9 @@ Args parse_args(int argc, char **argv, int rank) {
 		else if (s == "--probe")
 			a.probe = true;
 		else if (s == "--sys-via-host")
-			a.sys_via_host = true;
+			sys_flag = 1;
+		else if (s == "--no-sys-via-host")
+			sys_flag = 0;
 		else if (s == "--gpus") {
 			a.gpus = parse_gpu_list(next("--gpus"));
 			if (a.gpus.empty()) bad_arg(rank, "--gpus: список номеров через запятую, например 0,2");
@@ -193,6 +197,16 @@ Args parse_args(int argc, char **argv, int rank) {
 	if (a.warmup < 0) bad_arg(rank, "--warmup must be >= 0");
 	if (a.iters <= 0) bad_arg(rank, "--iters must be > 0");
 	if (a.nbytes == 0) bad_arg(rank, "--bytes must be > 0");
+	// custom по умолчанию обходит прямой путь между GPU разных процессоров (NOTES.md); ключ работает
+	// только в one_to_one, по умолчанию в других режимах выключается молча, заданный явно — ошибка
+	if (sys_flag == 1 && a.mode != Mode::OneToOne)
+		bad_arg(rank, "--sys-via-host пока только для --mode one_to_one");
+	if (sys_flag == -1) {
+		a.sys_via_host = a.env == Env::Custom && a.mode == Mode::OneToOne;
+		a.sys_via_host_def = a.sys_via_host;
+	} else {
+		a.sys_via_host = sys_flag == 1;
+	}
 	return a;
 }
 

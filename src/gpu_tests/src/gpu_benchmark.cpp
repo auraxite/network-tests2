@@ -432,12 +432,9 @@ int main(int argc, char **argv) {
 		std::ostringstream o;
 		o << "GPU NUMA:";
 		for (int r = 0; r < nproc; ++r) o << " r" << r << "=" << gpu_numa[r];
-		o << "\nSYS pairs via host: " << (args.sys_via_host ? "on" : "off") << "\n";
+		o << "\nSYS pairs via host: " << (args.sys_via_host ? "on" : "off")
+		  << (args.sys_via_host_def ? " (default for custom)" : "") << "\n";
 		mirror(o.str());
-	}
-	if (args.sys_via_host && args.mode != Mode::OneToOne) {
-		if (rank == 0) std::cerr << "--sys-via-host пока только для --mode one_to_one\n";
-		MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 
 	mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier before benchmark");
