@@ -34,11 +34,11 @@ RPATH="${UCX_LIB:+-Wl,-rpath,$UCX_LIB }-Wl,-rpath,$OMPI_PATH/lib -Wl,-rpath,$CUD
 "$MPICXX" -O2 -std=c++17 -I"$CUDA_PATH/include" \
 	"$ROOT/src/gpu_benchmark.cpp" "$ROOT/src/gpu_common.cpp" \
 	"$ROOT/src/gpu_one_to_one.cpp" "$ROOT/src/gpu_simultaneous.cpp" \
-	-o "$ROOT/gpu" \
+	-o "$ROOT/$GPU_BIN" \
 	$RPATH \
 	-Wl,--no-as-needed -Wl,-rpath-link,"$OMPI_PATH/lib" \
 	-L"$OMPI_PATH/lib" -lmpi -lopen-pal \
 	-Wl,--as-needed -L"$CUDA_PATH/lib64" -lcudart
 
-echo "OK: $ROOT/gpu"
-ldd "$ROOT/gpu" | grep -E 'libmpi|open-pal|libcudart|libucp|libuct' || true
+echo "OK: $ROOT/$GPU_BIN (Open MPI $OMPI_VERSION, UCX $UCX_VERSION)"
+ldd "$ROOT/$GPU_BIN" | grep -E 'libmpi|open-pal|libcudart|libucp|libuct' || true

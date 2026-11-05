@@ -158,7 +158,12 @@ unset UCX_NET_DEVICES UCX_IB_GPU_DIRECT_RDMA
 # на нужной партиции, затем раскомментируй и подставь своё:
 # export UCX_NET_DEVICES=mlx5_0:1
 
-BIN="${GPU_TESTS}/gpu"
+BIN="${GPU_TESTS}/${GPU_BIN}"
+[[ -x "$BIN" ]] || { echo "FATAL: нет $BIN (bash build/build.sh для UCX $UCX_VERSION)"; exit 1; }
+# Фактическая версия UCX — в шапку каждого файла результатов (программа печатает её)
+CLUSTBENCH_UCX_VERSION=$("$UCX_PATH/bin/ucx_info" -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+export CLUSTBENCH_UCX_VERSION="${CLUSTBENCH_UCX_VERSION:-unknown}"
+echo "UCX ${CLUSTBENCH_UCX_VERSION}, Open MPI $OMPI_VERSION, программа $BIN"
 NNODES="${SLURM_JOB_NUM_NODES:-1}"
 JOB_NODES="${SLURM_JOB_NODELIST:-${SLURM_NODELIST:-$(hostname -s)}}"
 SAFE_NODES="$(echo "${JOB_NODES}" | tr '[],' '_' | tr -s '_' | sed 's/^_//; s/_$//')"

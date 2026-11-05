@@ -236,6 +236,16 @@ std::string header_text(const Args &args, int nproc, const RankInfo &ri) {
 std::string ucx_config_text(bool cuda_aware, bool via_host, Env env) {
 	std::ostringstream o;
 	o << "CUDA-aware MPI: " << (cuda_aware ? "yes" : "no") << "\n";
+	{
+		char lib[MPI_MAX_LIBRARY_VERSION_STRING] = {};
+		int len = 0;
+		MPI_Get_library_version(lib, &len);
+		std::string first(lib, static_cast<size_t>(len));
+		first = first.substr(0, first.find_first_of("\n,"));   // «Open MPI v5.0.10»
+		const char *ucx = getenv("CLUSTBENCH_UCX_VERSION");    // выставляет task.sbatch
+		o << "MPI library: " << first << "\n";
+		o << "UCX version: " << (ucx ? ucx : "unknown") << "\n";
+	}
 	o << "UCX config (effective after MPI_Init):\n";
 	for (const char *k : {"UCX_TLS", "UCX_RNDV_THRESH", "UCX_IB_GPU_DIRECT_RDMA", "UCX_RNDV_SCHEME",
 	                      "UCX_MEMTYPE_CACHE", "UCX_NET_DEVICES", "UCX_LOG_LEVEL"}) {

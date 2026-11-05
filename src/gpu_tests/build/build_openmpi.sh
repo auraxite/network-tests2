@@ -14,8 +14,14 @@ SRC_DIR="${SRC_DIR:-$HOME/src}"
 
 [ -x "$UCX_PATH/bin/ucx_info" ] || { echo "FATAL: нет UCX в $UCX_PATH (сначала build_ucx.sh)"; exit 1; }
 [ -d "$SRC_DIR/openmpi-$OMPI_VERSION" ] || { echo "FATAL: нет исходников $SRC_DIR/openmpi-$OMPI_VERSION"; exit 1; }
+# Не ставить поверх готовой сборки: она собрана с другим UCX или уже работает
+if [ -e "$OMPI_PATH/bin/mpicc" ]; then
+	echo "FATAL: $OMPI_PATH уже существует (Open MPI для UCX $UCX_VERSION). Убери старую сборку, например:"
+	echo "  mv '$OMPI_PATH' '$OMPI_PATH.bak.\$(date +%s)'"
+	exit 1
+fi
 
-echo "Сборка Open MPI $OMPI_VERSION (partition=$PARTITION, cpus=$BUILD_JOBS)"
+echo "Сборка Open MPI $OMPI_VERSION с UCX $UCX_VERSION в $OMPI_PATH (partition=$PARTITION, cpus=$BUILD_JOBS)"
 export OMPI_VERSION OMPI_PREFIX="$OMPI_PATH" UCX_PATH CUDA_PATH SRC_DIR BUILD_JOBS
 srun --partition="$PARTITION" --nodes=1 --ntasks=1 \
 	--cpus-per-task="$BUILD_JOBS" --gres=gpu:1 --time=02:00:00 \

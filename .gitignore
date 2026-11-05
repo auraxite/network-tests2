@@ -78,3 +78,5 @@ work/
 
 # данные с кластера скачивать в work/diploma/results/, не в корень
 /results/
+src/gpu_tests/gpu
+src/gpu_tests/gpu-ucx-*
