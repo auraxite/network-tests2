@@ -48,6 +48,7 @@ PROTO_BLOCKS=(proto) # блоки с UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
 | `sysviahost.conf` | ключ `--sys-via-host`: пары GPU разных процессоров через RAM | — | — | — |
 | `crosssocket.conf` | пара GPU разных процессоров (GPU0 и GPU2) и пороги UCX 1.22 | — | — | — |
 | `thresholds.conf` | где реальные замеры переключают путь: частая сетка около порогов | — | — | — |
+| `autothresh.conf` | автоматический поиск порога eager/rendezvous по измерению: каждый размер трижды — порог UCX, `UCX_RNDV_THRESH=inf`, `UCX_RNDV_THRESH=0`; обработка `analysis/autothresh.py` | — | — | — |
 
 Данные `hyp_*` сняты старыми файлами заданий; их можно достать из git по коммиту,
 например `git show 96a039f:src/gpu_tests/task5.sbatch`. Новое задание с описаниями

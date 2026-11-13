@@ -77,6 +77,8 @@
 #   COLLECT_ENV   1 — collect_env.sh: топология, ucx_info -d, адаптеры
 #   UCX_PATHS     1 — журнал UCX по рангам и счётчики адаптеров/NVLink до и после запуска
 #   PROTO_BLOCKS  блоки, где включаются UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
+#   BLOCK_ENV     переменные окружения для запусков блока: BLOCK_ENV[имя]="UCX_RNDV_THRESH=0 ..."
+#                 (задаются поверх сброса UCX_* выше; программа их не перебивает — setenv с overwrite=0)
 EXPERIMENT="${1:-default}"
 GPU_TESTS="${SLURM_SUBMIT_DIR:-$(pwd)}"
 CONF="${GPU_TESTS}/experiments/${EXPERIMENT}.conf"
@@ -84,6 +86,7 @@ test -f "${CONF}" || { echo "error: нет ${CONF} (список: ls experiments
 
 PLAN=(); COMMON=(); SHUFFLE_SEED=""; SEED_BASE=0; OUT_LAYOUT=job; REQUIRE=""
 LOG_FREQ=0; LOG_TOPOLOGY=0; COLLECT_ENV=0; UCX_PATHS=0; PROTO_BLOCKS=()
+declare -A BLOCK_ENV=()
 source "${CONF}"
 
 # Пути к Open MPI, UCX и CUDA — общие, из config.sh в каталоге отправки
@@ -309,6 +312,8 @@ for IDX in "${!LIST[@]}"; do
 	for P in ${PROTO_BLOCKS[@]+"${PROTO_BLOCKS[@]}"}; do
 		if [[ "${BLOCK}" == "${P}" ]]; then UCX_ENV+=(UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y); IS_PROTO=1; fi
 	done
+	BENV_STR="${BLOCK_ENV[${BLOCK}]:-}"
+	if [[ -n "${BENV_STR}" ]]; then read -r -a BENV <<<"${BENV_STR}"; UCX_ENV+=("${BENV[@]}"); fi
 	# Вывод программы: по файлу на ранг (журнал UCX; для блоков proto — всегда, там таблицы порогов),
 	# в журнал задания (обычное измерение) или никуда
 	if [[ "${UCX_PATHS}" == 1 || "${IS_PROTO}" == 1 ]]; then
@@ -319,7 +324,7 @@ for IDX in "${!LIST[@]}"; do
 	else
 		STDIO=(--output=/dev/null)
 	fi
-	echo "RUN ${IDX}: ${BLOCK} rep=${REP} env=${ENV} mode=${MODE} bytes=${B} warmup=${W} iters=${I} ${ARGS}"
+	echo "RUN ${IDX}: ${BLOCK} rep=${REP} env=${ENV} mode=${MODE} bytes=${B} warmup=${W} iters=${I} ${ARGS}${BENV_STR:+ [${BENV_STR}]}"
 	if [[ "${UCX_PATHS}" == 1 ]]; then snap "${IDX}_before"; fi
 	T0=$(date +%s.%N)
 	# --cpu-bind=verbose,cores: ранг жёстко на своих ядрах, маска печатается в журнал задания
