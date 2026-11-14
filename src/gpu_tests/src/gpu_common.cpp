@@ -75,6 +75,9 @@ void help(int rank) {
 		<< "  --cpu-log       one_to_one: CPU of sender/receiver per iteration (raw/*.scpu, *.rcpu)\n"
 		<< "  --prespin-sec S one_to_one: busy-spin S seconds on every rank before the first pair\n"
 		<< "  --pin-main K    pin the main thread to the K-th CPU (from 0) of its mask after init\n"
+		<< "  --p2p P         one_to_one: blocking (MPI_Send/MPI_Recv, default) |\n"
+		<< "                  nonblocking (MPI_Isend/MPI_Irecv + MPI_Wait; Open MPI passes UCX the\n"
+		<< "                  multi-send flag for them, so UCX may pick another protocol)\n"
 		<< "  --probe         one_to_one: core and L3 latency probes before/after each pair\n"
 		<< "                  (raw/*.sprobe, *.rprobe: core_ns l3_ns before, then after)\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
@@ -179,6 +182,12 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.pin_main = std::atoi(next("--pin-main"));
 		else if (s == "--probe")
 			a.probe = true;
+		else if (s == "--p2p") {
+			const std::string o = next("--p2p");
+			if (o == "nonblocking") a.p2p_nonblocking = true;
+			else if (o == "blocking") a.p2p_nonblocking = false;
+			else bad_arg(rank, "unknown --p2p: " + o + " (use blocking|nonblocking)");
+		}
 		else if (s == "--sys-via-host")
 			sys_flag = 1;
 		else if (s == "--no-sys-via-host")
@@ -199,6 +208,8 @@ Args parse_args(int argc, char **argv, int rank) {
 	if (a.nbytes == 0) bad_arg(rank, "--bytes must be > 0");
 	// custom по умолчанию обходит прямой путь между GPU разных процессоров (NOTES.md); ключ работает
 	// только в one_to_one, по умолчанию в других режимах выключается молча, заданный явно — ошибка
+	if (a.p2p_nonblocking && a.mode != Mode::OneToOne)
+		bad_arg(rank, "--p2p nonblocking только для --mode one_to_one (остальные режимы и так неблокирующие)");
 	if (sys_flag == 1 && a.mode != Mode::OneToOne)
 		bad_arg(rank, "--sys-via-host пока только для --mode one_to_one");
 	if (sys_flag == -1) {

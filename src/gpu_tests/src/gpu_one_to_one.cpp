@@ -59,9 +59,33 @@ void rendezvous(bool is_sender, int peer) {
 		                    MPI_COMM_WORLD, MPI_STATUS_IGNORE), "Sendrecv rendezvous(receiver)");
 }
 
+/* Отправка и приём одного сообщения: блокирующие MPI_Send/MPI_Recv или (--p2p nonblocking)
+   MPI_Isend/MPI_Irecv + MPI_Wait. Open MPI передаёт UCX для неблокирующих вызовов флаг
+   UCP_OP_ATTR_FLAG_MULTI_SEND (pml_ucx_multi_send_nb, по умолчанию включён), для MPI_Send —
+   UCP_OP_ATTR_FLAG_FAST_CMPL, и UCX выбирает протокол по разным таблицам. */
+static void p2p_send(const void *buf, int count, int dst, bool nonblocking, const char *what) {
+	if (!nonblocking) {
+		mpi_ok(MPI_Send(buf, count, MPI_BYTE, dst, TAG_DATA, MPI_COMM_WORLD), what);
+		return;
+	}
+	MPI_Request r;
+	mpi_ok(MPI_Isend(buf, count, MPI_BYTE, dst, TAG_DATA, MPI_COMM_WORLD, &r), what);
+	mpi_ok(MPI_Wait(&r, MPI_STATUS_IGNORE), what);
+}
+
+static void p2p_recv(void *buf, int count, int src, bool nonblocking, const char *what) {
+	if (!nonblocking) {
+		mpi_ok(MPI_Recv(buf, count, MPI_BYTE, src, TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE), what);
+		return;
+	}
+	MPI_Request r;
+	mpi_ok(MPI_Irecv(buf, count, MPI_BYTE, src, TAG_DATA, MPI_COMM_WORLD, &r), what);
+	mpi_ok(MPI_Wait(&r, MPI_STATUS_IGNORE), what);
+}
+
 /* Одна передача src -> dst. Вызывается и отправителем, и получателем. */
 void transfer_once(const Task &t, bool is_sender, bool via_host, bool same_node,
-                   size_t nbytes, Buffers &b) {
+                   size_t nbytes, Buffers &b, bool nonblocking) {
 	const int count = static_cast<int>(nbytes);
 
 	// Внутри узла через общую оперативную память: копия GPU -> память у
@@ -85,20 +109,16 @@ void transfer_once(const Task &t, bool is_sender, bool via_host, bool same_node,
 	if (is_sender) {
 		if (via_host) {
 			cuda_ok(cudaMemcpy(b.h_buf.get(), b.d_send.get(), count, cudaMemcpyDeviceToHost), "D2H");
-			mpi_ok(MPI_Send(b.h_buf.get(), count, MPI_BYTE, t.dst_rank, TAG_DATA, MPI_COMM_WORLD),
-			       "MPI_Send(host)");
+			p2p_send(b.h_buf.get(), count, t.dst_rank, nonblocking, "send(host)");
 		} else {
-			mpi_ok(MPI_Send(b.d_send.get(), count, MPI_BYTE, t.dst_rank, TAG_DATA, MPI_COMM_WORLD),
-			       "MPI_Send(device)");
+			p2p_send(b.d_send.get(), count, t.dst_rank, nonblocking, "send(device)");
 		}
 	} else {
 		if (via_host) {
-			mpi_ok(MPI_Recv(b.h_buf.get(), count, MPI_BYTE, t.src_rank, TAG_DATA, MPI_COMM_WORLD,
-			                MPI_STATUS_IGNORE), "MPI_Recv(host)");
+			p2p_recv(b.h_buf.get(), count, t.src_rank, nonblocking, "recv(host)");
 			cuda_ok(cudaMemcpy(b.d_recv.get(), b.h_buf.get(), count, cudaMemcpyHostToDevice), "H2D");
 		} else {
-			mpi_ok(MPI_Recv(b.d_recv.get(), count, MPI_BYTE, t.src_rank, TAG_DATA, MPI_COMM_WORLD,
-			                MPI_STATUS_IGNORE), "MPI_Recv(device)");
+			p2p_recv(b.d_recv.get(), count, t.src_rank, nonblocking, "recv(device)");
 			// UCX cuda_ipc может сообщить о завершении MPI раньше, чем копия на
 			// устройстве действительно закончится: ждём её внутри замера.
 			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(recv device)");
@@ -140,7 +160,7 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 	if (args.probe) before = cpu_probe();
 
 	for (int i = 0; i < args.warmup; ++i)
-		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
+		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b, args.p2p_nonblocking);
 
 	std::vector<double> samples_us, times, cpus;
 	samples_us.reserve(static_cast<size_t>(args.iters));
@@ -150,7 +170,7 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 		if (is_receiver) times.push_back(epoch_now());
 		if (args.cpu_log) cpus.push_back(current_cpu());
 		const double t0 = MPI_Wtime();
-		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b);
+		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b, args.p2p_nonblocking);
 		const double t1 = MPI_Wtime();
 		if (is_receiver)
 			samples_us.push_back((t1 - t0) * 1e6);
@@ -231,7 +251,8 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 
 	std::ostringstream head;
 	head << "Order: " << (args.random_order ? "random" : "seq") << " seed=" << args.seed
-	     << " prespin_sec=" << args.prespin_sec << " cpu_log=" << (args.cpu_log ? 1 : 0) << "\n";
+	     << " prespin_sec=" << args.prespin_sec << " cpu_log=" << (args.cpu_log ? 1 : 0)
+	     << " p2p=" << (args.p2p_nonblocking ? "nonblocking" : "blocking") << "\n";
 	mirror(head.str());
 
 	std::vector<std::vector<double>> metric(static_cast<size_t>(nproc) * nproc,
