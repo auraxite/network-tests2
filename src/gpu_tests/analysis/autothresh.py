@@ -150,13 +150,16 @@ def main() -> int:
 			if between:
 				gain = max(a[s] / min(e[s], r[s]) for s in between if s in e and s in r)
 		rows.append((key, forced_ok, x, (u_lo, u_hi), gain))
+		# уточнять нужно только лучший порог: между соседними точками сетки или ниже её начала
 		if x and x["lo"] and x["hi"] and x["hi"] / x["lo"] > args.tol:
 			lo, hi = x["lo"], x["hi"]
 			for i in range(1, 8):
 				refine.add(int(round(lo * (hi / lo) ** (i / 8))))
-		if u_lo and u_hi and u_hi / u_lo > args.tol:
-			for i in range(1, 8):
-				refine.add(int(round(u_lo * (u_hi / u_lo) ** (i / 8))))
+		elif x and x["lo"] is None:          # rndv не медленнее уже с первой точки — пересечение ниже сетки
+			b = 1
+			while b < x["hi"]:
+				refine.add(b)
+				b *= 2
 
 	print("| Класс пар | GPU отпр. | Режимы различаются | Лучший порог по измерению | Порог UCX (между) | Выигрыш между порогами |")
 	print("|---|---|---|---|---|---|")
