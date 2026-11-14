@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Автоматический поиск порога eager/rendezvous по измерению (эксперимент experiments/autothresh.conf).
 
-    python3 analysis/autothresh.py results/hyp_<задание> [--plot autothresh.png] [--refine experiments/autothresh_sizes.txt]
+    python3 analysis/autothresh.py results/hyp_<задание> [results/hyp_<уточнение> ...] [--plot autothresh.png] [--refine experiments/autothresh_sizes.txt]
 
 Вход — результаты задания с блоками auto (порог выбирает UCX), eager (UCX_RNDV_THRESH=inf) и rndv
 (UCX_RNDV_THRESH=0). Для каждого класса пар — GPU отправителя × (между узлами | внутри узла, GPU одного
@@ -52,11 +52,11 @@ def pair_class(src: str, dst: str, gpus_per_socket: int) -> str | None:
 	return None   # GPU разных процессоров — через RAM, порог UCX не действует
 
 
-def load(job: Path, gpus_per_socket: int):
+def load(jobs: list[Path], gpus_per_socket: int):
 	"""curves[(класс, GPU отправителя)][режим][размер] = медиана медиан пар."""
 	raw = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 	files = 0
-	for f in sorted(job.glob("*.txt")):
+	for f in sorted(f for job in jobs for f in job.glob("*.txt")):
 		m = NAME_RE.search(f.name)
 		if not m:
 			continue
@@ -118,7 +118,7 @@ def fmt_bytes(b: int | None) -> str:
 
 def main() -> int:
 	ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-	ap.add_argument("job", type=Path, help="каталог результатов задания autothresh")
+	ap.add_argument("job", type=Path, nargs="+", help="каталоги результатов заданий autothresh (сетки объединяются)")
 	ap.add_argument("--gpus-per-socket", type=int, default=2, help="GPU на процессор (G5500 V7: 2)")
 	ap.add_argument("--tol", type=float, default=1.1, help="уточнять, если соседние точки сетки дальше, чем в tol раз")
 	ap.add_argument("--refine", type=Path, help="записать сюда размеры для уточняющего прогона")
@@ -127,9 +127,9 @@ def main() -> int:
 
 	curves, files = load(args.job, args.gpus_per_socket)
 	if not curves:
-		print(f"нет результатов autothresh в {args.job} (файлы *_auto|eager|rndv_rep*_..._b*_w*_i*.txt)", file=sys.stderr)
+		print(f"нет результатов autothresh в {[str(j) for j in args.job]} (файлы *_auto|eager|rndv_rep*_..._b*_w*_i*.txt)", file=sys.stderr)
 		return 1
-	print(f"{args.job}: файлов {files}, классов пар {len(curves)}\n")
+	print(f"{', '.join(str(j) for j in args.job)}: файлов {files}, классов пар {len(curves)}\n")
 
 	rows, refine = [], set()
 	for key in sorted(curves):
