@@ -220,7 +220,7 @@ nvidia-smi topo -m 2>/dev/null | sed "s/^/    /" || echo "    nvidia-smi topo н
 echo "======================"
 
 if [[ "${COLLECT_ENV}" == 1 ]]; then
-	srun --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash "${GPU_TESTS}/paths/collect_env.sh" "${OUT_DIR}"
+	srun --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node="${SLURM_GPUS_PER_NODE:-2}" bash "${GPU_TESTS}/paths/collect_env.sh" "${OUT_DIR}"
 fi
 
 if [[ "${LOG_TOPOLOGY}" == 1 ]]; then
@@ -238,7 +238,7 @@ fi
 
 # Фоновые записи частот GPU и CPU каждые 200 мс; --overlap не занимает ресурсы замеров
 if [[ "${LOG_FREQ}" == 1 ]]; then
-	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node="${SLURM_GPUS_PER_NODE:-2}" bash -c '
 		nvidia-smi --query-gpu=timestamp,index,pci.bus_id,clocks.sm,clocks.mem,pstate,temperature.gpu,power.draw,utilization.gpu \
 			--format=csv,nounits -lms 200 > "$0/gpu_clocks_$(hostname -s).csv"' "${OUT_DIR}" \
 		2>"${OUT_DIR}/gpu_clocks.err" &
@@ -255,7 +255,7 @@ fi
 # Счётчики: байты, отправленные каждым сетевым адаптером (port_xmit_data в 4-байтовых словах),
 # и трафик NVLink. Разбор — paths_chosen.py.
 snap() {
-	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node="${SLURM_GPUS_PER_NODE:-2}" bash -c '
 		f="$0/counters/$(hostname -s)_$1.txt"
 		{ for d in /sys/class/infiniband/*; do
 			for p in "$d"/ports/*; do
@@ -270,7 +270,7 @@ if [[ "${UCX_PATHS}" == 1 ]]; then
 	mkdir -p "${OUT_DIR}/ucx" "${OUT_DIR}/counters"
 	# Трафик каждого GPU по PCIe раз в секунду (МБ/с приёма и передачи), строка с временем эпохи:
 	# путь через ОЗУ или адаптер проходит по PCIe GPU, путь по NVLink — нет
-	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node=2 bash -c '
+	srun --overlap --ntasks-per-node=1 -n"${NNODES}" --gpus-per-node="${SLURM_GPUS_PER_NODE:-2}" bash -c '
 		stdbuf -oL nvidia-smi dmon -s t -d 1 | while IFS= read -r l; do echo "$(date +%s.%N) $l"; done \
 			> "$0/counters/pcie_$(hostname -s).txt"' "${OUT_DIR}" 2>"${OUT_DIR}/counters/pcie.err" &
 	BG_PIDS+=($!)
