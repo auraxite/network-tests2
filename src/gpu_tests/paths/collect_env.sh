@@ -46,6 +46,20 @@ section() {
 		p=$(readlink -f "/sys/bus/pci/devices/$b")
 		echo "gpu $g numa=$(cat "$p/numa_node" 2>/dev/null) path=$p"
 	done'
+	# скорость и ширина каждой связи PCIe на пути от GPU и адаптеров до процессора (по ним UCX оценивает
+	# пропускную способность; простаивающий GPU может снижать скорость связи)
+	section bash -c 'for p in $(for d in /sys/class/infiniband/*; do readlink -f "$d/device"; done;
+		for g in $(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null); do
+			readlink -f "/sys/bus/pci/devices/$(echo "0000:${g#*:}" | tr "A-F" "a-f")"; done); do
+		echo "## $(basename "$p")"
+		q=$p
+		while [[ -f "$q/current_link_speed" ]]; do
+			echo "  $(basename "$q") cur=$(cat "$q/current_link_speed") x$(cat "$q/current_link_width")" \
+				"max=$(cat "$q/max_link_speed") x$(cat "$q/max_link_width")"
+			q=$(dirname "$q")
+		done
+	done'
+	section nvidia-smi --query-gpu=index,pci.bus_id,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max,pstate --format=csv
 	# таблица GID RoCE: номер, тип, интерфейс (у VLAN свои GID), адрес
 	section bash -c 'for d in /sys/class/infiniband/*; do for a in "$d"/ports/1/gid_attrs/ndevs/*; do
 		i=${a##*/}; nd=$(cat "$a" 2>/dev/null) || continue
