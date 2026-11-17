@@ -59,7 +59,33 @@ std::vector<double> run_simultaneous(int rank, int nproc, const Args &args, bool
 	for (int src = 0; src < nproc; ++src)
 		if (src != rank) samples[src].reserve(static_cast<size_t>(args.iters));
 
+	// --verify: счётчики по источникам и свой неблокирующий поток для чтения краёв сообщения
+	// в момент отметки времени (не ждёт копий библиотеки на других потоках).
+	std::vector<long> v_checked(nproc, 0), v_bad(nproc, 0), v_early(nproc, 0);
+	cudaStream_t v_stream = nullptr;
+	if (args.verify)
+		cuda_ok(cudaStreamCreateWithFlags(&v_stream, cudaStreamNonBlocking), "verify stream");
+	long iteration = 0;   // общий счётчик итераций: одинаков на всех рангах
+
 	auto one_iteration = [&](int root, bool measure) {
+		const long it = iteration++;
+		const bool check = args.verify && measure;
+		std::vector<int> got(nproc, -1);   // длина принятого от src (--verify)
+		if (check) {
+			// Новый шаблон в свой буфер отправки, нули в буферы приёма. До выставления приёмов
+			// и до барьера, поэтому в замер не попадает.
+			bool sends = false;
+			for (int dst = 0; dst < nproc; ++dst) sends = sends || active(args.mode, root, rank, dst);
+			if (sends) verify_fill(d_send.get(), args.nbytes, verify_tag(it, rank, 0));
+			cuda_ok(cudaMemset(d_recv.get(), 0, args.nbytes), "verify: cudaMemset(d_recv)");
+			for (int src = 0; src < nproc; ++src) {
+				if (!active(args.mode, root, src, rank)) continue;
+				if (recv_dev[src].get())
+					cuda_ok(cudaMemset(recv_dev[src].get(), 0, args.nbytes), "verify: cudaMemset(recv)");
+				if (recv_host[src].get())
+					std::fill(recv_host[src].get(), recv_host[src].get() + args.nbytes, 0);
+			}
+		}
 		// recv[src] — данные от src, recv[nproc + src] — сигнал готовности
 		// общего сегмента src (путь через память внутри узла).
 		std::vector<MPI_Request> recv(2 * nproc, MPI_REQUEST_NULL);
@@ -110,10 +136,15 @@ std::vector<double> run_simultaneous(int rank, int nproc, const Args &args, bool
 
 		for (int done = 0; done < expected; ++done) {
 			int idx = MPI_UNDEFINED;
+			MPI_Status st;
 			mpi_ok(MPI_Waitany(static_cast<int>(recv.size()), recv.data(), &idx,
-			                   MPI_STATUS_IGNORE), "MPI_Waitany");
+			                   check ? &st : MPI_STATUS_IGNORE), "MPI_Waitany");
 			if (idx == MPI_UNDEFINED) break;
 			const int src = idx % nproc;
+			if (check) {
+				if (idx < nproc) mpi_ok(MPI_Get_count(&st, MPI_BYTE, &got[src]), "MPI_Get_count");
+				else             got[src] = count;   // общий сегмент: копируется ровно count
+			}
 			if (via_host) {
 				if (idx >= nproc) {
 					shared->sync();
@@ -128,11 +159,30 @@ std::vector<double> run_simultaneous(int rank, int nproc, const Args &args, bool
 			// намеренно не делается: она ждала бы и чужие передачи (см. NOTES.md).
 			if (measure)
 				samples[src].push_back((MPI_Wtime() - t0) * 1e6);
+			if (check) {
+				const unsigned tag = verify_tag(it, src, 0);
+				if (via_host) {
+					// данные уже в d_recv (копия синхронная), он общий на всех источников —
+					// проверка сразу, до следующего источника
+					++v_checked[src];
+					if (got[src] != count || !verify_ok(d_recv.get(), args.nbytes, tag)) ++v_bad[src];
+				} else if (!verify_edges_ok(recv_dev[src].get(), args.nbytes, tag, v_stream)) {
+					++v_early[src];   // к моменту отметки времени края сообщения ещё не те
+				}
+			}
 		}
 
 		// Одна синхронизация устройства на итерацию, уже после замеров.
 		if (!via_host)
 			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(after exchange)");
+		if (check && !via_host)
+			for (int src = 0; src < nproc; ++src) {
+				if (!active(args.mode, root, src, rank)) continue;
+				++v_checked[src];
+				if (got[src] != count ||
+				    !verify_ok(recv_dev[src].get(), args.nbytes, verify_tag(it, src, 0)))
+					++v_bad[src];
+			}
 		mpi_ok(MPI_Waitall(nproc, send.data(), MPI_STATUSES_IGNORE), "MPI_Waitall sends");
 	};
 
@@ -154,7 +204,11 @@ std::vector<double> run_simultaneous(int rank, int nproc, const Args &args, bool
 		}
 		append_raw_samples(args, rank_labels[src], rank_labels[rank], samples[src]);
 		fill_ack(samples[src], ack);
+		ack[7] = static_cast<double>(v_checked[src]);
+		ack[8] = static_cast<double>(v_bad[src]);
+		ack[9] = static_cast<double>(v_early[src]);
 	}
+	if (v_stream) cudaStreamDestroy(v_stream);
 	DBG_LOG(rank, args, mode_to_string(args.mode) << " RUN_DONE");
 	return row;
 }
@@ -186,6 +240,14 @@ void schedule_simultaneous(int rank, int nproc, const Args &args, bool via_host,
 			mirror(print_pair_line("pair", rank_labels[src], rank_labels[dst], ack,
 			                       args.stat_out));
 		}
+	if (args.verify)
+		for (int src = 0; src < nproc; ++src)
+			for (int dst = 0; dst < nproc; ++dst) {
+				const double *ack = all.data() +
+				    (static_cast<size_t>(dst) * nproc + src) * ACK_FIELDS;
+				if (src != dst && ack[7] > 0)
+					mirror(print_verify_line(rank_labels[src], rank_labels[dst], ack));
+			}
 
 	std::ostringstream oss;
 	oss << "TotalTimeSec: " << std::fixed << std::setprecision(TOTAL_TIME_DIGITS)

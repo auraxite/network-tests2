@@ -80,6 +80,10 @@ void help(int rank) {
 		<< "                  multi-send flag for them, so UCX may pick another protocol)\n"
 		<< "  --probe         one_to_one: core and L3 latency probes before/after each pair\n"
 		<< "                  (raw/*.sprobe, *.rprobe: core_ns l3_ns before, then after)\n"
+		<< "  --verify        new pattern in every message (depends on iteration and pair), receiver\n"
+		<< "                  checks length and content outside the timed interval; output lines\n"
+		<< "                  \"verify src -> dst checked= bad= early=\". Timings of such a run are\n"
+		<< "                  not comparable with ordinary ones\n"
 		<< "  --stat S        all | avg | med | min | max | var | std\n"
 		<< "  --out FILE, -o FILE  write output to FILE (rank 0 only)\n"
 		<< "  --debug, -d     verbose debug logs to stderr\n"
@@ -182,6 +186,8 @@ Args parse_args(int argc, char **argv, int rank) {
 			a.pin_main = std::atoi(next("--pin-main"));
 		else if (s == "--probe")
 			a.probe = true;
+		else if (s == "--verify")
+			a.verify = true;
 		else if (s == "--p2p") {
 			const std::string o = next("--p2p");
 			if (o == "nonblocking") a.p2p_nonblocking = true;
@@ -308,6 +314,68 @@ void fill_ack(const std::vector<double> &samples, double *ack) {
 	ack[4] = var;
 	ack[5] = std::sqrt(var);
 	ack[6] = 1.0; // valid
+}
+
+unsigned verify_tag(long it, int src, int dst) {
+	const unsigned long h = static_cast<unsigned long>(it) * 37ul +
+	                        static_cast<unsigned long>(src) * 11ul +
+	                        static_cast<unsigned long>(dst) * 5ul;
+	return 1u + static_cast<unsigned>(h % 255ul);   // 37 не кратно 255: соседние итерации различны
+}
+
+static inline unsigned char verify_byte(size_t k, unsigned tag) {
+	return static_cast<unsigned char>(((static_cast<uint32_t>(k) * 2654435761u) >> 24) ^ tag);
+}
+
+static std::vector<unsigned char> &verify_scratch(size_t n) {
+	static std::vector<unsigned char> h;
+	if (h.size() < n) h.resize(n);
+	return h;
+}
+
+static bool verify_range(const unsigned char *h, size_t first, size_t len, unsigned tag) {
+	for (size_t k = 0; k < len; ++k)
+		if (h[k] != verify_byte(first + k, tag)) return false;
+	return true;
+}
+
+void verify_fill(void *dev, size_t n, unsigned tag) {
+	auto &h = verify_scratch(n);
+	for (size_t k = 0; k < n; ++k) h[k] = verify_byte(k, tag);
+	cuda_ok(cudaMemcpy(dev, h.data(), n, cudaMemcpyHostToDevice), "verify_fill");
+}
+
+bool verify_ok(const void *dev, size_t n, unsigned tag) {
+	auto &h = verify_scratch(n);
+	cuda_ok(cudaMemcpy(h.data(), dev, n, cudaMemcpyDeviceToHost), "verify_ok");
+	return verify_range(h.data(), 0, n, tag);
+}
+
+bool verify_host_ok(const void *host, size_t n, unsigned tag) {
+	return verify_range(static_cast<const unsigned char *>(host), 0, n, tag);
+}
+
+bool verify_edges_ok(const void *dev, size_t n, unsigned tag, cudaStream_t stream) {
+	static PinnedBuffer edge(2 * VERIFY_EDGE);
+	auto *h = reinterpret_cast<unsigned char *>(edge.get());
+	const char *d = static_cast<const char *>(dev);
+	const size_t head = std::min(n, VERIFY_EDGE);
+	const size_t tail_off = n > VERIFY_EDGE ? std::max(head, n - VERIFY_EDGE) : n;
+	const size_t tail = n - tail_off;
+	cuda_ok(cudaMemcpyAsync(h, d, head, cudaMemcpyDeviceToHost, stream), "verify_edges head");
+	if (tail)
+		cuda_ok(cudaMemcpyAsync(h + VERIFY_EDGE, d + tail_off, tail, cudaMemcpyDeviceToHost, stream),
+		        "verify_edges tail");
+	cuda_ok(cudaStreamSynchronize(stream), "verify_edges sync");
+	return verify_range(h, 0, head, tag) && verify_range(h + VERIFY_EDGE, tail_off, tail, tag);
+}
+
+std::string print_verify_line(const std::string &src_label, const std::string &dst_label,
+                              const double *ack) {
+	std::ostringstream oss;
+	oss << "verify " << src_label << " -> " << dst_label << std::fixed << std::setprecision(0)
+	    << " checked=" << ack[7] << " bad=" << ack[8] << " early=" << ack[9] << "\n";
+	return oss.str();
 }
 
 std::string print_pair_line(const char *line_name, const std::string &src_label,

@@ -24,6 +24,7 @@ struct Buffers {
 	PinnedBuffer                      h_buf;    // только для пути через память
 	std::unique_ptr<SharedHostWindow> shared;   // общий буфер узла, путь через память
 	char                             *shared_buf = nullptr;
+	int                               got_count = -1;   // --verify: длина принятого (MPI_Get_count)
 };
 
 /* Секунды с начала эпохи по системным часам (общие для узлов при NTP). */
@@ -73,20 +74,27 @@ static void p2p_send(const void *buf, int count, int dst, bool nonblocking, cons
 	mpi_ok(MPI_Wait(&r, MPI_STATUS_IGNORE), what);
 }
 
-static void p2p_recv(void *buf, int count, int src, bool nonblocking, const char *what) {
+/* got_count != nullptr (--verify): длина принятого сообщения по статусу. */
+static void p2p_recv(void *buf, int count, int src, bool nonblocking, const char *what,
+                     int *got_count) {
+	MPI_Status  st;
+	MPI_Status *stp = got_count ? &st : MPI_STATUS_IGNORE;
 	if (!nonblocking) {
-		mpi_ok(MPI_Recv(buf, count, MPI_BYTE, src, TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE), what);
-		return;
+		mpi_ok(MPI_Recv(buf, count, MPI_BYTE, src, TAG_DATA, MPI_COMM_WORLD, stp), what);
+	} else {
+		MPI_Request r;
+		mpi_ok(MPI_Irecv(buf, count, MPI_BYTE, src, TAG_DATA, MPI_COMM_WORLD, &r), what);
+		mpi_ok(MPI_Wait(&r, stp), what);
 	}
-	MPI_Request r;
-	mpi_ok(MPI_Irecv(buf, count, MPI_BYTE, src, TAG_DATA, MPI_COMM_WORLD, &r), what);
-	mpi_ok(MPI_Wait(&r, MPI_STATUS_IGNORE), what);
+	if (got_count) mpi_ok(MPI_Get_count(&st, MPI_BYTE, got_count), "MPI_Get_count");
 }
 
 /* Одна передача src -> dst. Вызывается и отправителем, и получателем. */
 void transfer_once(const Task &t, bool is_sender, bool via_host, bool same_node,
-                   size_t nbytes, Buffers &b, bool nonblocking) {
+                   size_t nbytes, Buffers &b, bool nonblocking, bool verify = false) {
 	const int count = static_cast<int>(nbytes);
+	int *got = verify ? &b.got_count : nullptr;
+	b.got_count = count;   // путь через общую память длину не проверяет: копируется ровно count
 
 	// Внутри узла через общую оперативную память: копия GPU -> память у
 	// отправителя, сигнал готовности, копия память -> GPU у получателя.
@@ -115,10 +123,10 @@ void transfer_once(const Task &t, bool is_sender, bool via_host, bool same_node,
 		}
 	} else {
 		if (via_host) {
-			p2p_recv(b.h_buf.get(), count, t.src_rank, nonblocking, "recv(host)");
+			p2p_recv(b.h_buf.get(), count, t.src_rank, nonblocking, "recv(host)", got);
 			cuda_ok(cudaMemcpy(b.d_recv.get(), b.h_buf.get(), count, cudaMemcpyHostToDevice), "H2D");
 		} else {
-			p2p_recv(b.d_recv.get(), count, t.src_rank, nonblocking, "recv(device)");
+			p2p_recv(b.d_recv.get(), count, t.src_rank, nonblocking, "recv(device)", got);
 			// UCX cuda_ipc может сообщить о завершении MPI раньше, чем копия на
 			// устройстве действительно закончится: ждём её внутри замера.
 			cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize(recv device)");
@@ -162,19 +170,46 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 	for (int i = 0; i < args.warmup; ++i)
 		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b, args.p2p_nonblocking);
 
+	long v_checked = 0, v_bad = 0;
 	std::vector<double> samples_us, times, cpus;
 	samples_us.reserve(static_cast<size_t>(args.iters));
 	if (is_receiver) times.reserve(static_cast<size_t>(args.iters));
 	if (args.cpu_log) cpus.reserve(static_cast<size_t>(args.iters));   // и отправитель, и получатель
+	const int peer = is_sender ? t.dst_rank : t.src_rank;
 	for (int i = 0; i < args.iters; ++i) {
+		unsigned tag = 0;
+		if (args.verify) {
+			// Новый шаблон у отправителя, нули у получателя. Отдельная встреча — чтобы время
+			// заполнения у отправителя не попало в замер получателя.
+			tag = verify_tag(i, t.src_rank, t.dst_rank);
+			if (is_sender) {
+				verify_fill(b.d_send.get(), args.nbytes, tag);
+			} else {
+				cuda_ok(cudaMemset(b.d_recv.get(), 0, args.nbytes), "verify: cudaMemset(d_recv)");
+				if (b.h_buf.get()) std::fill(b.h_buf.get(), b.h_buf.get() + args.nbytes, 0);
+			}
+			rendezvous(is_sender, peer);
+		}
 		if (is_receiver) times.push_back(epoch_now());
 		if (args.cpu_log) cpus.push_back(current_cpu());
 		const double t0 = MPI_Wtime();
-		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b, args.p2p_nonblocking);
+		transfer_once(t, is_sender, via_host, same_node, args.nbytes, b, args.p2p_nonblocking,
+		              args.verify);
 		const double t1 = MPI_Wtime();
-		if (is_receiver)
+		if (is_receiver) {
 			samples_us.push_back((t1 - t0) * 1e6);
-		rendezvous(is_sender, is_sender ? t.dst_rank : t.src_rank);
+			if (args.verify) {
+				++v_checked;
+				const bool ok = b.got_count == static_cast<int>(args.nbytes) &&
+				                verify_ok(b.d_recv.get(), args.nbytes, tag);
+				if (!ok) {
+					++v_bad;
+					DBG_LOG(rank, args, "VERIFY_BAD src=" << t.src_rank << " dst=" << t.dst_rank
+					        << " iter=" << i << " got=" << b.got_count);
+				}
+			}
+		}
+		rendezvous(is_sender, peer);
 	}
 
 	if (args.cpu_log)
@@ -190,6 +225,8 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 		append_raw_samples(args, rank_labels[t.src_rank], rank_labels[t.dst_rank], samples_us,
 		                   times);
 		fill_ack(samples_us, ack.data());
+		ack[7] = static_cast<double>(v_checked);
+		ack[8] = static_cast<double>(v_bad);
 	}
 	return ack;
 }
@@ -252,7 +289,8 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 	std::ostringstream head;
 	head << "Order: " << (args.random_order ? "random" : "seq") << " seed=" << args.seed
 	     << " prespin_sec=" << args.prespin_sec << " cpu_log=" << (args.cpu_log ? 1 : 0)
-	     << " p2p=" << (args.p2p_nonblocking ? "nonblocking" : "blocking") << "\n";
+	     << " p2p=" << (args.p2p_nonblocking ? "nonblocking" : "blocking")
+	     << " verify=" << (args.verify ? 1 : 0) << "\n";
 	mirror(head.str());
 
 	std::vector<std::vector<double>> metric(static_cast<size_t>(nproc) * nproc,
@@ -295,6 +333,12 @@ void schedule_one_to_one(int rank, int nproc, const Args &args, bool via_host,
 			mirror(print_pair_line("pair", rank_labels[src], rank_labels[dst],
 			                       metric[static_cast<size_t>(src) * nproc + dst].data(),
 			                       args.stat_out));
+	if (args.verify)
+		for (int src = 0; src < nproc; ++src)
+			for (int dst = 0; dst < nproc; ++dst)
+				if (src != dst)
+					mirror(print_verify_line(rank_labels[src], rank_labels[dst],
+					                         metric[static_cast<size_t>(src) * nproc + dst].data()));
 
 	std::ostringstream oss;
 	oss << "TotalTimeSec: " << std::fixed << std::setprecision(TOTAL_TIME_DIGITS)

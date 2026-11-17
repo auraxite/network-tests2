@@ -23,10 +23,14 @@ enum class StatOut { All, Avg, Med, Min, Max, Std, Var };
 
 enum class Mode { OneToOne, AllToAll, OneToAll, AllToOne };
 
-/* ack layout (7 doubles):
+/* ack layout (10 doubles):
      [0] avg_us  [1] med_us  [2] min_us  [3] max_us
-     [4] var_us  [5] std_us  [6] valid (1.0 = data present) */
-constexpr int ACK_FIELDS = 7;
+     [4] var_us  [5] std_us  [6] valid (1.0 = data present)
+     --verify:   [7] checked — проверено итераций
+                 [8] bad     — после полного завершения приёма длина или содержимое неверны
+                 [9] early   — в момент отметки времени края сообщения ещё не те
+                               (только одновременные режимы с буферами в VRAM) */
+constexpr int ACK_FIELDS = 10;
 
 struct Args {
 	size_t      nbytes           = 4u * 1000u * 1000u;
@@ -48,6 +52,7 @@ struct Args {
 	bool        sys_via_host     = false;   // one_to_one: пары GPU разных процессоров узла — через RAM
 	bool        sys_via_host_def = false;   // включено по умолчанию (custom, one_to_one), а не ключом
 	bool        p2p_nonblocking  = false;   // one_to_one: --p2p nonblocking — MPI_Isend/MPI_Irecv + MPI_Wait
+	bool        verify           = false;   // --verify: проверка длины и содержимого каждого сообщения
 };
 
 /* Задание пары для one_to_one: рассылается рангом 0 как MPI_BYTE. */
@@ -114,6 +119,20 @@ ProbeResult cpu_probe();
 void append_raw_series(const Args &args, const std::string &src_label,
                        const std::string &dst_label, const std::vector<double> &values,
                        const std::string &ext, int digits);
+
+/* --verify. Сообщение итерации it пары (src, dst) — шаблон, зависящий от позиции байта и метки
+   tag = verify_tag(...) из 1..255. Метки соседних итераций различны, поэтому данные прошлой
+   итерации не совпадают с ожидаемыми ни в одном байте. Всё — вне замеряемого интервала. */
+unsigned verify_tag(long it, int src, int dst);
+void     verify_fill(void *dev, size_t n, unsigned tag);              // шаблон -> VRAM
+bool     verify_ok(const void *dev, size_t n, unsigned tag);          // всё сообщение (cudaMemcpy)
+bool     verify_host_ok(const void *host, size_t n, unsigned tag);    // то же для RAM
+/* Только первые и последние VERIFY_EDGE байт, чтение на своём неблокирующем потоке: не ждёт
+   копий, запущенных библиотекой на других потоках, поэтому видит, дошли ли данные к этому моменту. */
+constexpr size_t VERIFY_EDGE = 4096;
+bool     verify_edges_ok(const void *dev, size_t n, unsigned tag, cudaStream_t stream);
+std::string print_verify_line(const std::string &src_label, const std::string &dst_label,
+                              const double *ack);
 
 std::string print_pair_line(const char *line_name, const std::string &src_label,
                             const std::string &dst_label, const double *ack,
