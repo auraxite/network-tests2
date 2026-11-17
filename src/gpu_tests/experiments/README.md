@@ -50,6 +50,7 @@ PROTO_BLOCKS=(proto) # блоки с UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
 | `thresholds.conf` | где реальные замеры переключают путь: частая сетка около порогов | — | — | — |
 | `autothresh.conf` | автоматический поиск порога eager/rendezvous по измерению: каждый размер трижды — порог UCX, `UCX_RNDV_THRESH=inf`, `UCX_RNDV_THRESH=0`; обработка `analysis/autothresh.py` | — | — | — |
 | `rndvmodes.conf` | порог rendezvous в одновременных режимах: порог UCX против `UCX_RNDV_THRESH=65`, GPU0 и GPU1 на узел, 4 режима × 7 размеров; обработка `analysis/rndvmodes.py` | — | — | — |
+| `modes_method.conf` | одновременные режимы **по методике**: нагрузка CPU 1 с, случайный порядок раундов, диагностика до и после раунда; ставить несколькими заданиями `experiments/submit_series.sh modes_method 4` | `modes.conf` (без методики) | — | — |
 | `verify.conf` | ключ `--verify`: доходит ли сообщение целиком (длина и содержимое) и к моменту отметки времени (счётчик early в одновременных режимах), все среды и режимы, 5 размеров; строки `verify ... bad= early=` | — | — | — |
 | `p2pcheck.conf` | MPI_Send против MPI_Isend+MPI_Wait в one_to_one (ключ `--p2p`): для неблокирующих вызовов Open MPI передаёт UCX флаг MULTI_SEND, UCX выбирает другой протокол; обработка `analysis/p2pcheck.py` | — | — | — |
 

@@ -300,7 +300,7 @@ for IDX in "${!LIST[@]}"; do
 	SEED=$((SEED_BASE + IDX))
 	EXTRA=()
 	if [[ -n "${ARGS}" ]]; then read -r -a EXTRA <<<"${ARGS}"; fi
-	if [[ "${MODE}" == one_to_one ]]; then EXTRA+=(--seed "${SEED}"); fi
+	EXTRA+=(--seed "${SEED}")   # порядок пар (one_to_one) или раундов (одновременные режимы)
 	if [[ "${OUT_LAYOUT}" == flat ]]; then
 		NAME="${SAFE_NODES}_${ENV}_${MODE}_b${B}_w${W}_i${I}"
 	else

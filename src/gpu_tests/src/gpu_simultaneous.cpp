@@ -1,7 +1,10 @@
 #include "gpu_simultaneous.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <memory>
+#include <numeric>
+#include <random>
 #include <sstream>
 
 namespace gpu_benchmark {
@@ -186,14 +189,46 @@ std::vector<double> run_simultaneous(int rank, int nproc, const Args &args, bool
 		mpi_ok(MPI_Waitall(nproc, send.data(), MPI_STATUSES_IGNORE), "MPI_Waitall sends");
 	};
 
+	// Методика (шаги 1–3), как в one_to_one:
+	// 1) --prespin-sec: нагрузка CPU на всех рангах перед первым раундом (разгон ядер, NOTES.md);
+	// 2) --order random: раунды (корни) в случайном порядке, зерно --seed одинаково на всех рангах,
+	//    поэтому порядок совпадает без обмена; в all_to_all раунд один;
+	// 3) --probe: тесты ядра и L3 на каждом ранге до и после раунда. Ранг пишет их для каждой активной в раунде
+	//    пары: как отправитель — .sprobe, как получатель — .rprobe (формат one_to_one: core l3 до, core l3 после).
+	if (args.prespin_sec > 0) {
+		const double t_spin = MPI_Wtime();
+		while (MPI_Wtime() - t_spin < args.prespin_sec) {}
+		mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(prespin)");
+	}
 	// Раунд на каждый корень. Каждая пара активна ровно в одном раунде,
 	// поэтому samples[src] заполняется один раз.
 	const int rounds = args.mode == Mode::AllToAll ? 1 : nproc;
-	for (int root = 0; root < rounds; ++root) {
+	std::vector<int> order(rounds);
+	std::iota(order.begin(), order.end(), 0);
+	if (args.random_order) {
+		std::mt19937 gen(args.seed);
+		std::shuffle(order.begin(), order.end(), gen);
+	}
+	for (const int root : order) {
+		ProbeResult before;
+		if (args.probe) before = cpu_probe();
 		for (int i = 0; i < args.warmup; ++i) one_iteration(root, false);
 		mpi_ok(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier(iters)");
 		for (int i = 0; i < args.iters; ++i) one_iteration(root, true);
+		if (args.probe) {
+			const ProbeResult after = cpu_probe();
+			const std::vector<double> v{before.core_ns, before.l3_ns, after.core_ns, after.l3_ns};
+			for (int peer = 0; peer < nproc; ++peer) {
+				if (active(args.mode, root, rank, peer))
+					append_raw_series(args, rank_labels[rank], rank_labels[peer], v, ".sprobe", 4);
+				if (active(args.mode, root, peer, rank))
+					append_raw_series(args, rank_labels[peer], rank_labels[rank], v, ".rprobe", 4);
+			}
+		}
 	}
+	if (rank == 0)
+		DBG_LOG(rank, args, "ROUND_ORDER " << [&] {
+			std::ostringstream o; for (int r : order) o << r << ' '; return o.str(); }());
 
 	std::vector<double> row(static_cast<size_t>(nproc) * ACK_FIELDS, 0.0);
 	for (int src = 0; src < nproc; ++src) {
@@ -221,6 +256,13 @@ void schedule_simultaneous(int rank, int nproc, const Args &args, bool via_host,
                          const std::vector<int> &node_ranks,
                          const std::vector<std::string> &rank_labels,
                          const std::function<void(const std::string &)> &mirror) {
+	if (rank == 0) {
+		std::ostringstream head;
+		head << "Order: " << (args.random_order ? "random" : "seq") << " seed=" << args.seed
+		     << " prespin_sec=" << args.prespin_sec << " probe=" << (args.probe ? 1 : 0)
+		     << " verify=" << (args.verify ? 1 : 0) << "\n";
+		mirror(head.str());
+	}
 	const double t0 = MPI_Wtime();
 	const std::vector<double> row =
 	    run_simultaneous(rank, nproc, args, via_host, node_comm, on_my_node, node_ranks, rank_labels);
