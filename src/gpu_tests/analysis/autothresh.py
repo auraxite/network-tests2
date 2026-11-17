@@ -96,15 +96,20 @@ def crossover(eager: dict[int, float], rndv: dict[int, float]):
 
 
 def ucx_threshold(auto: dict[int, float], eager: dict[int, float], rndv: dict[int, float]):
-	"""Первый размер, где auto ближе к rndv, чем к eager (порог, который выбрал UCX), и последний «eager»."""
+	"""Порог, который выбрал UCX: (последний размер, где auto идёт как eager; первый размер, начиная с которого
+	auto идёт как rndv до конца сетки). Ищется с конца сетки: на малых размерах eager и rndv могут отличаться
+	на уровне шума, и случайная точка, где auto чуть ближе к rndv, не должна приниматься за порог.
+	Размеры, где eager и rndv отличаются меньше чем на 5%, не решают ничего и пропускаются."""
 	sizes = sorted(set(auto) & set(eager) & set(rndv))
-	prev = None
-	for s in sizes:
-		near_rndv = abs(math.log(auto[s] / rndv[s])) < abs(math.log(auto[s] / eager[s]))
-		if near_rndv and abs(math.log(rndv[s] / eager[s])) > 0.05:
-			return prev, s
-		prev = s
-	return prev, None
+	nxt = None
+	for s in reversed(sizes):
+		distinct = abs(math.log(rndv[s] / eager[s])) > 0.05
+		near_eager = abs(math.log(auto[s] / eager[s])) <= abs(math.log(auto[s] / rndv[s]))
+		if distinct and near_eager:
+			return s, nxt
+		if distinct:
+			nxt = s
+	return None, nxt
 
 
 def fmt_bytes(b: int | None) -> str:
