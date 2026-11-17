@@ -17,6 +17,7 @@ N="${2:-4}"
 
 case "${CONF}" in
 	modes|modes_method) DEF_NTASKS=4; DEF_PER_NODE=2; DEF_TIME=00:20:00 ;;
+	autothresh_method)  DEF_NTASKS=8; DEF_PER_NODE=4; DEF_TIME=00:50:00 ;;
 	*)                  DEF_NTASKS=8; DEF_PER_NODE=4; DEF_TIME=00:25:00 ;;
 esac
 NTASKS="${NTASKS:-$DEF_NTASKS}"
