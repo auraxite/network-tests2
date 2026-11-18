@@ -38,6 +38,8 @@ SETS = {
 	"noipc": "без cuda_ipc",
 	"nic": "cuda_copy, InfiniBand, self",
 	"nogdr": "как all, без GPUDirect RDMA",
+	"roce": "как all, адаптер mlx5_1 (RoCE, Ethernet 100 Гбит/с) вместо InfiniBand",
+	"tcp": "как all, между узлами TCP через ens18f1np1",
 }
 
 
@@ -154,7 +156,9 @@ def main():
 		else:
 			rec[name] = str(int(round(median(ests))))
 	tls = {"all": "(как в custom)", "noipc": "cuda_copy,<IB>,cma,sm,self", "nic": "cuda_copy,<IB>,self",
-	       "nogdr": "(как в custom) UCX_IB_GPU_DIRECT_RDMA=n"}.get(win, win)
+	       "nogdr": "(как в custom) UCX_IB_GPU_DIRECT_RDMA=n",
+	       "roce": "(как в custom) UCX_NET_DEVICES=mlx5_1:1 UCX_IB_GID_INDEX=3",
+	       "tcp": "cuda_copy,cuda_ipc,tcp,cma,sm,self UCX_NET_DEVICES=ens18f1np1"}.get(win, win)
 	print(f"\n## Ответ\nнабор **{win}** — UCX_TLS={tls}  UCX_RNDV_THRESH="
 	      + ",".join(f"{k}:{v}" for k, v in rec.items()))
 
