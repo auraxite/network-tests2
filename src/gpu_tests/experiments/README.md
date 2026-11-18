@@ -57,6 +57,7 @@ PROTO_BLOCKS=(proto) # блоки с UCX_PROTO_ENABLE=y UCX_PROTO_INFO=y
 | `modes_method.conf` | одновременные режимы **по методике**: нагрузка CPU 1 с, случайный порядок раундов, диагностика до и после раунда; ставить несколькими заданиями `experiments/submit_series.sh modes_method 4` | `modes.conf` (без методики) | — | — |
 | `verify.conf` | ключ `--verify`: доходит ли сообщение целиком (длина и содержимое) и к моменту отметки времени (счётчик early в одновременных режимах), все среды и режимы, 5 размеров; строки `verify ... bad= early=` | — | — | — |
 | `p2pcheck.conf` | MPI_Send против MPI_Isend+MPI_Wait в one_to_one (ключ `--p2p`): для неблокирующих вызовов Open MPI передаёт UCX флаг MULTI_SEND, UCX выбирает другой протокол; обработка `analysis/p2pcheck.py` | — | — | — |
+| `p2pforce_method.conf` | MPI_Send против MPI_Isend+MPI_Wait **при одном протоколе** (только eager, только rendezvous, порог UCX), по методике, GPU0–1 двух узлов, 6 размеров, 36 запусков; `experiments/submit_series.sh p2pforce_method 1`, обработка `analysis/p2pforce.py` | `p2pcheck.conf` (только порог UCX) | — | — |
 
 Данные `hyp_*` сняты старыми файлами заданий; их можно достать из git по коммиту,
 например `git show 96a039f:src/gpu_tests/task5.sbatch`. Новое задание с описаниями
