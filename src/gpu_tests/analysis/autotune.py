@@ -42,8 +42,10 @@ SETS = {
 
 
 def load(jobs, gps):
-	"""curves[(класс, GPU)][набор][протокол][размер] = медиана медиан пар."""
+	"""curves[(класс, GPU)][набор][протокол][размер] = медиана медиан пар (все пары всех заданий);
+	perjob[(класс, GPU, набор, протокол, размер)][задание] = медиана медиан пар в одном задании."""
 	raw = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
+	perjob_raw = defaultdict(lambda: defaultdict(list))
 	failed = []
 	for job in jobs:
 		for f in sorted(job.glob("*.txt")):
@@ -57,7 +59,9 @@ def load(jobs, gps):
 					continue
 				cls = pair_class(p.group(1), p.group(2), gps)
 				if cls:
-					raw[(cls, gpu_of(p.group(1))[1])][tset][proto][size].append(float(p.group(3)))
+					key = (cls, gpu_of(p.group(1))[1])
+					raw[key][tset][proto][size].append(float(p.group(3)))
+					perjob_raw[(*key, tset, proto, size)][job.name].append(float(p.group(3)))
 		runs = job / "runs.csv"
 		if runs.exists():
 			with runs.open(encoding="utf-8") as fh:
@@ -66,7 +70,8 @@ def load(jobs, gps):
 						failed.append(f"{job.name}: {r['block']} {fmt_bytes(int(r['bytes']))} rc={r['rc']}")
 	curves = {k: {t: {pr: {s: median(v) for s, v in by.items()} for pr, by in ps.items()} for t, ps in ts.items()}
 	          for k, ts in raw.items()}
-	return curves, failed
+	perjob = {k: {j: median(v) for j, v in by.items()} for k, by in perjob_raw.items()}
+	return curves, perjob, failed
 
 
 def tuned_curve(e, r):
@@ -98,7 +103,7 @@ def main():
 	ap.add_argument("--gpus-per-socket", type=int, default=2)
 	args = ap.parse_args()
 
-	curves, failed = load(args.job, args.gpus_per_socket)
+	curves, perjob, failed = load(args.job, args.gpus_per_socket)
 	if not curves:
 		print(f"нет результатов autotune в {[str(j) for j in args.job]}", file=sys.stderr)
 		return 1
@@ -159,6 +164,21 @@ def main():
 		gain = [v / tuned[(key, win)][s] for key, s, v in ref if s in tuned.get((key, win), {})]
 		print(f"\nЭталон {args.default} с порогом UCX: средний проигрыш {num(gmean(r_def))}, наихудший {num(max(r_def))}. "
 		      f"Подобранная настройка быстрее эталона в среднем в {num(gmean(gain))} раза, максимум в {num(max(gain))}.")
+	# Разброс между заданиями (шаг 5 методики): для точек, измеренных в нескольких заданиях, — max/min медиан
+	spread = defaultdict(list)
+	for (cls, gpu, tset, proto, size), by in perjob.items():
+		if len(by) >= 2:
+			spread[tset].append(max(by.values()) / min(by.values()))
+	print("\n## Разброс между заданиями (точки «класс × GPU × протокол × размер»)")
+	if spread:
+		print("| Набор | Точек | Отличие < 5% | Медиана max/min | Наихудшее max/min |\n|---|---|---|---|---|")
+		for t in sorted(spread):
+			v = spread[t]
+			share = sum(x < 1.05 for x in v) / len(v)
+			print(f"| {t} | {len(v)} | {share:.0%} | {num(median(v), 3)} | {num(max(v))} |")
+		print("Если у набора доля «< 5%» заметно ниже, чем у all, методика на нём хуже держит воспроизводимость.")
+	else:
+		print("нет точек, измеренных в двух и более заданиях (для проверки — повтор: REPEAT=2)")
 	if failed:
 		print("\nЗапуски с ошибкой:\n- " + "\n- ".join(failed))
 	return 0
