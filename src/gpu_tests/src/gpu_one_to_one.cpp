@@ -179,8 +179,8 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 	for (int i = 0; i < args.iters; ++i) {
 		unsigned tag = 0;
 		if (args.verify) {
-			// Новый шаблон у отправителя, нули у получателя. Отдельная встреча — чтобы время
-			// заполнения у отправителя не попало в замер получателя.
+			// Новый шаблон у отправителя, нули у получателя. Время заполнения в замер не попадает:
+			// после него идёт синхронизация пары.
 			tag = verify_tag(i, t.src_rank, t.dst_rank);
 			if (is_sender) {
 				verify_fill(b.d_send.get(), args.nbytes, tag);
@@ -188,8 +188,10 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 				cuda_ok(cudaMemset(b.d_recv.get(), 0, args.nbytes), "verify: cudaMemset(d_recv)");
 				if (b.h_buf.get()) std::fill(b.h_buf.get(), b.h_buf.get() + args.nbytes, 0);
 			}
-			rendezvous(is_sender, peer);
 		}
+		// Синхронизация пары перед каждой измеряемой передачей, в том числе первой (после прогрева):
+		// передача начинается у обоих одновременно, опоздание отправителя не попадает в замер.
+		rendezvous(is_sender, peer);
 		if (is_receiver) times.push_back(epoch_now());
 		if (args.cpu_log) cpus.push_back(current_cpu());
 		const double t0 = MPI_Wtime();
@@ -209,7 +211,6 @@ std::vector<double> measure_pair(int rank, const Task &t, const Args &args, bool
 				}
 			}
 		}
-		rendezvous(is_sender, peer);
 	}
 
 	if (args.cpu_log)
