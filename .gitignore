@@ -80,3 +80,8 @@ work/
 /results/
 src/gpu_tests/gpu
 src/gpu_tests/gpu-ucx-*
+src/gpu_tests2/results
+src/gpu_tests2/gpu2
+src/gpu_tests2/gpu2-ucx-*
+src/gpu_tests2/*.o
+src/gpu_tests2/clustbench-*
